@@ -31,18 +31,19 @@
 ## 1. Einführung
 
 ### 1.1 Zweck des Dokuments
-Dieses Dokument beschreibt die vollständigen funktionalen und nicht-funktionalen Anforderungen für die Entwicklung eines plattformübergreifenden Paintball-Spiels. Es dient als verbindliche Grundlage für Design, Entwicklung, Test und Abnahme.
+Dieses Dokument definiert die funktionalen, technischen und qualitativen Anforderungen für ein plattformübergreifendes Paintball-Multiplayer-Spiel mit Live-Betrieb. Es ist die verbindliche Grundlage für Konzept, Architektur, Entwicklung, Test, Balancing und Abnahme.
 
 ### 1.2 Produktvision
-Ein schnelles, actiongeladenes und zugängliches Paintball-Multiplayer-Spiel, das auf Mobilgeräten, Desktop und im Web mit **identischem Spielspaß** und einer **erstklassigen, intuitiven Benutzeroberfläche** gespielt werden kann. Der Fokus liegt auf fairem Wettbewerb, farbenfroher Präsentation und geringer Einstiegshürde bei gleichzeitig hohem Skill-Ceiling.
+Ein schnelles, kompetitives und leicht zugängliches Online-Paintball-Spiel mit kurzen Match-Zyklen, klarer Teamorientierung und hoher Wiederspielbarkeit. Das Spiel soll auf Mobilgeräten, Desktop und im Web einen konsistenten Multiplayer-Kern bieten: sofortiges Einsteigen, stabiles Matchmaking, saubere Server-Synchronisation und ein fairer Wettbewerb ohne Pay-to-Win.
 
 ### 1.3 Umfang (Scope)
-- Einzelspieler-Modus (Training, Bot-Matches, Kampagne)
-- Echtzeit-Multiplayer (PvP)
-- Anpassbare Spielercharaktere und Paintball-Marker (Waffen)
-- Mehrere Spielmodi und Karten
-- Fortschritts- und Belohnungssystem
-- Plattformübergreifendes Matchmaking (Cross-Play)
+- Echtzeit-Multiplayer als Kern des Produkts
+- Matchmaking, Lobby, Party- und Einladungsfluss
+- Server-autoritative PvP-Matches mit Reconnect-Unterstützung
+- Anpassbare Spielercharaktere, Marker und Loadouts
+- Mehrere kompetitive Spielmodi und abwechslungsreiche Karten
+- Progressions-, Ranglisten- und Live-Ops-Systeme
+- Plattformübergreifendes Spielen mit optionalem Cross-Play
 
 ---
 
@@ -50,13 +51,14 @@ Ein schnelles, actiongeladenes und zugängliches Paintball-Multiplayer-Spiel, da
 
 | ID | Ziel | Beschreibung |
 |----|------|--------------|
-| Z-01 | Plattformübergreifend | Ein Code-Base für Mobile, Desktop und Web mit Unity. |
-| Z-02 | Exzellente UI/UX | Intuitive, reaktionsschnelle und ästhetisch ansprechende Oberfläche auf allen Geräten. |
-| Z-03 | Faires Gameplay | Ausgewogene Spielmechanik ohne Pay-to-Win. |
-| Z-04 | Geringe Einstiegshürde | In < 60 Sekunden vom Start ins erste Match. |
-| Z-05 | Performance | Flüssige 60 FPS auf Mid-Range-Geräten. |
-| Z-06 | Skalierbarkeit | Unterstützung wachsender Spielerzahlen ohne Qualitätsverlust. |
-| Z-07 | Wiederspielwert | Progression, Events und Anpassung fördern langfristige Bindung. |
+| Z-01 | Plattformübergreifend | Ein gemeinsamer Unity-Code-Base für Mobile, Desktop und Web mit identischem Multiplayer-Kern. |
+| Z-02 | Sofort spielbar | In unter 60 Sekunden vom Start in eine Lobby oder direkt in ein Match gelangen. |
+| Z-03 | Stabiles Multiplayer-Erlebnis | Sichere Synchronisation, geringe Latenz, flüssige Bewegung und robuste Reconnect-Mechanik. |
+| Z-04 | Faires Gameplay | Ausgewogene, server-seitig validierte Spielmechanik ohne Pay-to-Win. |
+| Z-05 | Skalierbarkeit | Stabiler Betrieb bei wachsender Spielerzahl, mehreren Regionen und saisonalen Peaks. |
+| Z-06 | Exzellente UI/UX | Intuitive, reaktionsschnelle und gut lesbare Oberfläche auf allen Geräten. |
+| Z-07 | Wiederspielwert | Ranglisten, Progression, Saisons, Events und kosmetische Anpassung fördern langfristige Bindung. |
+| Z-08 | Betriebssicherheit | Matchmaking, Authentifizierung und Backend-Dienste müssen im Live-Betrieb zuverlässig funktionieren. |
 
 ---
 
@@ -113,83 +115,90 @@ Ein schnelles, actiongeladenes und zugängliches Paintball-Multiplayer-Spiel, da
 
 | ID | Anforderung | Priorität |
 |----|-------------|-----------|
-| FR-01 | Der Spieler steuert einen Charakter aus der Third-Person- oder Top-Down-Perspektive (final zu bestimmen im Prototyp). | Muss |
-| FR-02 | Der Spieler kann sich bewegen (laufen, sprinten, ducken, springen) und die Kamera drehen. | Muss |
-| FR-03 | Der Spieler feuert Paintballs ab, die einer ballistischen Flugbahn folgen (Projektilphysik mit Schwerkraft). | Muss |
-| FR-04 | Treffer hinterlassen sichtbare Farbkleckse auf Spielern und Umgebung (Decals). | Muss |
-| FR-05 | Jeder Spieler besitzt eine Trefferanzeige/Trefferzone; nach X Treffern gilt der Spieler als "markiert"/ausgeschieden. | Muss |
-| FR-06 | Munition ist begrenzt und muss über Nachladen und/oder Nachschubstationen aufgefüllt werden. | Muss |
-| FR-07 | Der Spieler kann hinter Deckung in Deckung gehen (Cover-System). | Soll |
-| FR-08 | Nachlade-Mechanik mit Animation und Zeitkosten. | Muss |
-| FR-09 | Power-Ups auf der Karte (Schnellfeuer, Schild, Geschwindigkeit, Munition). | Soll |
-| FR-10 | Trefferfeedback: visuelles (Farbe, Bildschirmeffekt) und haptisches (Vibration auf Mobile/Gamepad) Feedback. | Muss |
+| FR-01 | Der Spieler steuert einen Charakter in einer klar lesbaren Third-Person-Perspektive; die Kamera muss für Nahkampf, Deckung und Teamübersicht geeignet sein. | Muss |
+| FR-02 | Der Spieler kann sich bewegen (laufen, sprinten, ducken, springen, in Deckung gehen) und die Kamera frei drehen. | Muss |
+| FR-03 | Der Spieler feuert Paintballs ab, die einer ballistischen Flugbahn folgen; Reichweite, Streuung und Drop sollen taktisches Zielen fördern. | Muss |
+| FR-04 | Treffer hinterlassen sichtbare Farbkleckse auf Spielern, Ausrüstung und Umgebung, damit Treffer auch aus Distanz erkennbar bleiben. | Muss |
+| FR-05 | Jeder Spieler besitzt eine Trefferanzeige bzw. Trefferzonen-Logik; nach definierter Trefferzahl wird der Spieler ausgeschieden oder markiert. | Muss |
+| FR-06 | Munition ist begrenzt, wird durch Nachladen aufgefüllt und kann über Feld- oder Basis-Nachschub stationen ergänzt werden. | Muss |
+| FR-07 | Deckung muss spielerisch relevant sein, inklusive Peek-Verhalten, Deckungswechsel und klaren Sichtlinien. | Soll |
+| FR-08 | Nachlade-Mechanik mit Animation, klarer Zeitkosten und unterbrechbaren Zuständen, soweit das Balancing es erlaubt. | Muss |
+| FR-09 | Power-Ups auf der Karte (Schnellfeuer, Schild, Geschwindigkeit, Munition, Radar-Impuls) unterstützen taktische Entscheidungen. | Soll |
+| FR-10 | Trefferfeedback muss visuell, akustisch und optional haptisch eindeutig sein; Team- und Selbsttreffer müssen unterscheidbar bleiben. | Muss |
+| FR-11 | Das Movement muss netzwerkseitig sauber synchronisiert werden und darf bei hoher Latenz nicht unfaire Bewegungsfehler erzeugen. | Muss |
+| FR-12 | Spawn-, Respawn- und Schutzlogik muss Exploits verhindern und Spawn-Kills reduzieren. | Muss |
 
 ### 6.2 Spielmodi
 
 | ID | Modus | Beschreibung | Priorität |
 |----|-------|--------------|-----------|
-| FR-11 | **Deathmatch (Frei für alle)** | Jeder gegen jeden, meiste Treffer gewinnt. | Muss |
-| FR-12 | **Team-Deathmatch** | Zwei Teams treten gegeneinander an. | Muss |
-| FR-13 | **Capture the Flag** | Fahne des Gegners erobern und zur Basis bringen. | Soll |
-| FR-14 | **Last Player Standing (Elimination)** | Kein Respawn, letzter Überlebender gewinnt. | Soll |
-| FR-15 | **King of the Hill / Zonenkontrolle** | Zone halten, um Punkte zu sammeln. | Kann |
-| FR-16 | **Trainingsmodus** | Übung gegen Bots ohne Wertung. | Muss |
-| FR-17 | **Kampagne / Einzelspieler** | Aufeinanderfolgende Missionen gegen KI mit Story-Elementen. | Kann |
-| FR-18 | **Privates Match** | Match mit Freunden über Einladungscode/Lobby. | Soll |
+| FR-13 | **Schnelles Match** | Sofortiger Einstieg in ein passendes öffentliches Match mit automatischem Team- und Lobby-Fluss. | Muss |
+| FR-14 | **Team-Deathmatch** | Zwei Teams treten gegeneinander an; Kernmodus für den Launch. | Muss |
+| FR-15 | **Deathmatch (Frei für alle)** | Jeder gegen jeden, geeignet für kurze Sessions und Trainingsläufe. | Soll |
+| FR-16 | **Capture the Flag** | Fahne des Gegners erobern und zur Basis bringen; Fokus auf Teamkoordination. | Soll |
+| FR-17 | **Last Player Standing (Elimination)** | Kein Respawn, letzter Überlebender gewinnt; geeignet für kompetitive Runden. | Soll |
+| FR-18 | **Zonenkontrolle / King of the Hill** | Eine oder mehrere Zonen halten, um Punkte zu sammeln. | Kann |
+| FR-19 | **Trainingsmodus gegen Bots** | Übungsmodus für neue Spieler, Steuerung und Waffenverständnis ohne Rangfolgenwirkung. | Muss |
+| FR-20 | **Privates Match** | Spiel mit Freunden über Einladungscode, Party und Lobby-Einstellungen. | Soll |
+| FR-21 | **Benutzerdefinierte Spiele** | Private Regeln, Zeitlimits, Modus-Varianten und Kartenwahl für Community- und Testzwecke. | Kann |
 
 ### 6.3 Multiplayer & Netzwerk
 
 | ID | Anforderung | Priorität |
 |----|-------------|-----------|
-| FR-19 | Echtzeit-Multiplayer für mind. 8 (Ziel: bis 16) Spieler pro Match. | Muss |
-| FR-20 | Automatisches Matchmaking basierend auf Skill/Rang (MMR). | Soll |
-| FR-21 | Lobby-System mit Team-Auswahl und Bereitschaftsstatus. | Muss |
-| FR-22 | Server-autoritative Architektur zur Cheat-Vermeidung. | Muss |
-| FR-23 | Client-seitige Vorhersage (Prediction) und Interpolation für flüssiges Spielgefühl. | Muss |
-| FR-24 | Reconnect-Funktion bei kurzzeitigem Verbindungsverlust. | Soll |
-| FR-25 | Optionales Cross-Play mit Ein-/Ausschalter. | Soll |
-| FR-26 | Anzeige von Ping/Latenz und Serverregion-Auswahl. | Soll |
+| FR-22 | Echtzeit-Multiplayer mit mindestens 8 und Zielwert 16 Spielern pro Match, skalierbar für künftige Modi. | Muss |
+| FR-23 | Automatisches Matchmaking anhand Region, Ping, Party-Status und Skill/Rang (MMR). | Soll |
+| FR-24 | Lobby-System mit Team-Auswahl, Ready-Status, Moduswahl, Kartenwahl und Einladungscode. | Muss |
+| FR-25 | Server-autoritative Architektur zur Cheat-Vermeidung und zur verlässlichen Auswertung aller Treffer, Bewegungen und Power-Ups. | Muss |
+| FR-26 | Client-seitige Vorhersage und Interpolation müssen Bewegung und Treffer-Feedback bei hoher Latenz spielbar halten. | Muss |
+| FR-27 | Reconnect-Funktion bei kurzzeitigem Verbindungsverlust inklusive Rückkehr in Match oder Lobby. | Soll |
+| FR-28 | Optionales Cross-Play mit Ein-/Ausschalter sowie kontrollierbarer Eingabe-Mischung. | Soll |
+| FR-29 | Anzeige von Ping, Paketverlust, Region und Match-Qualität vor und während des Spiels. | Soll |
+| FR-30 | Party-System für Gruppeneinladungen, gemeinsames Matchmaking und Lobby-Verbleib. | Soll |
+| FR-31 | Leaver- und AFK-Handling mit Ersatzsuche, Sanktionslogik oder Team-Neuverteilung. | Soll |
+| FR-32 | Match-Ende muss serverseitig eindeutig festgelegt werden; Ergebnisse und Belohnungen werden nur nach validiertem Abschluss vergeben. | Muss |
 
 ### 6.4 Charakter- & Ausrüstungsanpassung
 
 | ID | Anforderung | Priorität |
 |----|-------------|-----------|
-| FR-27 | Auswahl und Anpassung des Spielercharakters (Skins, Outfits, Farben). | Soll |
-| FR-28 | Verschiedene Paintball-Marker (Waffen) mit unterschiedlichen Werten (Feuerrate, Schaden, Reichweite, Genauigkeit, Munitionskapazität). | Muss |
-| FR-29 | Ausrüstungs-Slots (Marker, Ausweichgadget, Verbrauchsgegenstand). | Soll |
-| FR-30 | Individualisierung der Paintball-Farbe pro Spieler/Team. | Kann |
-| FR-31 | Vorschau der Anpassungen in einem 3D-Charakter-Viewer. | Soll |
+| FR-33 | Auswahl und Anpassung des Spielercharakters (Skins, Outfits, Farben). | Soll |
+| FR-34 | Verschiedene Paintball-Marker (Waffen) mit unterschiedlichen Werten (Feuerrate, Schaden, Reichweite, Genauigkeit, Munitionskapazität). | Muss |
+| FR-35 | Ausrüstungs-Slots (Marker, Ausweichgadget, Verbrauchsgegenstand). | Soll |
+| FR-36 | Individualisierung der Paintball-Farbe pro Spieler/Team. | Kann |
+| FR-37 | Vorschau der Anpassungen in einem 3D-Charakter-Viewer. | Soll |
 
 ### 6.5 Progression & Belohnung
 
 | ID | Anforderung | Priorität |
 |----|-------------|-----------|
-| FR-32 | Erfahrungspunkte (XP) und Levelaufstieg pro Match. | Muss |
-| FR-33 | Freischaltung von Ausrüstung/Skins durch Fortschritt (nicht rein zahlungsbasiert). | Muss |
-| FR-34 | Tägliche/wöchentliche Herausforderungen (Quests). | Soll |
-| FR-35 | Ranglistensystem (Ligen/Divisionen) mit Saisons. | Soll |
-| FR-36 | Statistiken pro Spieler (Treffer, Genauigkeit, Siege, K/D). | Soll |
-| FR-37 | Errungenschaften/Achievements. | Kann |
-| FR-38 | Bestenlisten (global, freundschaftsbasiert, regional). | Soll |
+| FR-40 | Erfahrungspunkte (XP), Matchbeiträge und Levelaufstieg pro Match, abgestimmt auf Teamplay statt nur Kills. | Muss |
+| FR-41 | Freischaltung von Kosmetik, Loadout-Optionen und Komfortfunktionen durch Fortschritt; keine spielentscheidenden Vorteile. | Muss |
+| FR-42 | Tägliche und wöchentliche Herausforderungen mit klaren Zielen für Online-Aktivität und Modusvielfalt. | Soll |
+| FR-43 | Ranglistensystem mit Ligen, Divisionen, Saisons und separater Wertung für kompetitive Modi. | Soll |
+| FR-44 | Statistiken pro Spieler (Treffer, Genauigkeit, Assists, Siege, Objective Score, K/D, Spielzeit). | Soll |
+| FR-45 | Errungenschaften und Meilensteine für Spielstil, Teamplay und Langzeitbindung. | Kann |
+| FR-46 | Bestenlisten global, regional, freundschaftsbasiert und pro Saison. | Soll |
+| FR-47 | Saisonale Belohnungen und Live-Ops-Inhalte müssen serverseitig steuerbar sein. | Soll |
 
 ### 6.6 Konto & Soziales
 
 | ID | Anforderung | Priorität |
 |----|-------------|-----------|
-| FR-39 | Anmeldung via Gast, E-Mail, Google, Apple, Steam. | Muss |
-| FR-40 | Plattformübergreifende Fortschrittssynchronisation (Cloud Save). | Soll |
-| FR-41 | Freundesliste und Einladungen. | Soll |
-| FR-42 | In-Match-Kommunikation via Quick-Chat/Emotes (kein offener Text-Chat für Jugendschutz, moderierbar). | Soll |
-| FR-43 | Melde- und Blockierfunktion für Fehlverhalten. | Soll |
+| FR-48 | Anmeldung via Gast, E-Mail, Google, Apple und Steam; Gastkonten müssen später sicher verknüpfbar sein. | Muss |
+| FR-49 | Plattformübergreifende Fortschrittssynchronisation (Cloud Save) für Profil, Kosmetik und Fortschritt. | Soll |
+| FR-50 | Freundesliste, Party-Einladungen, Match-Einladungen und Anwesenheitsstatus. | Soll |
+| FR-51 | In-Match-Kommunikation via Quick-Chat, Emotes und Ping-System; kein offener Text-Chat für Jugendschutz, außer explizit moderierbar. | Soll |
+| FR-52 | Melde- und Blockierfunktion für Fehlverhalten, Toxizität, AFK und Cheating-Hinweise. | Soll |
 
 ### 6.7 Karten & Level
 
 | ID | Anforderung | Priorität |
 |----|-------------|-----------|
-| FR-44 | Mindestens 3 abwechslungsreiche Karten zum Launch (z. B. Lagerhaus, Wald, Arena). | Muss |
-| FR-45 | Karten enthalten Deckung, Hindernisse, Nachschubpunkte und Spawn-Zonen. | Muss |
-| FR-46 | Balancierte, symmetrische und asymmetrische Kartendesigns. | Soll |
-| FR-47 | Dynamische Elemente (bewegliche Deckung, interaktive Objekte). | Kann |
+| FR-53 | Mindestens 3 abwechslungsreiche Karten zum Launch (z. B. Lagerhaus, Wald, Arena). | Muss |
+| FR-54 | Karten enthalten Deckung, Hindernisse, Nachschubpunkte und Spawn-Zonen. | Muss |
+| FR-55 | Balancierte, symmetrische und asymmetrische Kartendesigns. | Soll |
+| FR-56 | Dynamische Elemente (bewegliche Deckung, interaktive Objekte). | Kann |
 
 ---
 
@@ -272,45 +281,50 @@ Ein schnelles, actiongeladenes und zugängliches Paintball-Multiplayer-Spiel, da
 
 | ID | Anforderung |
 |----|-------------|
-| NFR-01 | Ziel 60 FPS auf Mid-Range-Geräten, mind. stabile 30 FPS auf Einsteigergeräten. |
-| NFR-02 | Ladezeit ins Match < 10 Sekunden (Desktop/Mobile), Web-Start < 15 Sekunden. |
-| NFR-03 | Netzwerklatenz-Toleranz bis 150 ms ohne spürbaren Spielfluss-Verlust. |
-| NFR-04 | Speicherverbrauch Mobile < 1,5 GB RAM zur Laufzeit. |
+| NFR-01 | Ziel 60 FPS auf Mid-Range-Geräten, mindestens stabile 30 FPS auf Einsteigergeräten; serverseitig feste Tickrate für faire Synchronisation. |
+| NFR-02 | Ladezeit in Lobby oder Match: Desktop/Mobile < 10 Sekunden, Web-Start < 15 Sekunden, Rematch < 5 Sekunden. |
+| NFR-03 | Netzwerklatenz-Toleranz bis 150 ms ohne spürbaren Verlust von Steuerbarkeit, Trefferfeedback oder Kamerafluss. |
+| NFR-04 | Speicherverbrauch auf Mobile < 1,5 GB RAM zur Laufzeit; Netzwerk- und Asset-Peaks müssen abgefedert werden. |
+| NFR-05 | Match-Start, Respawn und Ende-Transitionen müssen auch bei hohen Spielerzahlen flüssig bleiben. |
 
 ### 8.2 Zuverlässigkeit & Verfügbarkeit
 
 | ID | Anforderung |
 |----|-------------|
-| NFR-05 | Backend-Verfügbarkeit ≥ 99,5 %. |
-| NFR-06 | Graceful Degradation bei Serverproblemen (Fehlermeldungen, Retry). |
-| NFR-07 | Absturzrate < 1 % der Sitzungen. |
+| NFR-06 | Backend-Verfügbarkeit ≥ 99,5 %; Matchmaking und Authentifizierung müssen separat beobachtbar sein. |
+| NFR-07 | Graceful Degradation bei Serverproblemen mit Retry, Warteschlangenstatus und Ausweichfunktionen. |
+| NFR-08 | Absturzrate < 1 % der Sitzungen; Disconnects dürfen nicht zu Datenverlust oder Korruption führen. |
+| NFR-09 | Reconnect- und Session-Recovery müssen kurzzeitige Unterbrechungen abfangen. |
 
 ### 8.3 Sicherheit & Fairness
 
 | ID | Anforderung |
 |----|-------------|
-| NFR-08 | Server-autoritative Spiellogik gegen Cheating. |
-| NFR-09 | Verschlüsselte Kommunikation (TLS) und sichere Authentifizierung. |
-| NFR-10 | Schutz personenbezogener Daten gemäß DSGVO. |
-| NFR-11 | Anti-Cheat-Maßnahmen und serverseitige Validierung von Aktionen. |
-| NFR-12 | Kein Pay-to-Win: Käufe wirken sich nicht auf Spielbalance aus (nur Kosmetik/Komfort). |
+| NFR-10 | Server-autoritative Spiellogik gegen Cheating; kritische Spielzustände dürfen nie nur clientseitig entschieden werden. |
+| NFR-11 | Verschlüsselte Kommunikation (TLS) und sichere Authentifizierung für alle externen Dienste und Spieler-Profile. |
+| NFR-12 | Schutz personenbezogener Daten gemäß DSGVO, inklusive Datensparsamkeit, Löschbarkeit und Zweckbindung. |
+| NFR-13 | Anti-Cheat-Maßnahmen und serverseitige Validierung von Aktionen, inklusive Telemetrie für verdächtige Muster. |
+| NFR-14 | Kein Pay-to-Win: Käufe wirken sich nicht auf Spielbalance aus und müssen im Shop transparent gekennzeichnet sein. |
+| NFR-15 | Matchmaking darf keine bewusst unfairen Teamzusammensetzungen erzeugen; Cross-Play-Unterschiede müssen regelbar sein. |
 
 ### 8.4 Skalierbarkeit & Wartbarkeit
 
 | ID | Anforderung |
 |----|-------------|
-| NFR-13 | Modulare, erweiterbare Code-Architektur (klare Trennung von Gameplay, UI, Netzwerk, Daten). |
-| NFR-14 | Konfigurierbare Spielparameter über Daten (ScriptableObjects/Remote Config) ohne Neu-Build. |
-| NFR-15 | Automatisierte Builds und Tests via CI/CD. |
-| NFR-16 | Code-Standards, Dokumentation und Code-Reviews verpflichtend. |
+| NFR-16 | Modulare, erweiterbare Code-Architektur mit klarer Trennung von Gameplay, UI, Netzwerk, Backend und Daten. |
+| NFR-17 | Konfigurierbare Spielparameter über Daten (ScriptableObjects/Remote Config) ohne Neu-Build; Live-Tuning muss möglich sein. |
+| NFR-18 | Automatisierte Builds, Tests, Deployments und Smoke-Checks via CI/CD. |
+| NFR-19 | Code-Standards, Dokumentation und Code-Reviews sind verpflichtend; kritische Netzwerkänderungen benötigen Review. |
+| NFR-20 | Telemetrie, Logging und Crash-Reporting müssen pro Version auswertbar sein. |
 
 ### 8.5 Usability
 
 | ID | Anforderung |
 |----|-------------|
-| NFR-17 | Neuer Spieler erreicht sein erstes Match in < 60 Sekunden. |
-| NFR-18 | Menü-Navigation in maximal 3 Ebenen erreichbar. |
-| NFR-19 | Konsistente Bedienung über alle Plattformen hinweg. |
+| NFR-21 | Neuer Spieler erreicht sein erstes Match in < 60 Sekunden; Login darf den Einstieg nicht blockieren. |
+| NFR-22 | Menü-Navigation in maximal 3 Ebenen erreichbar, Ausnahme: erweiterte Einstellungen. |
+| NFR-23 | Konsistente Bedienung über alle Plattformen hinweg, auch bei Party-, Lobby- und Match-Flows. |
+| NFR-24 | Statusmeldungen zu Warteschlangen, Verbindungsabbrüchen und Match-Ende müssen eindeutig und verständlich sein. |
 
 ---
 
@@ -325,25 +339,34 @@ graph TD
         B --> C[Input System]
         B --> D[Networking Layer]
         B --> E[Audio & VFX]
+        B --> F[Telemetry & Crash Reporting]
     end
-    D -->|Server-autoritativ| F[Dedicated Game Server / Relay]
-    F --> G[Backend Services]
-    G --> H[(Auth)]
-    G --> I[(Matchmaking & Lobby)]
-    G --> J[(Cloud Save & Economy)]
-    G --> K[(Analytics)]
+    D -->|Server-autoritativ| G[Dedicated Game Server / Session Host]
+    G --> H[Matchmaking & Lobby Service]
+    G --> I[Party / Social Service]
+    G --> J[Anti-Cheat & Validation]
+    G --> K[Game State / Relay / Region Routing]
+    H --> L[(Auth)]
+    H --> M[(Matchmaking)]
+    H --> N[(Cloud Save & Economy)]
+    H --> O[(Analytics)]
+    J --> O
 ```
 
 ### 9.2 Architekturprinzipien
 
 | ID | Anforderung |
 |----|-------------|
-| AR-01 | Klare Schichtentrennung: Präsentation, Spiellogik, Netzwerk, Daten. |
-| AR-02 | Wiederverwendbare, entkoppelte Komponenten (Component-based / SOLID). |
-| AR-03 | Datengetriebene Konfiguration über ScriptableObjects. |
-| AR-04 | Ein gemeinsamer Code-Base für alle Plattformen mit plattformspezifischen Adaptern. |
-| AR-05 | Abstraktion der Eingabe, damit Touch/Maus/Gamepad austauschbar sind. |
-| AR-06 | Server-autoritatives Netzwerkmodell mit Client-Prediction. |
+| AR-01 | Klare Schichtentrennung: Präsentation, Spiellogik, Netzwerk, Backend, Daten und Live-Ops. |
+| AR-02 | Wiederverwendbare, entkoppelte Komponenten (Component-based / SOLID) mit klaren Verantwortlichkeiten. |
+| AR-03 | Datengetriebene Konfiguration über ScriptableObjects und Remote Config für Balance und Live-Tuning. |
+| AR-04 | Ein gemeinsamer Code-Base für alle Plattformen mit plattformspezifischen Adaptern für Input, Store und Networking. |
+| AR-05 | Abstraktion der Eingabe, damit Touch, Maus, Tastatur und Gamepad austauschbar sind. |
+| AR-06 | Server-autoritatives Netzwerkmodell mit Client-Prediction, Interpolation und serverseitiger Validierung. |
+| AR-07 | Regionale Session-Hosts oder Dedicated-Server-Struktur mit klarer Trennung von Lobby und Spielserver. |
+| AR-08 | Telemetrie, Logging, Anti-Cheat-Signale und Crash-Reports müssen in die Betriebsüberwachung integriert sein. |
+| AR-09 | Gameplay-Regeln, Matchmaking, Economy und Live-Events müssen ohne Client-Neubuild anpassbar sein. |
+| AR-10 | Skalierung muss horizontal möglich sein; Dienste dürfen nicht hart an einen einzelnen Host gebunden sein. |
 
 ---
 
@@ -379,15 +402,26 @@ graph TD
 
 ## 12. Projektphasen & Roadmap
 
-| Phase | Ziel | Wesentliche Ergebnisse |
-|-------|------|------------------------|
-| **P0 – Konzept** | Vision & Design | Game Design Document, Wireframes, Tech-Spike. |
-| **P1 – Prototyp** | Kern-Gameplay | Bewegung, Schießen, Treffer, eine Karte, ein Modus (lokal). |
-| **P2 – Vertical Slice** | Spielbares Vertikal-Segment | Multiplayer, HUD, ein vollständiger Modus, UI-Grundgerüst. |
-| **P3 – Alpha** | Feature-vollständig | Alle Kernmodi, Progression, Anpassung, Backend-Anbindung. |
-| **P4 – Beta** | Stabilisierung | Balancing, Optimierung, Bugfixing, Play-Tests, Barrierefreiheit. |
-| **P5 – Launch** | Veröffentlichung | Store-Releases (Android/iOS), Desktop-Distribution, Web-Deployment. |
-| **P6 – Live-Ops** | Betrieb & Wachstum | Saisons, Events, neue Karten/Modi, Updates. |
+> Die Roadmap ist auf ein Multiplayer-First-Spiel ausgelegt und priorisiert zuerst die Spielbarkeit des Online-Kerns, danach Skalierung, Content und Live-Betrieb.
+
+| Phase | Zeitraum (Richtwert) | Ziel | Kern-Deliverables | Exit-Kriterien |
+|-------|----------------------|------|-------------------|----------------|
+| **P0 – Pre-Production** | Woche 1–4 | Vision, Scope und technische Grundlage absichern | Finalisiertes GDD, Netzwerk- und Backend-Konzept, UX-Wireframes, Art-Direction, Risk-Register, Tech-Spike für Movement/Replication | Kernentscheidungen sind getroffen; Multiplayer-Stack, Plattform-Targets und MVP-Scope sind freigegeben |
+| **P1 – Core Prototype** | Woche 5–8 | Spielbares Bewegungs- und Schießgefühl validieren | Lauf- und Schuss-Prototyp, Trefferlogik, einfache Deckung, ein Testlevel, Debug-HUD, Input-Mapping für 2 Plattformen | Kern-Feeling ist bestätigt; kein Designblocker bei Bewegung, Trefferfeedback oder Kamera |
+| **P2 – Multiplayer Vertical Slice** | Woche 9–14 | Erster vollständiger Online-Spielkreislauf | Lobby, Matchmaking, dedizierte Session, Team-Deathmatch, Respawn, Ping-Anzeige, Basis-UI, einfache Server-Telemetrie | Ein vollständiges Match kann end-to-end online gespielt werden; Stabilität und Latenz liegen innerhalb der Zielwerte |
+| **P3 – Alpha Content Expansion** | Woche 15–22 | Feature- und Content-Basis vervollständigen | Weitere Modi, 3 Launch-Karten, Loadout-System, Progression, Accounts, soziale Features, Anti-Cheat-Baseline, erste Live-Ops-Tools | Alle Muss-Anforderungen sind implementiert; Spiel ist feature-vollständig und intern testbar |
+| **P4 – Closed Beta / Balancing** | Woche 23–28 | Stabilität, Fairness und Usability optimieren | Matchmaking-Tuning, MMR-Feinschliff, Reconnect, Party-System, Performance-Optimierung, Barrierefreiheit, QA-Automation, Balancing-Patches | Closed Beta läuft mit echten Spielern; KPI-Ziele zu Stabilität, Latenz, Crashrate und Matchdauer werden erreicht |
+| **P5 – Soft Launch / Release Candidate** | Woche 29–34 | Release-Härte und Plattform-Freigabe | Store-Submission, WebGL-Freigabe, Release-Branch, Monetarisierung ohne Pay-to-Win, Monitoring-Dashboards, Support-Prozesse | Alle Plattformen sind freigegeben oder für den Start vorbereitet; kritische Bugs sind behoben |
+| **P6 – Live-Ops & Wachstum** | Laufend nach Launch | Bindung, Saisonbetrieb und Content-Erweiterung | Saisons, Events, neue Karten, neue Modi, kosmetische Drops, Community-Management, Anti-Cheat-Verbesserungen, Telemetrie-Auswertung | Live-Betrieb ist stabil; monatliche/seasonale Content-Roadmaps und KPI-Reviews laufen |
+
+### 12.1 Empfohlene Meilensteine
+- **M1:** Erstes lokales Schieß- und Bewegungsgefühl ist spielbar.
+- **M2:** Online-Session mit zwei Clients und Server-Autorität ist stabil nachweisbar.
+- **M3:** Team-Deathmatch ist vollständig von Lobby bis Ergebnisbildschirm spielbar.
+- **M4:** Drei Karten, Loadouts und Progression sind integriert.
+- **M5:** Beta-taugliche Stabilität, Performance und Reconnect-Verhalten sind erreicht.
+- **M6:** Release-Candidate erfüllt alle Plattform- und Sicherheitsanforderungen.
+- **M7:** Live-Ops-Prozesse für Saisons, Events und Content-Updates sind eingerichtet.
 
 ---
 
@@ -397,18 +431,22 @@ graph TD
 
 | ID | Risiko | Gegenmaßnahme |
 |----|--------|---------------|
-| R-01 | Performance auf WebGL/schwachen Mobilgeräten | Frühe Performance-Budgets, URP-Optimierung, LOD, Asset-Streaming. |
-| R-02 | Netzwerk-Latenz & Fairness | Server-Prediction, Regionsserver, Lag-Kompensation. |
-| R-03 | Cross-Play-Balance (Touch vs. Maus) | Optionale Trennung, Aim-Assist-Anpassung. |
-| R-04 | Cheating im Multiplayer | Server-Autorität, Anti-Cheat, Validierung. |
-| R-05 | UI-Konsistenz über sehr unterschiedliche Bildschirmgrößen | Responsives Design-System, frühe Geräte-Tests. |
-| R-06 | Umfang zu groß (Scope Creep) | Priorisierung (Muss/Soll/Kann), iterative Phasen. |
+| R-01 | Performance auf WebGL/schwachen Mobilgeräten | Frühe Performance-Budgets, URP-Optimierung, LOD, Asset-Streaming und reduzierte Effekte. |
+| R-02 | Netzwerk-Latenz, Paketverlust und Jitter | Server-Prediction, Regionsserver, Lag-Kompensation, Interpolation und Reconnect. |
+| R-03 | Cross-Play-Balance (Touch vs. Maus/Keyboard) | Optionale Trennung, Aim-Assist-Anpassung und getrennte Matchmaking-Pools. |
+| R-04 | Cheating im Multiplayer | Server-Autorität, Anti-Cheat, Validierung, Telemetrie und Missbrauchserkennung. |
+| R-05 | Hohe Backend-Kosten bei wachsender Spielerzahl | Skalierungsplanung, Lasttests, Autoscaling und klare Session-Limits. |
+| R-06 | Matchmaking-Ungleichgewicht oder schlechte Teamverteilung | MMR-Feintuning, Team-Balancing und regionale Regeln im Matchmaker. |
+| R-07 | Scope Creep durch zu viele Modi und Plattformdetails | Strikte Priorisierung (Muss/Soll/Kann), phasenweise Freigaben. |
+| R-08 | Moderations- und Jugendschutzanforderungen werden unterschätzt | Quick-Chat statt Offentext, Melde-/Blockierfunktionen, Content-Filter und Policies. |
 
 ### 13.2 Annahmen
 
 - Unity LTS und die genannten Gaming Services bleiben verfügbar und kompatibel.
-- Ein Backend-Dienst für Multiplayer/Matchmaking steht zur Verfügung.
+- Es steht ein Backend für Authentifizierung, Matchmaking, Party, Statistik und Session-Betrieb zur Verfügung.
+- Dedizierte Server oder vergleichbare serverautorisierte Sessions sind wirtschaftlich und technisch umsetzbar.
 - Die Zielgeräte erfüllen die in Abschnitt 4 genannten Mindestanforderungen.
+- Regionale Serververteilung ist verfügbar, um Latenz und Fairness zu verbessern.
 
 ---
 
@@ -419,9 +457,17 @@ graph TD
 | **Marker** | Paintball-Waffe / Abschussgerät. |
 | **HUD** | Head-Up-Display; die spielinterne Informationsanzeige. |
 | **MMR** | Matchmaking Rating; Bewertung der Spielstärke. |
-| **URP** | Universal Render Pipeline von Unity. |
+| **Tickrate** | Frequenz, mit der ein Server den Spielzustand aktualisiert. |
+| **Latency / Ping** | Verzögerung zwischen Client und Server. |
+| **Jitter** | Schwankung der Netzwerklatenz. |
+| **Packet Loss** | Verlust von Netzwerkpaketen während der Übertragung. |
+| **Relay** | Vermittlungsdienst für Netzwerkverbindungen zwischen Spielern und Servern. |
+| **Lobby** | Wartesaal vor dem Match mit Team-, Modus- und Bereitstellungsfunktionen. |
+| **Party** | Gruppe von Spielern, die gemeinsam ins Matchmaking geht. |
 | **Server-autoritativ** | Der Server entscheidet verbindlich über den Spielzustand. |
 | **Client-Prediction** | Vorhersage von Aktionen auf dem Client für flüssiges Spielgefühl. |
+| **Interpolation** | Glättung von Positionsdaten zwischen Netzwerkupdates. |
+| **Reconnect** | Wiederverbinden nach kurzzeitigem Verbindungsverlust. |
 | **Decal** | Aufgeprojizierte Textur (z. B. Farbklecks) auf Oberflächen. |
 | **Loadout** | Ausrüstungszusammenstellung eines Spielers. |
 | **Cross-Play** | Plattformübergreifendes gemeinsames Spielen. |
