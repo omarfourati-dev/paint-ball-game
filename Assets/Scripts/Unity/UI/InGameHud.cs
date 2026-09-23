@@ -1,3 +1,4 @@
+using Paintball.Core.Telemetry;
 using Paintball.Unity.Weapons;
 using UnityEngine;
 using UnityEngine.UI;
@@ -5,7 +6,8 @@ using UnityEngine.UI;
 namespace Paintball.Unity.UI
 {
     /// <summary>
-    /// In-Game HUD (UI-05): Munition, Trefferanzeige, Punktestand, Timer, Fadenkreuz.
+    /// In-Game HUD (UI-05): Munition, Trefferanzeige, Punktestand, Timer, Fadenkreuz,
+    /// sowie Verbindungsanzeige (FR-29: Ping, Paketverlust, Region, Qualität).
     /// </summary>
     public sealed class InGameHud : MonoBehaviour
     {
@@ -22,6 +24,12 @@ namespace Paintball.Unity.UI
         [SerializeField] private TMPro.TextMeshProUGUI _scoreText;
         [SerializeField] private TMPro.TextMeshProUGUI _timerText;
         [SerializeField] private TMPro.TextMeshProUGUI _phaseText;
+
+        [Header("Connection (FR-29)")]
+        [SerializeField] private TMPro.TextMeshProUGUI _pingText;
+        [SerializeField] private TMPro.TextMeshProUGUI _lossText;
+        [SerializeField] private TMPro.TextMeshProUGUI _regionText;
+        [SerializeField] private TMPro.TextMeshProUGUI _qualityText;
 
         [Header("Crosshair")]
         [SerializeField] private RectTransform _crosshair;
@@ -104,6 +112,18 @@ namespace Paintball.Unity.UI
                 c.a = 1f;
                 _hitIndicator.color = c;
             }
+        }
+
+        /// <summary>
+        /// Aktualisiert die Verbindungsanzeige aus der Core-Telemetrie (FR-29, P2):
+        /// Ping, Paketverlust, Region und bewertete Verbindungsqualität.
+        /// </summary>
+        public void UpdateConnectionInfo(double pingMs, double lossPercent, string region, ConnectionQuality quality)
+        {
+            if (_pingText != null) _pingText.text = $"{pingMs:0} ms";
+            if (_lossText != null) _lossText.text = $"{lossPercent:0.0} %";
+            if (_regionText != null) _regionText.text = string.IsNullOrEmpty(region) ? "-" : region;
+            if (_qualityText != null) _qualityText.text = quality.ToString();
         }
     }
 }

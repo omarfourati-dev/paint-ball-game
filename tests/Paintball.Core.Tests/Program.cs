@@ -117,6 +117,7 @@ namespace Paintball.Core.Tests
             Run("TDD: Belohnte Videos Daily-Cap und Cooldown (M-05)", RewardedVideo_CapAndCooldown);
             Run("TDD: Errungenschaften Fortschritt und Freischaltung (FR-45)", Achievements_Unlock);
             Run("TDD: Balance-Katalog datengetrieben Roundtrip (NFR-17)", BalanceCatalog_Roundtrip);
+            Run("TDD: Faires Team-Balancing nach MMR (NFR-15)", TeamBalance_Fair);
 
             Console.WriteLine();
             Console.WriteLine($"=== Ergebnis: {_passed} bestanden, {_failed} fehlgeschlagen ===");
@@ -2054,6 +2055,30 @@ namespace Paintball.Core.Tests
 
             var defaults = GameBalanceCatalog.Deserialize("bbq");
             Check.AreEqual(GameBalanceCatalog.DefaultMmrKFactor, defaults.MmrKFactor, "Ungültige Daten -> Defaults");
+        }
+
+        // ---------- Faires Team-Balancing (NFR-15) ----------
+
+        private static void TeamBalance_Fair()
+        {
+            var balancer = new TeamBalancer();
+            var mmr = new Dictionary<string, int>
+            {
+                { "A", 1800 }, { "B", 1700 }, { "C", 1500 },
+                { "D", 1400 }, { "E", 1200 }, { "F", 1000 }
+            };
+
+            var teams = balancer.Balance(mmr);
+            Check.AreEqual(3, teams.Team0.Count, "Team0 hat 3 Spieler");
+            Check.AreEqual(3, teams.Team1.Count, "Team1 hat 3 Spieler");
+            Check.IsTrue(teams.MmrGap <= 200, $"Lücke klein genug ({teams.MmrGap}), Maximum der Greedy-Snake für diese Werte");
+
+            var empty = balancer.Balance(null);
+            Check.AreEqual(0, empty.Team0.Count + empty.Team1.Count, "Leerer Input -> leere Teams");
+
+            var skillGap = new Dictionary<string, int> { { "Pro", 2500 }, { "N00b", 500 }, { "M", 1000 }, { "N", 900 } };
+            var gapTeams = balancer.Balance(skillGap);
+            Check.AreEqual(1100, gapTeams.MmrGap, "Skill-Gap: Greedy ergibt minimalen Abstand (Stärkster + Schwächster vs. Mitte)");
         }
     }
 

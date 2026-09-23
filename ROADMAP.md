@@ -194,7 +194,7 @@
 | FR-24 | Lobby-System mit Team-/Ready-/Kartenwahl | DONE (Netzwerk-Team-Zuweisung → mit Netcode) | `Unity/UI/LobbyScreen.cs` + `Unity/Match/LobbyConfig.cs` (Modus/Karte/Invite/Team/Ready/Countdown/Start); Core: `PartyLogic.SetTeam` | 1 Test |
 | FR-27 | Reconnect-Funktion | DONE (Core; Netzwerk-Anbindung → FR-22) | `Core/Session/ReconnectManager.cs` (Slot-Reservierung, Team-Wiederherstellung, Grace-Frist, Prune) | 1 Test |
 | FR-28 | Cross-Play (optional) | DONE (Core `CrossPlayPolicy` + `CrossPlaySettings` + SettingsProfile-Flag + Toggle; Netcode-Anbindung → FR-22) | — |
-| FR-29 | Ping/Paketverlust/Region-Anzeige | WIP (Core `MatchTelemetry` erweitert: Paketverlust, Region, Ping-Glättung, ConnectionQuality; HUD-Bindung → Unity) | (Telemetrie) | — |
+| FR-29 | Ping/Paketverlust/Region-Anzeige | DONE (Core `MatchTelemetry`: Paketverlust, Region, Ping-Glättung, ConnectionQuality; HUD-Bindung via `InGameHud.UpdateConnectionInfo` + `UI/ConnectionHudBridge.cs` (RTT aus UTP → Telemetrie → HUD); 1 Test) | (Telemetrie) | — |
 | FR-31 | Leaver-/AFK-Handling | DONE (Core; Ersatzsuche → Netcode) | `Core/Match/LeaverDetection.cs` (AFK-Timeout, Abandon, Belohnungs-Sperre, Queue-Cooldown) | 1 Test |
 
 ### 4.3 Charakter & Loadout (Unity-Only)
@@ -283,6 +283,7 @@
 | LOW | `RewardedVideoPolicy` (M-05): Daily-Cap + Cooldown | 0.5h | DONE (1 Test) |
 | LOW | `AchievementsCatalog` (FR-45): Errungenschaften, Freischalt-Schwellen, RewardXp | 1h | DONE (1 Test) |
 | MED | `GameBalanceCatalog` (NFR-17): datengetriebene Balance-Parameter (Remote-Config-tauglich) | 0.5h | DONE (1 Test) |
+| MED | `TeamBalancer` (NFR-15): Greedy-Snake-Verteilung nach MMR, minimale Team-Lücke | 0.5h | DONE (1 Test) |
 
 ---
 
@@ -355,7 +356,8 @@
 | RewardedVideoPolicy (M-05) | (in Program.cs) | 1 |
 | AchievementsCatalog (FR-45) | (in Program.cs) | 1 |
 | GameBalanceCatalog (NFR-17) | (in Program.cs) | 1 |
-| **Gesamt** | | **78** |
+| TeamBalancer (NFR-15) | (in Program.cs) | 1 |
+| **Gesamt** | | **79** |
 
 ---
 
@@ -385,6 +387,7 @@
 22. **[FR-53–56→DONE]** Karten-Katalog im Core: `MapCatalog` mit 3 Launch-Karten (Lagerhaus, Wald, Arena) inkl. Deckung, Nachschub, Spawn-Zonen, Symmetrie-Fairness-Check (`IsSpawnFair`) und dynamischer Deckung; `SceneBuilder` generiert die Szenen jetzt aus dem Katalog (Warehouse/Forest/Arena-Menüeinträge)
 23. **[FR-19/M-05/FR-46→DONE]** Restliche Core-Rückstände: `TrainingRules` (Bot-Training, `AffectsRanking=false`), `RewardedVideoPolicy` (M-05: Daily-Cap + Cooldown, UTC-Reset), `LeaderboardRanking.GetRanking(region)` (FR-46 regional) – jeweils 1 Test (76 Tests gesamt)
 24. **[FR-45/NFR-17→DONE]** `AchievementsCatalog` (Errungenschaften: Spielstil/Teamplay/Langzeit mit Schwellen und RewardXp) + `GameBalanceCatalog` (datengetriebene Balance-Parameter MMR-K/Schaden/Respawn/Cover mit Serialize, Remote-Config-tauglich) – jeweils 1 Test (78 Tests gesamt)
+25. **[FR-29/NFR-15→DONE]** HUD-Verbindungsanzeige + faire Teams: `InGameHud.UpdateConnectionInfo` + `ConnectionHudBridge` (RTT aus UTP → Telemetrie → HUD) binden FR-29; `TeamBalancer` (Greedy-Snake nach MMR, minimale Team-Lücke) erfüllt NFR-15 – jeweils 1 Test (79 Tests gesamt)
 
 ---
 
@@ -401,6 +404,8 @@
 - **DSGVO**: `PrivacyScreen` exportiert portables JSON und löscht alle lokalen Daten (NFR-12), `ResetAccount` setzt das Konto neu auf.
 - **Persistenz**: Account (`player-account.txt`), Settings, Tutorial, Battle Pass, Blocklist, Wallet, Challenges – alle dateibasiert via `LocalPersistence` mit PlayerPrefs-Migration.
 - **Karten**: `MapCatalog` liefert 3 Launch-Karten (Lagerhaus/Wald/Arena) mit Deckung, Nachschub, Spawn-Zonen und Dynamik – `SceneBuilder` erzeugt die Szenen daraus.
+- **Verbindungsqualität**: `InGameHud.UpdateConnectionInfo` + `ConnectionHudBridge` (UTP-RTT → Core-Telemetrie → HUD) zeigen Ping, Paketverlust, Region und `ConnectionQuality` (FR-29).
+- **Faire Teams**: `TeamBalancer` verteilt Spieler per Greedy-Snake nach MMR auf zwei Teams mit minimaler Lücken (NFR-15).
 - **Ergebnis** (`ResultScreen`): echtes `GameResult` + `OutcomeSummary` (Sieg, Stats, XP, MMR), kein Fake.
 
 **Für einen veröffentlichbaren MVP noch nötig (extern blockiert, nur Unity-Editor):**
