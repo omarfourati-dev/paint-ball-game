@@ -33,3 +33,7 @@ TestResults/
 # ===== OS =====
 .DS_Store
 Thumbs.db
+
+# ===== Unrelated ML caches (not part of the game) =====
+finetune/
+unsloth_compiled_cache/

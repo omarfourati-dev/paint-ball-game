@@ -1,0 +1,29 @@
+name: core-tests
+
+on:
+  push:
+    paths:
+      - 'Assets/Scripts/Core/**'
+      - 'tests/**'
+  pull_request:
+    paths:
+      - 'Assets/Scripts/Core/**'
+      - 'tests/**'
+  workflow_dispatch:
+
+jobs:
+  dotnet-tests:
+    name: Core Logic Tests (.NET)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Run core logic tests
+        run: dotnet run --project tests/Paintball.Core.Tests
+        env:
+          DOTNET_CLI_TELEMETRY_OPTOUT: '1'
