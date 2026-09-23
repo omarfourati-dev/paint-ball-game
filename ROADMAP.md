@@ -1,6 +1,6 @@
 # Roadmap & Scrum Board – Paintball Multiplayer
 
-> Aktualisiert: 2026-09-16 | Tests: 76/76 grün | Core-Module: 63 | Unity-Skripte: 55
+> Aktualisiert: 2026-09-16 | Tests: 78/78 grün | Core-Module: 65 | Unity-Skripte: 55
 
 ---
 
@@ -87,6 +87,7 @@
 | FR-40 | XP: Teamplay wird belohnt | DONE | `Core/Progression/XpCalculator.cs` | 2 Tests |
 | FR-41 | Levelkurve monoton | DONE | `Core/Progression/XpCalculator.cs` | (in FR-40) |
 | FR-44 | Statistiken pro Spieler (Accuracy, Kills, Assists) | DONE | `Core/Progression/MatchStatsTracker.cs`, `PlayerMatchStats.cs` | 2 Tests |
+| FR-45 | Errungenschaften & Meilensteine (Spielstil, Teamplay, Langzeit) | DONE | `Core/Progression/AchievementsCatalog.cs` (Freischalt-Schwellen pro Typ, RewardXp) | 1 Test |
 | M-01 | Wallet: Guthaben, Ein- und Auszahlung | DONE | `Core/Economy/PlayerWallet.cs` | 1 Test |
 | M-04 | Shop: Nur Kosmetik, kein Pay-to-Win | DONE | `Core/Economy/ShopCatalog.cs` | 1 Test |
 | M-06 | Lootbox: Transparente Odds | DONE | `Core/Economy/CosmeticLootBox.cs` | 1 Test |
@@ -116,6 +117,7 @@
 | FR-48 | Spieler-Account mit XP/Level, Persistenz | DONE | `Core/Progression/PlayerAccount.cs` | 2 Tests |
 | FR-48 | `PlayerProfile` ↔ `PlayerAccount` Verknüpfung | WIP | Unity: `Account/PlayerProfile.cs` | Keine (Unity-only) |
 | FR-49 | Fortschrittssynchronisation (Cloud Save) | TODO | — | Abhängig von UGS CloudSave |
+| NFR-17 | Konfigurierbare Spielparameter über Daten (Live-Tuning ohne Neu-Build) | DONE | `Core/Configuration/GameBalanceCatalog.cs` (MMR-K, Schaden, Respawn/Spawn-Schutz, Cover; Serialize/Deserialize) | 1 Test |
 
 ### 3.2 UI-Flow & Einstellungen
 
@@ -279,6 +281,8 @@
 | MED | `TrainingRules` (FR-19): Bot-Training ohne Rangfolgenwirkung | 0.5h | DONE (1 Test) |
 | MED | `LeaderboardRanking.GetRanking(region)` (FR-46): regionale Bestenliste | 0.5h | DONE (1 Test) |
 | LOW | `RewardedVideoPolicy` (M-05): Daily-Cap + Cooldown | 0.5h | DONE (1 Test) |
+| LOW | `AchievementsCatalog` (FR-45): Errungenschaften, Freischalt-Schwellen, RewardXp | 1h | DONE (1 Test) |
+| MED | `GameBalanceCatalog` (NFR-17): datengetriebene Balance-Parameter (Remote-Config-tauglich) | 0.5h | DONE (1 Test) |
 
 ---
 
@@ -349,7 +353,9 @@
 | TrainingRules (FR-19) | (in Program.cs) | 1 |
 | Leaderboard regional (FR-46) | (in Program.cs) | 1 |
 | RewardedVideoPolicy (M-05) | (in Program.cs) | 1 |
-| **Gesamt** | | **76** |
+| AchievementsCatalog (FR-45) | (in Program.cs) | 1 |
+| GameBalanceCatalog (NFR-17) | (in Program.cs) | 1 |
+| **Gesamt** | | **78** |
 
 ---
 
@@ -378,6 +384,7 @@
 21. **[FR-42/NFR-12/PA-05→DONE]** Live-Ops/Recht/Toggle nachgezogen: `ChallengeEvaluator`-Serialisierung + `ChallengeSystem`-Reset-Token; `PrivacyScreen` (DSGVO-Export/-Löschung + `ResetAccount`); `SettingsProfile.CrossPlayEnabled` + `CrossPlaySettings` + SettingsScreen-Toggle (71 Tests gesamt)
 22. **[FR-53–56→DONE]** Karten-Katalog im Core: `MapCatalog` mit 3 Launch-Karten (Lagerhaus, Wald, Arena) inkl. Deckung, Nachschub, Spawn-Zonen, Symmetrie-Fairness-Check (`IsSpawnFair`) und dynamischer Deckung; `SceneBuilder` generiert die Szenen jetzt aus dem Katalog (Warehouse/Forest/Arena-Menüeinträge)
 23. **[FR-19/M-05/FR-46→DONE]** Restliche Core-Rückstände: `TrainingRules` (Bot-Training, `AffectsRanking=false`), `RewardedVideoPolicy` (M-05: Daily-Cap + Cooldown, UTC-Reset), `LeaderboardRanking.GetRanking(region)` (FR-46 regional) – jeweils 1 Test (76 Tests gesamt)
+24. **[FR-45/NFR-17→DONE]** `AchievementsCatalog` (Errungenschaften: Spielstil/Teamplay/Langzeit mit Schwellen und RewardXp) + `GameBalanceCatalog` (datengetriebene Balance-Parameter MMR-K/Schaden/Respawn/Cover mit Serialize, Remote-Config-tauglich) – jeweils 1 Test (78 Tests gesamt)
 
 ---
 

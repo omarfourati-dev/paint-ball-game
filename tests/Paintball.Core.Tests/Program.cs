@@ -4,6 +4,7 @@ using System.Linq;
 using System.Numerics;
 using Paintball.Core.Ballistics;
 using Paintball.Core.Combat;
+using Paintball.Core.Configuration;
 using Paintball.Core.Economy;
 using Paintball.Core.Localization;
 using Paintball.Core.LiveOps;
@@ -114,6 +115,8 @@ namespace Paintball.Core.Tests
             Run("TDD: Trainingsmodus ohne Rangfolgenwirkung (FR-19)", Training_NoRankingImpact);
             Run("TDD: Bestenliste regionale Filterung (FR-46)", Leaderboard_RegionalFilter);
             Run("TDD: Belohnte Videos Daily-Cap und Cooldown (M-05)", RewardedVideo_CapAndCooldown);
+            Run("TDD: Errungenschaften Fortschritt und Freischaltung (FR-45)", Achievements_Unlock);
+            Run("TDD: Balance-Katalog datengetrieben Roundtrip (NFR-17)", BalanceCatalog_Roundtrip);
 
             Console.WriteLine();
             Console.WriteLine($"=== Ergebnis: {_passed} bestanden, {_failed} fehlgeschlagen ===");
@@ -1982,6 +1985,75 @@ namespace Paintball.Core.Tests
             var nextDay = day.AddDays(1);
             Check.IsTrue(policy.CanClaim(nextDay), "Neuer Tag setzt Cap zurück");
             Check.IsTrue(policy.TryClaim(nextDay), "Claim am Folgetag funktioniert");
+        }
+
+        // ---------- Errungenschaften (FR-45) ----------
+
+        private static void Achievements_Unlock()
+        {
+            var catalog = new AchievementsCatalog();
+            catalog.Register(new AchievementDef
+            {
+                Id = "killer50",
+                Title = "50 Eliminations",
+                Type = AchievementType.CombinedEliminations,
+                Target = 50,
+                RewardXp = 200
+            });
+            catalog.Register(new AchievementDef
+            {
+                Id = "mvp10",
+                Title = "10 Siege",
+                Type = AchievementType.CombinedWins,
+                Target = 10,
+                RewardXp = 150
+            });
+
+            Check.IsFalse(catalog.IsUnlocked("killer50"), "Start: nicht freigeschaltet");
+            catalog.Report(AchievementType.CombinedEliminations, 30);
+            Check.IsFalse(catalog.IsUnlocked("killer50"), "30/50 noch nicht erreicht");
+            Check.AreEqual(30, catalog.ProgressOf("killer50"), "Fortschritt dokumentiert");
+
+            catalog.Report(AchievementType.CombinedEliminations, 20);
+            Check.IsTrue(catalog.IsUnlocked("killer50"), "50 erreicht -> freigeschaltet");
+            Check.AreEqual(1, catalog.UnlockedCount, "genau eine Errungenschaft offen");
+
+            catalog.Report(AchievementType.CombinedEliminations, 10);
+            Check.AreEqual(50, catalog.ProgressOf("killer50"), "Fortschritt nach Freischaltung geklemmt");
+
+            catalog.Report(AchievementType.CombinedWins, 10);
+            Check.IsTrue(catalog.IsUnlocked("mvp10"), "Sieg-Meilenstein erreicht");
+            Check.AreEqual(2, catalog.UnlockedCount, "zweite Errungenschaft offen");
+            Check.IsTrue(catalog.UnlockedCount >= 2, "Übersicht zählt korrekt");
+        }
+
+        // ---------- Balance-Katalog (NFR-17) ----------
+
+        private static void BalanceCatalog_Roundtrip()
+        {
+            var cat = new GameBalanceCatalog();
+            Check.AreEqual(GameBalanceCatalog.DefaultMmrKFactor, cat.MmrKFactor, "Default K-Faktor");
+            Check.AreEqual(1f, cat.DamageBodyMultiplier, "Default Körperschaden");
+
+            cat.SetMmrKFactor(999);
+            Check.AreEqual(64, cat.MmrKFactor, "K-Faktor geklemmt (max)");
+            cat.SetCoverDamageMultiplier(-1f);
+            Check.AreEqual(0f, cat.CoverDamageMultiplier, "Cover-Multiplikator unten geklemmt");
+
+            cat.SetMmrKFactor(16);
+            cat.SetRespawnDelay(2f);
+            cat.SetSpawnProtection(4f);
+            cat.SetCoverDamageMultiplier(0.4f);
+
+            string data = cat.Serialize();
+            var restored = GameBalanceCatalog.Deserialize(data);
+            Check.AreEqual(16, restored.MmrKFactor, "Roundtrip K-Faktor");
+            Check.AreEqual(2f, restored.RespawnDelaySeconds, "Roundtrip Respawn");
+            Check.AreEqual(4f, restored.SpawnProtectionSeconds, "Roundtrip Protection");
+            Check.AreEqual(0.4f, restored.CoverDamageMultiplier, "Roundtrip Cover");
+
+            var defaults = GameBalanceCatalog.Deserialize("bbq");
+            Check.AreEqual(GameBalanceCatalog.DefaultMmrKFactor, defaults.MmrKFactor, "Ungültige Daten -> Defaults");
         }
     }
 
