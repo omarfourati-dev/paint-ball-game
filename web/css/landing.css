@@ -10,6 +10,7 @@
   :root { --bg: #fff6e8; --bg2: #ffe9c7; --panel: #ffffff; --panel2: #fff1d6; --text: #1e1640; --muted: #5d5380; color-scheme: light; }
 }
 *, *::before, *::after { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html { -webkit-text-size-adjust: 100%; }
 body {
   margin: 0; font-family: var(--font); color: var(--text); line-height: 1.5;

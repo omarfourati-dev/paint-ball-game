@@ -143,3 +143,8 @@ test('Landingpage: alle data-i18n-Schlüssel existieren in DE und EN', () => {
   assert.doesNotMatch(html, /<script(?![^>]*\bsrc=)[^>]*>/, 'kein Inline-Skript (CSP)');
   assert.doesNotMatch(html, /\son[a-z]+=/i, 'keine Inline-Handler (CSP)');
 });
+
+test('Landingpage-CSS: [hidden] gewinnt gegen display:flex/inline-flex der Komponenten (#live, .btn)', () => {
+  const css = readFileSync(new URL('../../web/css/landing.css', import.meta.url), 'utf8');
+  assert.match(css, /\[hidden\]\s*\{[^}]*display\s*:\s*none/i, '[hidden]-Regel mit display:none fehlt in landing.css');
+});

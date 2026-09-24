@@ -71,7 +71,13 @@ function renderMaps() {
     img.src = `/assets/landing/map-${m.id}-sm.jpg`;
     img.srcset = `/assets/landing/map-${m.id}-sm.jpg 640w, /assets/landing/map-${m.id}.jpg 1280w`;
     img.sizes = '(max-width: 700px) 92vw, 360px';
-    img.addEventListener('error', () => { img.removeAttribute('srcset'); img.removeAttribute('src'); img.alt = ''; }, { once: true });
+    img.addEventListener('error', () => {
+      img.hidden = true;
+      const placeholder = el('div', 'thumb');
+      placeholder.setAttribute('role', 'img');
+      placeholder.setAttribute('aria-label', m.name);
+      img.replaceWith(placeholder);
+    }, { once: true });
     const body = el('div', 'body');
     body.append(el('h3', null, m.name));
     if (m.description) body.append(el('p', null, m.description));
