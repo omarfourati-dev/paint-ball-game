@@ -147,6 +147,7 @@ namespace Paintball.Server
 
             if (Directory.Exists(webRoot))
             {
+                app.Use(RoutePages);
                 app.UseDefaultFiles();
                 var types = new Microsoft.AspNetCore.StaticFiles.FileExtensionContentTypeProvider();
                 types.Mappings[".hdr"] = "image/vnd.radiance";
@@ -161,6 +162,33 @@ namespace Paintball.Server
                 });
             }
             return app;
+        }
+
+        /// <summary>Seiten ohne Dateiendung: Spiel und Rechtstexte (Landingpage ist index.html unter /).</summary>
+        private static readonly Dictionary<string, string> Pages = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["/play"] = "/play.html",
+            ["/impressum"] = "/impressum.html",
+            ["/datenschutz"] = "/datenschutz.html"
+        };
+
+        /// <summary>Alte Einladungslinks /?join= → /play, /play/ → /play, saubere URLs → HTML-Datei.</summary>
+        private static Task RoutePages(HttpContext ctx, Func<Task> next)
+        {
+            string path = ctx.Request.Path.Value ?? "/";
+            QueryString query = ctx.Request.QueryString;
+            if (path == "/" && ctx.Request.Query.ContainsKey("join"))
+            {
+                ctx.Response.Redirect("/play" + query);
+                return Task.CompletedTask;
+            }
+            if (path.Length > 1 && path.EndsWith('/') && Pages.ContainsKey(path.TrimEnd('/')))
+            {
+                ctx.Response.Redirect(path.TrimEnd('/') + query, permanent: true);
+                return Task.CompletedTask;
+            }
+            if (Pages.TryGetValue(path, out string file)) ctx.Request.Path = file;
+            return next();
         }
 
         private static int HttpsPortOf(WebApplication app, ServerHostOptions options)

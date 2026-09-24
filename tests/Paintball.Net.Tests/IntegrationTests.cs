@@ -30,6 +30,9 @@ namespace Paintball.Net.Tests
             r.RunAsync("WSS: Übergroße Nachricht wird abgelehnt, Verbindung bleibt (NFR-10)", OversizeMessage);
             r.RunAsync("Web: Client-Dateien werden ausgeliefert und komprimiert (PA-03)", ServesClient);
             r.RunAsync("Web: 3D-Modelle (glTF/bin) und HDRI werden mit korrektem Typ ausgeliefert", ServesModels);
+            r.RunAsync("Web: Landingpage unter /, Einladung /?join= leitet ins Spiel (Query bleibt)", LandingAndJoinRedirect);
+            r.RunAsync("Web: /play, /impressum, /datenschutz liefern ihre Seite, /play/ → /play", PageRoutes);
+            r.RunAsync("Web: Service Worker wird nie gecacht (no-cache)", ServiceWorkerNoCache);
             r.RunAsync("Proxy: Hinter TLS-Reverse-Proxy nur HTTP, X-Forwarded-Proto zählt als HTTPS", ProxyTrustsForwardedProto);
             r.RunAsync("Proxy: Ohne Forwarded-Proto Weiterleitung auf HTTPS ohne internen Port", ProxyRedirectsWithoutPort);
             r.RunAsync("Proxy: WebSocket über den Proxy mit gleicher Origin", ProxyWebSocket);
@@ -50,6 +53,10 @@ namespace Paintball.Net.Tests
                 string web = AccountTests.TempDir();
                 HarnessWebRoot = web;
                 File.WriteAllText(Path.Combine(web, "index.html"), "<!doctype html><title>Paint-Ball</title>" + new string('x', 4000));
+                File.WriteAllText(Path.Combine(web, "play.html"), "<!doctype html><title>Spiel</title>");
+                File.WriteAllText(Path.Combine(web, "impressum.html"), "<!doctype html><title>Impressum</title>");
+                File.WriteAllText(Path.Combine(web, "datenschutz.html"), "<!doctype html><title>Datenschutz</title>");
+                File.WriteAllText(Path.Combine(web, "sw.js"), "self.PB_SW = {};\r\n");
                 var options = new ServerHostOptions
                 {
                     HttpsPort = 0,
@@ -227,6 +234,41 @@ namespace Paintball.Net.Tests
             Assert.AreEqual("too_large", err.GetProperty("code").GetString(), "Zu groß");
             await SendAsync(ws, new { t = "ping", c = 7.0 });
             Assert.AreEqual(7.0, (await ReceiveUntil(ws, "pong")).GetProperty("c").GetDouble(), "Verbindung lebt");
+        }
+
+        private static async Task LandingAndJoinRedirect()
+        {
+            await using Harness h = await Harness.StartAsync();
+            HttpResponseMessage landing = await h.Http.GetAsync("/");
+            Assert.AreEqual(HttpStatusCode.OK, landing.StatusCode, "Landingpage 200");
+            Assert.IsTrue((await landing.Content.ReadAsStringAsync()).Contains("<title>Paint-Ball</title>"), "index.html unter /");
+
+            HttpResponseMessage join = await h.Http.GetAsync("/?join=AB12&x=1");
+            Assert.AreEqual(HttpStatusCode.Found, join.StatusCode, "Einladung wird weitergeleitet");
+            Assert.AreEqual("/play?join=AB12&x=1", join.Headers.Location.OriginalString, "Query bleibt vollständig erhalten");
+        }
+
+        private static async Task PageRoutes()
+        {
+            await using Harness h = await Harness.StartAsync();
+            foreach (var (path, title) in new[] { ("/play", "Spiel"), ("/impressum", "Impressum"), ("/datenschutz", "Datenschutz") })
+            {
+                HttpResponseMessage res = await h.Http.GetAsync(path);
+                Assert.AreEqual(HttpStatusCode.OK, res.StatusCode, path + " 200");
+                Assert.IsTrue((await res.Content.ReadAsStringAsync()).Contains($"<title>{title}</title>"), path + " liefert eigene Seite");
+                Assert.AreEqual("text/html", res.Content.Headers.ContentType?.MediaType, path + " als HTML");
+            }
+            HttpResponseMessage slash = await h.Http.GetAsync("/play/?join=X");
+            Assert.AreEqual(HttpStatusCode.MovedPermanently, slash.StatusCode, "/play/ dauerhaft umgeleitet");
+            Assert.AreEqual("/play?join=X", slash.Headers.Location.OriginalString, "ohne Slash, Query erhalten");
+        }
+
+        private static async Task ServiceWorkerNoCache()
+        {
+            await using Harness h = await Harness.StartAsync();
+            HttpResponseMessage res = await h.Http.GetAsync("/sw.js");
+            Assert.AreEqual(HttpStatusCode.OK, res.StatusCode, "sw.js 200");
+            Assert.IsTrue(res.Headers.CacheControl?.NoCache == true, "sw.js mit no-cache, damit Updates sofort ankommen");
         }
 
         private static async Task ServesClient()
