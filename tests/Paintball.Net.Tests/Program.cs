@@ -16,7 +16,18 @@ namespace Paintball.Net.Tests
             var runner = new TestRunner(args.Length > 0 ? args[0] : null);
             Console.WriteLine("=== Paintball.Net Tests (QA-01/QA-02) ===");
 
+            RepositoryContractTests.RegisterUrlTest(runner);
             RepositoryContractTests.RegisterFor(runner, "memory", () => new Paintball.Net.Accounts.InMemoryPlayerRepository());
+
+            string testDb = Environment.GetEnvironmentVariable("TEST_DATABASE_URL");
+            if (string.IsNullOrEmpty(testDb))
+                Console.WriteLine("[SKIP] Repo[postgres]: TEST_DATABASE_URL nicht gesetzt – Postgres-Vertragstests übersprungen");
+            else
+            {
+                var pg = new Paintball.Net.Accounts.PostgresPlayerRepository(testDb);
+                pg.EnsureSchema();
+                RepositoryContractTests.RegisterFor(runner, "postgres", () => pg);
+            }
             MovementTests.Register(runner);
             MatchTests.Register(runner);
             BotTests.Register(runner);

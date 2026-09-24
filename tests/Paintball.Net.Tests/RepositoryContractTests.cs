@@ -97,7 +97,7 @@ namespace Paintball.Net.Tests
                 Assert.IsFalse(repo.Delete(p.Id), "zweites Löschen → false");
             });
 
-            r.Run($"Repo[{label}]: Match-Mutation beeinflußt nicht persistierte Geschichte", () =>
+            r.Run($"Repo[{label}]: Match-Mutation beeinflusst nicht persistierte Geschichte", () =>
             {
                 IPlayerRepository repo = factory();
                 PlayerRecord p = repo.Create("sub-" + Guid.NewGuid().ToString("N"), "m@x.de");
@@ -113,6 +113,21 @@ namespace Paintball.Net.Tests
                 var again = repo.RecentMatches(p.Id, 20);
                 Assert.AreEqual(5, again[0].Kills, "Kills nach Mutation zurückgegeben");
                 Assert.AreEqual("tdm", again[0].Mode, "Mode nach Mutation zurückgegeben");
+            });
+        }
+
+        /// <summary>Prüft die URL-Umwandlung von PostgresPlayerRepository.ToConnectionString; unabhängig von RegisterFor, damit sie nicht doppelt läuft.</summary>
+        public static void RegisterUrlTest(TestRunner r)
+        {
+            r.Run("Repo: DATABASE_URL im URL-Format wird in einen Npgsql-String umgewandelt", () =>
+            {
+                string cs = PostgresPlayerRepository.ToConnectionString("postgresql://zentrades:p%40ss@host.docker.internal:5433/paintball");
+                Assert.IsTrue(cs.Contains("Host=host.docker.internal"), "Host");
+                Assert.IsTrue(cs.Contains("Port=5433"), "Port");
+                Assert.IsTrue(cs.Contains("Username=zentrades"), "User");
+                Assert.IsTrue(cs.Contains("Password=p@ss"), "Passwort URL-dekodiert");
+                Assert.IsTrue(cs.Contains("Database=paintball"), "Datenbank");
+                Assert.AreEqual("Host=x;Database=y", PostgresPlayerRepository.ToConnectionString("Host=x;Database=y"), "Npgsql-String bleibt");
             });
         }
     }
