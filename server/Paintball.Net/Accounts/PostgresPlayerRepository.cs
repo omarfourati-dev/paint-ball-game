@@ -33,6 +33,9 @@ namespace Paintball.Net.Accounts
             return b.ConnectionString;
         }
 
+        /// <summary>Erzwingt Kind=Utc für timestamptz-Parameter; Aufrufer sind nicht vertrauenswürdig (Unspecified wird als UTC angenommen, Local korrekt umgerechnet).</summary>
+        private static DateTime Utc(DateTime d) => d.Kind == DateTimeKind.Utc ? d : d.Kind == DateTimeKind.Local ? d.ToUniversalTime() : DateTime.SpecifyKind(d, DateTimeKind.Utc);
+
         private const string Schema = @"
 CREATE TABLE IF NOT EXISTS schema_version (version int NOT NULL);
 CREATE TABLE IF NOT EXISTS players (
@@ -141,7 +144,7 @@ INSERT INTO schema_version (version) SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM sc
         public PlayerRecord Create(string googleSub, string email)
         {
             var id = Guid.NewGuid();
-            DateTime now = DateTime.UtcNow;
+            DateTime now = Utc(DateTime.UtcNow);
             using (NpgsqlCommand c = _db.CreateCommand("INSERT INTO players (id, google_sub, email, created_at, last_login_at) VALUES ($1, $2, $3, $4, $4)"))
             {
                 c.Parameters.AddWithValue(id); c.Parameters.AddWithValue(googleSub); c.Parameters.AddWithValue(email ?? string.Empty); c.Parameters.AddWithValue(now);
@@ -154,7 +157,7 @@ INSERT INTO schema_version (version) SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM sc
         {
             if (!TryGuid(playerId, out Guid g)) return;
             using NpgsqlCommand c = _db.CreateCommand("UPDATE players SET email = $2, last_login_at = $3 WHERE id = $1");
-            c.Parameters.AddWithValue(g); c.Parameters.AddWithValue(email ?? string.Empty); c.Parameters.AddWithValue(when);
+            c.Parameters.AddWithValue(g); c.Parameters.AddWithValue(email ?? string.Empty); c.Parameters.AddWithValue(Utc(when));
             c.ExecuteNonQuery();
         }
 
@@ -204,7 +207,7 @@ INSERT INTO schema_version (version) SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM sc
                 SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10 WHERE EXISTS (SELECT 1 FROM players WHERE id = $1)");
             c.Parameters.AddWithValue(g); c.Parameters.AddWithValue(m.Mode); c.Parameters.AddWithValue(m.Map); c.Parameters.AddWithValue(m.Won);
             c.Parameters.AddWithValue(m.Kills); c.Parameters.AddWithValue(m.Deaths); c.Parameters.AddWithValue(m.Objective);
-            c.Parameters.AddWithValue(m.XpGained); c.Parameters.AddWithValue(m.MmrChange); c.Parameters.AddWithValue(m.PlayedAt);
+            c.Parameters.AddWithValue(m.XpGained); c.Parameters.AddWithValue(m.MmrChange); c.Parameters.AddWithValue(Utc(m.PlayedAt));
             c.ExecuteNonQuery();
         }
 
@@ -228,7 +231,7 @@ INSERT INTO schema_version (version) SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM sc
         public IReadOnlyList<PlayerRecord> TopByMmr(int limit)
         {
             var list = new List<PlayerRecord>();
-            using NpgsqlCommand c = _db.CreateCommand($"SELECT {PlayerColumns} FROM players WHERE display_name IS NOT NULL ORDER BY mmr DESC, wins DESC LIMIT $1");
+            using NpgsqlCommand c = _db.CreateCommand($"SELECT {PlayerColumns} FROM players WHERE display_name IS NOT NULL ORDER BY mmr DESC, wins DESC, created_at ASC, id ASC LIMIT $1");
             c.Parameters.AddWithValue(limit);
             using NpgsqlDataReader r = c.ExecuteReader();
             while (r.Read()) list.Add(ReadPlayer(r));
@@ -252,7 +255,7 @@ INSERT INTO schema_version (version) SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM sc
         public void CreateSession(string tokenHash, string playerId, DateTime expiresAt)
         {
             using NpgsqlCommand c = _db.CreateCommand("INSERT INTO sessions (token_hash, player_id, expires_at) VALUES ($1, $2, $3)");
-            c.Parameters.AddWithValue(tokenHash); c.Parameters.AddWithValue(Guid.Parse(playerId)); c.Parameters.AddWithValue(expiresAt);
+            c.Parameters.AddWithValue(tokenHash); c.Parameters.AddWithValue(Guid.Parse(playerId)); c.Parameters.AddWithValue(Utc(expiresAt));
             c.ExecuteNonQuery();
         }
 
@@ -260,7 +263,7 @@ INSERT INTO schema_version (version) SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM sc
         {
             if (string.IsNullOrEmpty(tokenHash)) return null;
             using NpgsqlCommand c = _db.CreateCommand("SELECT player_id FROM sessions WHERE token_hash = $1 AND expires_at > $2");
-            c.Parameters.AddWithValue(tokenHash); c.Parameters.AddWithValue(now);
+            c.Parameters.AddWithValue(tokenHash); c.Parameters.AddWithValue(Utc(now));
             object v = c.ExecuteScalar();
             return v is Guid g ? g.ToString() : null;
         }
@@ -283,7 +286,7 @@ INSERT INTO schema_version (version) SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM sc
         public int DeleteExpiredSessions(DateTime now)
         {
             using NpgsqlCommand c = _db.CreateCommand("DELETE FROM sessions WHERE expires_at <= $1");
-            c.Parameters.AddWithValue(now);
+            c.Parameters.AddWithValue(Utc(now));
             return c.ExecuteNonQuery();
         }
     }

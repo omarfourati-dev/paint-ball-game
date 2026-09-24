@@ -101,7 +101,8 @@ namespace Paintball.Net.Accounts
         {
             lock (_lock)
                 return _players.Values.Where(p => p.DisplayName != null)
-                    .OrderByDescending(p => p.Mmr).ThenByDescending(p => p.Wins).Take(limit).Select(Copy).ToList();
+                    .OrderByDescending(p => p.Mmr).ThenByDescending(p => p.Wins).ThenBy(p => p.CreatedAt).ThenBy(p => p.Id)
+                    .Take(limit).Select(Copy).ToList();
         }
 
         public int Count() { lock (_lock) return _players.Count; }
