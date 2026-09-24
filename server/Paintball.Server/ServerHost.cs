@@ -324,7 +324,7 @@ namespace Paintball.Server
             for (int i = 0; i < 8 && dir != null; i++)
             {
                 string candidate = Path.Combine(dir, "web");
-                if (File.Exists(Path.Combine(candidate, "index.html"))) return candidate;
+                if (File.Exists(Path.Combine(candidate, "play.html"))) return candidate;
                 dir = Path.GetDirectoryName(dir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
             }
             return Path.Combine(AppContext.BaseDirectory, "web");

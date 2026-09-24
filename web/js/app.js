@@ -10,7 +10,7 @@ import * as S from './scene.js';
 import { t, setLang, getLang, phrases, tips } from './i18n.js';
 import { loadSettings, saveSettings, sanitize, rebind, ACTIONS, DEFAULT_KEYS, teamPalette } from './settings.js';
 import { TutorialTracker } from './tutorial.js';
-import { escapeHtml as esc, formatNumber, formatPercent, formatTime } from './format.js';
+import { escapeHtml as esc, formatNumber, formatPercent, formatTime, inviteUrl } from './format.js';
 import { MODES, TEAM_MODES } from './protocol.js';
 
 const MODE_ICON = { tdm: '⚔️', ffa: '💥', ctf: '🚩', elim: '☠️', koth: '👑', training: '🎯' };
@@ -381,7 +381,7 @@ export class App {
       : `<div class="card"><h3>${esc(t('lobby.players'))}</h3><span class="muted small">${esc(t('lobby.ffaNote'))}</span>${L.members.map(row).join('')}</div>`;
     const ro = !isHost || L.quick || L.state !== 'lobby';
     const opt = (list, cur, key) => list.map(v => `<option value="${v}" ${v === cur ? 'selected' : ''}>${esc(t(`${key}.${v}`))}</option>`).join('');
-    const inviteLink = `${location.origin}/?join=${L.code}`;
+    const inviteLink = inviteUrl(location.origin, L.code);
     el.innerHTML = `
       <div class="wrap">
         <div class="topbar">

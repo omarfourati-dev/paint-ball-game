@@ -25,7 +25,7 @@ async (page) => {
     const p = await ctx.newPage();
     p.on('pageerror', e => errors.push(`${name}: ${e.message}`));
     p.on('console', m => { if (m.type() === 'error') errors.push(`${name} console: ${m.text()}`); });
-    await p.goto(BASE + (opts.query ?? '/'));
+    await p.goto(BASE + (opts.query ?? '/play'));
     const welcomed = await wait(p, () => ['welcome', 'menu', 'lobby'].includes(window.__paintball?.screen));
     if (await p.evaluate(() => window.__paintball.screen === 'welcome')) {
       await p.fill('#welcome-name', name);

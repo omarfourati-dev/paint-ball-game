@@ -9,7 +9,7 @@ async (page) => {
   const p = await ctx.newPage();
   p.on('pageerror', e => errors.push(e.message));
   p.on('console', m => { if (m.type() === 'error' || m.type() === 'warning') errors.push(m.text()); });
-  await p.goto(BASE + '/');
+  await p.goto(BASE + '/play');
   await p.waitForFunction(() => ['welcome', 'menu'].includes(window.__paintball?.screen), null, { timeout: 20000 });
   if (await p.evaluate(() => window.__paintball.screen === 'welcome')) {
     await p.fill('#welcome-name', 'Optik');

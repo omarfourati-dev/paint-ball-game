@@ -22,3 +22,8 @@ export function formatPercent(v, lang) {
 export function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 }
+
+/** Einladungslink in einen privaten Raum – das Spiel liegt unter /play. */
+export function inviteUrl(origin, code) {
+  return `${origin}/play?join=${encodeURIComponent(code)}`;
+}

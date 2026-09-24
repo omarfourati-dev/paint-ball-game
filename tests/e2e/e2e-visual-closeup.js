@@ -3,7 +3,7 @@ async (page) => {
   const BASE = 'https://localhost:5443', OUT = 'e2e-output/';
   const ctx = await page.context().browser().newContext({ ignoreHTTPSErrors: true, viewport: { width: 1280, height: 720 } });
   const p = await ctx.newPage();
-  await p.goto(BASE + '/');
+  await p.goto(BASE + '/play');
   await p.waitForFunction(() => ['welcome', 'menu'].includes(window.__paintball?.screen), null, { timeout: 20000 });
   if (await p.evaluate(() => window.__paintball.screen === 'welcome')) { await p.fill('#welcome-name', 'Nah'); await p.click('#welcome-form button[type=submit]'); }
   await p.waitForFunction(() => window.__paintball.profile?.name, null, { timeout: 10000 });

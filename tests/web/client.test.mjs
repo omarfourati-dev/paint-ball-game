@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { STRINGS, t, setLang, phrases, getLang } from '../../web/js/i18n.js';
 import { DEFAULTS, sanitize, loadSettings, saveSettings, rebind, teamPalette, ACTIONS } from '../../web/js/settings.js';
 import { TutorialTracker, STEPS } from '../../web/js/tutorial.js';
-import { formatTime, connectionQuality, formatNumber } from '../../web/js/format.js';
+import { formatTime, connectionQuality, formatNumber, inviteUrl } from '../../web/js/format.js';
 import { aimAngles, aimAssistFactor } from '../../web/js/aim.js';
 
 function memoryStorage() {
@@ -103,4 +103,9 @@ test('Zielen: Winkel vom Auge zum Fadenkreuzziel, Zielhilfe nur nah am Gegner (U
   assert.equal(aimAssistFactor(0.2, true), 1, 'weit weg: keine Verlangsamung');
   assert.ok(aimAssistFactor(0.01, true) < 1, 'nah am Ziel: verlangsamt');
   assert.equal(aimAssistFactor(0.01, false), 1, 'aus = aus');
+});
+
+test('Einladungslink zeigt ins Spiel unter /play und kodiert den Code', () => {
+  assert.equal(inviteUrl('https://paint-ball-game.omarfourati.de', 'AB12'), 'https://paint-ball-game.omarfourati.de/play?join=AB12');
+  assert.equal(inviteUrl('https://x.de', 'A B&C'), 'https://x.de/play?join=A%20B%26C');
 });
