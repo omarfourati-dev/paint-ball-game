@@ -40,7 +40,7 @@ test('SW: beim Aktivieren nur eigene alte Caches löschen', () => {
   assert.match(SW.CACHE_VERSION, /^pb-v\d+$/);
 });
 
-test('SW: Shell enthält jedes Client-Modul und verweist nur auf existierende Dateien', { todo: 'grün ab Task 6 (Landingpage-Dateien)' }, () => {
+test('SW: Shell enthält jedes Client-Modul und verweist nur auf existierende Dateien', () => {
   const route = { '/': 'index.html', '/play': 'play.html', '/impressum': 'impressum.html', '/datenschutz': 'datenschutz.html' };
   for (const entry of SW.SHELL) {
     const file = route[entry] ?? entry.slice(1);

@@ -131,3 +131,15 @@ test('i18n: Landingpage-Texte in beiden Sprachen', () => {
   assert.ok(keys.length >= 40, 'Landing-Texte vorhanden');
   for (const k of keys) assert.ok(STRINGS.en[k]?.trim(), `EN fehlt: ${k}`);
 });
+
+test('Landingpage: alle data-i18n-Schlüssel existieren in DE und EN', () => {
+  const html = readFileSync(new URL('../../web/index.html', import.meta.url), 'utf8');
+  const keys = [...html.matchAll(/data-i18n(?:-alt)?="([^"]+)"/g)].map(m => m[1]);
+  assert.ok(keys.length >= 10, 'Landingpage nutzt Übersetzungen');
+  for (const k of keys) {
+    assert.ok(STRINGS.de[k], `DE fehlt: ${k}`);
+    assert.ok(STRINGS.en[k], `EN fehlt: ${k}`);
+  }
+  assert.doesNotMatch(html, /<script(?![^>]*\bsrc=)[^>]*>/, 'kein Inline-Skript (CSP)');
+  assert.doesNotMatch(html, /\son[a-z]+=/i, 'keine Inline-Handler (CSP)');
+});

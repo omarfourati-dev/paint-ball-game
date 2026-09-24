@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Paint-Ball</title>
+  <meta name="description" content="Schnelles, faires Online-Paintball direkt im Browser – ohne Download. Team-Deathmatch, Capture the Flag, King of the Hill und mehr. Auch als App installierbar.">
+  <meta name="theme-color" content="#1b1433">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Paint-Ball – Online-Paintball im Browser">
+  <meta property="og:description" content="Schnelles, faires Online-Paintball direkt im Browser.">
+  <meta property="og:image" content="/assets/landing/hero.jpg">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="stylesheet" href="/css/landing.css">
+  <script type="module" src="/js/landing.js"></script>
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="/"><img src="/favicon.svg" alt="" width="36" height="36"><span>Paint-Ball</span></a>
+    <button class="chip" id="lang-toggle" type="button" data-i18n="landing.lang">English</button>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="hero-text">
+        <h1>Paint-Ball</h1>
+        <p class="tagline" data-i18n="landing.tagline">Schnelles, faires Online-Paintball – direkt im Browser, ohne Download.</p>
+        <p class="live" id="live" hidden><span class="dot" aria-hidden="true"></span><span id="live-text"></span></p>
+        <div class="cta">
+          <a class="btn pink big" href="/play" id="btn-play" data-i18n="landing.play">Jetzt im Browser spielen</a>
+          <button class="btn yellow" type="button" id="btn-install" data-i18n="landing.install">Als App installieren</button>
+          <button class="btn grey" type="button" id="btn-exe" aria-disabled="true">
+            <span data-i18n="landing.exe">Desktop-Version (.exe)</span>
+            <small data-i18n="landing.exeSoon">bald verfügbar</small>
+          </button>
+        </div>
+        <p class="hint" id="install-hint" role="status" hidden></p>
+      </div>
+      <picture class="shot hero-shot">
+        <source media="(max-width: 700px)" srcset="/assets/landing/hero-sm.jpg">
+        <img src="/assets/landing/hero.jpg" width="1280" height="720" alt="" data-i18n-alt="landing.heroAlt">
+      </picture>
+    </section>
+
+    <section id="modes">
+      <h2 data-i18n="landing.modes">Spielmodi</h2>
+      <ul class="tiles" id="mode-list"></ul>
+    </section>
+
+    <section id="maps">
+      <h2 data-i18n="landing.maps">Karten</h2>
+      <ul class="tiles maps" id="map-list"></ul>
+    </section>
+
+    <section id="features">
+      <h2 data-i18n="landing.features">Warum Paint-Ball?</h2>
+      <ul class="tiles" id="feature-list"></ul>
+    </section>
+
+    <div class="split">
+      <section id="leaderboard">
+        <h2 data-i18n="landing.leaderboard">Bestenliste</h2>
+        <ol class="board" id="board"></ol>
+      </section>
+      <section id="controls">
+        <h2 data-i18n="landing.controls">Steuerung</h2>
+        <ul class="keys" id="key-list"></ul>
+        <p class="muted" data-i18n="landing.controlsTouch">Auf Handy und Tablet mit virtuellem Stick und Buttons.</p>
+      </section>
+    </div>
+  </main>
+
+  <footer class="foot">
+    <nav>
+      <a href="/impressum" data-i18n="landing.imprint">Impressum</a>
+      <a href="/datenschutz" data-i18n="landing.privacy">Datenschutz</a>
+      <a href="https://omarfourati.de" rel="noopener" data-i18n="landing.byline">Ein Projekt von Omar Fourati</a>
+    </nav>
+    <span class="muted" id="version"></span>
+  </footer>
+
+  <dialog id="ios-dialog" aria-labelledby="ios-title">
+    <h2 id="ios-title" data-i18n="landing.iosTitle">Auf dem iPhone/iPad installieren</h2>
+    <ol>
+      <li data-i18n="landing.iosStep1">Tippe unten in Safari auf „Teilen“.</li>
+      <li data-i18n="landing.iosStep2">Wähle „Zum Home-Bildschirm“.</li>
+      <li data-i18n="landing.iosStep3">Tippe auf „Hinzufügen“ – fertig!</li>
+    </ol>
+    <form method="dialog"><button class="btn yellow" data-i18n="common.close">Schließen</button></form>
+  </dialog>
+</body>
+</html>
