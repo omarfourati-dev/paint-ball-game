@@ -109,3 +109,25 @@ test('Einladungslink zeigt ins Spiel unter /play und kodiert den Code', () => {
   assert.equal(inviteUrl('https://paint-ball-game.omarfourati.de', 'AB12'), 'https://paint-ball-game.omarfourati.de/play?join=AB12');
   assert.equal(inviteUrl('https://x.de', 'A B&C'), 'https://x.de/play?join=A%20B%26C');
 });
+
+import { installMode, isIos } from '../../web/js/install.js';
+
+test('Installieren: Weg je Browser', () => {
+  assert.equal(installMode({ standalone: true, hasPrompt: true, ios: false }), 'installed');
+  assert.equal(installMode({ standalone: false, hasPrompt: true, ios: false }), 'prompt');
+  assert.equal(installMode({ standalone: false, hasPrompt: false, ios: true }), 'ios');
+  assert.equal(installMode({ standalone: false, hasPrompt: false, ios: false }), 'unsupported');
+});
+
+test('Installieren: iPhone und iPad (auch als „Mac" getarnt) erkannt', () => {
+  assert.ok(isIos('Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)'));
+  assert.ok(isIos('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', 5), 'iPadOS meldet sich als Mac mit Touch');
+  assert.ok(!isIos('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', 0), 'echter Mac');
+  assert.ok(!isIos('Mozilla/5.0 (Windows NT 10.0; Win64; x64)'));
+});
+
+test('i18n: Landingpage-Texte in beiden Sprachen', () => {
+  const keys = Object.keys(STRINGS.de).filter(k => k.startsWith('landing.'));
+  assert.ok(keys.length >= 40, 'Landing-Texte vorhanden');
+  for (const k of keys) assert.ok(STRINGS.en[k]?.trim(), `EN fehlt: ${k}`);
+});
