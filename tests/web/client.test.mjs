@@ -119,7 +119,7 @@ test('Installieren: Weg je Browser', () => {
   assert.equal(installMode({ standalone: false, hasPrompt: false, ios: false }), 'unsupported');
 });
 
-test('Installieren: iPhone und iPad (auch als „Mac" getarnt) erkannt', () => {
+test('Installieren: iPhone und iPad (auch als „Mac“ getarnt) erkannt', () => {
   assert.ok(isIos('Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)'));
   assert.ok(isIos('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', 5), 'iPadOS meldet sich als Mac mit Touch');
   assert.ok(!isIos('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', 0), 'echter Mac');
