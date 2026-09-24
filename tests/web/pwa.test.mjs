@@ -43,7 +43,7 @@ test('Rechtstexte: Impressum mit Pflichtangaben, Datenschutz mit Betroffenenrech
     assert.ok(imprint.includes(s), `Impressum enthält ${s}`);
   const privacy = readFileSync(webPath('datenschutz.html'), 'utf8');
   for (const s of ['Verantwortlich', 'IONOS', "Let's Encrypt", 'keine Cookies', 'Art. 6 Abs. 1 lit. b DSGVO', 'Art. 6 Abs. 1 lit. f DSGVO',
-    'Meine Daten exportieren', 'Konto löschen', 'Landesbeauftragte für Datenschutz und Informationsfreiheit Nordrhein-Westfalen'])
+    'Meine Daten exportieren', 'Konto löschen', 'Landesbeauftragten für Datenschutz und Informationsfreiheit Nordrhein-Westfalen'])
     assert.ok(privacy.includes(s), `Datenschutz enthält ${s}`);
   for (const html of [imprint, privacy]) assert.doesNotMatch(html, /<script(?![^>]*\bsrc=)[^>]*>/, 'kein Inline-Skript');
 });
