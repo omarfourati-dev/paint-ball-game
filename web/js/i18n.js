@@ -354,7 +354,8 @@ export const STRINGS = {
     'common.on': 'An',
     'common.off': 'Aus',
     'common.level': 'Lvl',
-    'common.coins': 'Münzen'
+    'common.coins': 'Münzen',
+    'pwa.update': 'Neue Version verfügbar – neu laden'
   },
   en: {
     'app.subtitle': 'Fast paint battles in your browser',
@@ -672,7 +673,8 @@ export const STRINGS = {
     'common.on': 'On',
     'common.off': 'Off',
     'common.level': 'Lvl',
-    'common.coins': 'Coins'
+    'common.coins': 'Coins',
+    'pwa.update': 'New version available – reload'
   }
 };
 
