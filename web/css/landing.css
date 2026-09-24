@@ -14,6 +14,7 @@
 html { -webkit-text-size-adjust: 100%; }
 body {
   margin: 0; font-family: var(--font); color: var(--text); line-height: 1.5;
+  background-color: var(--bg); /* Fallback ohne color-mix() (z. B. iOS 15), sonst bliebe die Seite weiß */
   background:
     radial-gradient(circle at 8% 12%, color-mix(in srgb, var(--pink) 22%, transparent) 0 120px, transparent 121px),
     radial-gradient(circle at 92% 30%, color-mix(in srgb, var(--cyan) 18%, transparent) 0 90px, transparent 91px),
@@ -104,4 +105,9 @@ dialog li { margin-bottom: 8px; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+/* Hellmodus-Kontrast: Gelb ist auf Creme kaum lesbar (h1 ≥ 3:1 auch über dem Pink-Klecks, Rang ≥ 4.5:1). Dunkelmodus unverändert. */
+@media (prefers-color-scheme: light) {
+  h1 { color: #db2777; }
+  .board .rank { color: #b45309; }
 }

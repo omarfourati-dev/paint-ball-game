@@ -791,5 +791,11 @@ export function t(key, params) {
   return s;
 }
 
+/** Kartenname in der aktuellen Sprache; Karten ohne Übersetzung behalten den Namen aus der API. */
+export function mapName(map) {
+  const key = `map.${map.id}`;
+  return key in STRINGS[lang] || key in STRINGS.de ? t(key) : map.name;
+}
+
 export const phrases = l => PHRASES[l === 'en' ? 'en' : 'de'];
 export const tips = () => TIPS[lang];

@@ -1,5 +1,5 @@
 // Landingpage: Sprache, Live-Daten (Health, Karten, Bestenliste), App-Installation, Service Worker.
-import { t, setLang, getLang } from './i18n.js';
+import { t, setLang, getLang, mapName } from './i18n.js';
 import { loadSettings, saveSettings } from './settings.js';
 import { installMode, isIos } from './install.js';
 import { registerServiceWorker } from './sw-register.js';
@@ -10,7 +10,7 @@ const KEYS = [['W A S D', 'move'], ['🖱', 'aim'], ['🖱 L', 'fire'], ['R', 'r
   ['C', 'crouch'], ['⇧', 'sprint'], ['Q', 'dash'], ['F', 'heal'], ['Tab', 'score']];
 const FALLBACK_MAPS = [
   { id: 'warehouse', name: 'Lagerhaus' }, { id: 'forest', name: 'Wald' },
-  { id: 'arena', name: 'Arena' }, { id: 'speedball', name: 'Speedball' }
+  { id: 'arena', name: 'Arena' }, { id: 'speedball', name: 'Turnierfeld' }
 ];
 
 const $ = sel => document.querySelector(sel);
@@ -65,9 +65,10 @@ function renderMaps() {
   const maps = data.maps ?? FALLBACK_MAPS;
   $('#map-list').replaceChildren(...maps.filter(m => /^[a-z0-9-]+$/.test(m.id)).map(m => {
     const li = el('li', 'tile');
+    const name = mapName(m);
     const img = el('img', 'thumb');
     img.loading = 'lazy';
-    img.width = 640; img.height = 360; img.alt = m.name;
+    img.width = 640; img.height = 360; img.alt = name;
     img.src = `/assets/landing/map-${m.id}-sm.jpg`;
     img.srcset = `/assets/landing/map-${m.id}-sm.jpg 640w, /assets/landing/map-${m.id}.jpg 1280w`;
     img.sizes = '(max-width: 700px) 92vw, 360px';
@@ -75,11 +76,11 @@ function renderMaps() {
       img.hidden = true;
       const placeholder = el('div', 'thumb');
       placeholder.setAttribute('role', 'img');
-      placeholder.setAttribute('aria-label', m.name);
+      placeholder.setAttribute('aria-label', name);
       img.replaceWith(placeholder);
     }, { once: true });
     const body = el('div', 'body');
-    body.append(el('h3', null, m.name));
+    body.append(el('h3', null, name));
     if (m.description) body.append(el('p', null, m.description));
     if (m.maxPlayers) body.append(el('span', 'badge', t('landing.mapPlayers', { n: m.maxPlayers })));
     li.append(img, body);

@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { STRINGS, t, setLang, phrases, getLang } from '../../web/js/i18n.js';
+import { STRINGS, t, setLang, phrases, getLang, mapName } from '../../web/js/i18n.js';
 import { DEFAULTS, sanitize, loadSettings, saveSettings, rebind, teamPalette, ACTIONS } from '../../web/js/settings.js';
 import { TutorialTracker, STEPS } from '../../web/js/tutorial.js';
 import { formatTime, connectionQuality, formatNumber, inviteUrl } from '../../web/js/format.js';
@@ -147,4 +147,20 @@ test('Landingpage: alle data-i18n-Schlüssel existieren in DE und EN', () => {
 test('Landingpage-CSS: [hidden] gewinnt gegen display:flex/inline-flex der Komponenten (#live, .btn)', () => {
   const css = readFileSync(new URL('../../web/css/landing.css', import.meta.url), 'utf8');
   assert.match(css, /\[hidden\]\s*\{[^}]*display\s*:\s*none/i, '[hidden]-Regel mit display:none fehlt in landing.css');
+});
+
+test('Landingpage: Kartennamen übersetzt, unbekannte Karten behalten den API-Namen', () => {
+  setLang('de');
+  assert.equal(mapName({ id: 'warehouse', name: 'Warehouse' }), 'Lagerhaus');
+  assert.equal(mapName({ id: 'speedball', name: 'Turnierfeld' }), 'Turnierfeld (NXL)');
+  setLang('en');
+  assert.equal(mapName({ id: 'forest', name: 'Wald' }), 'Forest');
+  assert.equal(mapName({ id: 'neu-2027', name: 'Hafen' }), 'Hafen', 'ohne Schlüssel: Name aus der API');
+  setLang('de');
+});
+
+test('Landingpage: Fallback-Karte speedball heißt wie in der API „Turnierfeld“', () => {
+  const src = readFileSync(new URL('../../web/js/landing.js', import.meta.url), 'utf8');
+  assert.match(src, /\{ id: 'speedball', name: 'Turnierfeld' \}/);
+  assert.match(src, /mapName\(m\)/, 'renderMaps nutzt die Übersetzung');
 });
