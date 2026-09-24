@@ -116,7 +116,7 @@ namespace Paintball.Net.Tests
         {
             var options = new ServerOptions { QuickMatchWaitSeconds = 2f, ResultsSeconds = 2f, LobbyCountdownSeconds = 1f };
             configure?.Invoke(options);
-            return new GameServer(options, new AccountStore(AccountTests.TempDir()));
+            return new GameServer(options, AccountTests.NewStore());
         }
 
         internal static void TickFor(GameServer s, float seconds)

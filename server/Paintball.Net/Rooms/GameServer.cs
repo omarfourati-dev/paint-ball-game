@@ -215,20 +215,25 @@ namespace Paintball.Net.Rooms
         {
             string name = msg.Str("name", 64, string.Empty);
             string token = msg.Str("token", 128);
-            LoginResult login = Accounts.Login(token, name);
+            // ÜBERGANG bis Task 4: Legacy-Anmeldung über das Client-Token als Pseudo-Google-sub.
+            string legacy = string.IsNullOrEmpty(token) ? Guid.NewGuid().ToString("N") : token;
+            SignInResult signIn = Accounts.SignIn("legacy:" + legacy, "");
+            if (Accounts.NeedsName(signIn.PlayerId) && Accounts.SetName(signIn.PlayerId, name) != NameResult.Ok)
+                Accounts.SetName(signIn.PlayerId, "Spieler-" + System.Security.Cryptography.RandomNumberGenerator.GetInt32(1000, 9999));
+            PlayerAccount legacyAccount = Accounts.GetAccount(signIn.PlayerId);
             Metrics.Logins++;
 
             // Altes Sitzungsobjekt desselben Kontos ersetzen (nur eine aktive Sitzung)
             foreach (Session other in _sessions.Values.ToList())
             {
-                if (other == s || other.AccountId != login.Account.PlayerId || !other.Authenticated) continue;
+                if (other == s || other.AccountId != legacyAccount.PlayerId || !other.Authenticated) continue;
                 other.Sink.Close("replaced");
                 DropSession(other);
             }
 
             s.Authenticated = true;
-            s.AccountId = login.Account.PlayerId;
-            s.Name = login.Account.DisplayName;
+            s.AccountId = legacyAccount.PlayerId;
+            s.Name = legacyAccount.DisplayName;
             s.Input = msg.Str("input", 8, "kbm") switch { "touch" => "touch", "pad" => "pad", _ => "kbm" };
             s.CrossPlay = msg.Bool("crossPlay", true);
             s.Lang = msg.Str("lang", 5, "de") == "en" ? "en" : "de";
@@ -245,13 +250,13 @@ namespace Paintball.Net.Rooms
             s.Send(Json.Write(w =>
             {
                 w.WriteString("t", "welcome");
-                w.WriteString("account", login.Account.PlayerId);
-                w.WriteString("token", login.Token);
-                w.WriteString("name", login.Account.DisplayName);
-                w.WriteBoolean("isNew", login.IsNew);
+                w.WriteString("account", legacyAccount.PlayerId);
+                w.WriteString("token", legacy);
+                w.WriteString("name", legacyAccount.DisplayName);
+                w.WriteBoolean("isNew", signIn.IsNew);
                 w.Num("serverTime", Time, 3);
                 w.WritePropertyName("profile");
-                WriteProfile(w, login.Account.PlayerId);
+                WriteProfile(w, legacyAccount.PlayerId);
             }));
 
             // Reconnect in laufendes Match (FR-27)

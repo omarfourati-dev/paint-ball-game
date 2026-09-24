@@ -92,7 +92,8 @@ namespace Paintball.Server
             });
             builder.Services.Configure<BrotliCompressionProviderOptions>(o => o.Level = CompressionLevel.Optimal);
 
-            var accounts = new AccountStore(Path.GetFullPath(options.DataDirectory));
+            // ÜBERGANG bis Task 5: In-Memory-Repository, Task 5 verdrahtet Postgres.
+            var accounts = new AccountStore(new InMemoryPlayerRepository());
             var game = new GameServer(options.Game, accounts);
             builder.Services.AddSingleton(game);
             if (options.RunGameLoop) builder.Services.AddHostedService(_ => new GameLoopService(game));
@@ -253,19 +254,10 @@ namespace Paintball.Server
                 return Results.Json(accounts.Leaderboard(top).Select(r => new { r.Rank, r.Name, r.Mmr, r.Level, r.League, r.Division }));
             });
 
-            // DSGVO (NFR-12): Auskunft und Löschung – Authentifizierung per Bearer-Token
-            app.MapGet("/api/me/export", (HttpRequest req) =>
-            {
-                string id = accounts.AccountIdForToken(BearerToken(req));
-                return id == null ? Results.Unauthorized() : Results.Text(accounts.Export(id), "application/json");
-            });
-            app.MapDelete("/api/me", (HttpRequest req) =>
-            {
-                string id = accounts.AccountIdForToken(BearerToken(req));
-                if (id == null) return Results.Unauthorized();
-                accounts.Delete(id);
-                return Results.NoContent();
-            });
+            // DSGVO (NFR-12): Auskunft und Löschung.
+            // ÜBERGANG bis Task 5: vorübergehend 501, Task 5 authentifiziert über das Session-Cookie.
+            app.MapGet("/api/me/export", () => Results.StatusCode(501));
+            app.MapDelete("/api/me", () => Results.StatusCode(501));
         }
 
         private static string BearerToken(HttpRequest req)

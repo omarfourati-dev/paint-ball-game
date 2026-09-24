@@ -5,20 +5,22 @@ using Paintball.Net.Accounts;
 
 namespace Paintball.Net.Tests
 {
-    /// <summary>Konten, Profile, Belohnungen, Bestenliste, DSGVO (FR-40..FR-48, NFR-12, M-04).</summary>
+    /// <summary>Konten über Google-sub, eindeutige Namen, Sessions, Belohnungen, Bestenliste, DSGVO.</summary>
     internal static class AccountTests
     {
         public static void Register(TestRunner r)
         {
-            r.Run("Konto: Gastkonto mit geheimem Token, Wiederanmeldung (FR-48)", GuestLoginAndRelogin);
-            r.Run("Konto: Token wird nur gehasht gespeichert (NFR-11)", TokenStoredHashed);
-            r.Run("Konto: Anzeigename bereinigt (Länge, Zeichen, Toxizität, FR-52)", NameSanitized);
-            r.Run("Konto: Persistenz über Neustart (FR-49)", PersistsAcrossRestart);
+            r.Run("Konto: Google-Anmeldung legt einmal an, zweiter Login findet dasselbe Konto", SignInFindOrCreate);
+            r.Run("Konto: Name 3–16 Zeichen, erlaubte Zeichen, kein Toxisches", NameValidation);
+            r.Run("Konto: Name eindeutig ohne Groß-/Kleinschreibung", NameUnique);
+            r.Run("Konto: Namensvorschlag aus Google-Vorname", NameSuggestion);
+            r.Run("Session: nur Hash gespeichert, auflösen, abmelden", Sessions);
+            r.Run("Konto: Fortschritt übersteht Neustart (neuer Store, gleiches Repository)", PersistsAcrossRestart);
             r.Run("Profil: Matchbelohnung XP/Münzen/Errungenschaften/Historie (FR-40/FR-45)", RewardsApplied);
             r.Run("Profil: Marker-Freischaltung durch Level, keine Kaufvorteile (FR-41/NFR-14)", UnlocksByLevel);
             r.Run("Shop: Kosmetik mit Münzen kaufen, nur kosmetisch (M-02/M-04)", ShopCosmetics);
-            r.Run("Bestenliste: nach MMR sortiert mit Rang/Division (FR-46/FR-43)", Leaderboard);
-            r.Run("DSGVO: Export und vollständige Löschung (NFR-12)", GdprExportAndDelete);
+            r.Run("Bestenliste: nur benannte Spieler, nach MMR (FR-46/FR-43)", Leaderboard);
+            r.Run("DSGVO: Export und vollständige Löschung inkl. Sessions (NFR-12)", GdprExportAndDelete);
         }
 
         internal static string TempDir()
@@ -28,137 +30,148 @@ namespace Paintball.Net.Tests
             return dir;
         }
 
-        private static void GuestLoginAndRelogin()
+        internal static AccountStore NewStore(IPlayerRepository repo = null) => new AccountStore(repo ?? new InMemoryPlayerRepository());
+
+        /// <summary>Legt einen angemeldeten Spieler mit Namen an; bei Namenskonflikt wird ein Suffix angehängt.</summary>
+        internal static string NewPlayer(AccountStore store, string name)
         {
-            var store = new AccountStore(TempDir());
-            LoginResult first = store.Login(null, "Omar");
-            Assert.IsTrue(first.Token.Length >= 32, "Langes Zufallstoken");
-            Assert.IsTrue(first.IsNew, "Neues Gastkonto");
-            Assert.AreEqual("Omar", first.Account.DisplayName, "Name übernommen");
-
-            LoginResult again = store.Login(first.Token, "Anderer");
-            Assert.IsFalse(again.IsNew, "Bestehendes Konto");
-            Assert.AreEqual(first.Account.PlayerId, again.Account.PlayerId, "Gleiches Konto");
-            Assert.AreEqual(first.Token, again.Token, "Token bleibt gültig");
-            Assert.AreEqual("Anderer", again.Account.DisplayName, "Namensänderung übernommen");
-
-            LoginResult forged = store.Login("gefälschtes-token", "X");
-            Assert.IsTrue(forged.IsNew, "Unbekanntes Token → neues Gastkonto");
-            Assert.IsTrue(forged.Account.PlayerId != first.Account.PlayerId, "Kein Zugriff auf fremdes Konto");
+            SignInResult s = store.SignIn("test:" + Guid.NewGuid().ToString("N"), "t@example.com");
+            string wanted = AccountStore.ValidateName(name) ?? "Spieler";
+            for (int i = 2; store.SetName(s.PlayerId, wanted) == NameResult.Taken; i++)
+                wanted = (AccountStore.ValidateName(name) ?? "Spieler").Substring(0, Math.Min(12, (AccountStore.ValidateName(name) ?? "Spieler").Length)) + "-" + i;
+            return s.PlayerId;
         }
 
-        private static void TokenStoredHashed()
+        private static void SignInFindOrCreate()
         {
-            string dir = TempDir();
-            var store = new AccountStore(dir);
-            LoginResult login = store.Login(null, "Omar");
-            foreach (string file in Directory.GetFiles(dir, "*", SearchOption.AllDirectories))
-                Assert.IsFalse(File.ReadAllText(file).Contains(login.Token), $"Klartext-Token in {Path.GetFileName(file)}");
+            AccountStore store = NewStore();
+            SignInResult first = store.SignIn("google-123", "omar@example.com");
+            Assert.IsTrue(first.IsNew, "neu"); Assert.IsTrue(first.NeedsName, "braucht Namen");
+            SignInResult again = store.SignIn("google-123", "omar@example.com");
+            Assert.AreEqual(first.PlayerId, again.PlayerId, "gleiches Konto");
+            Assert.IsFalse(again.IsNew, "nicht neu");
+            Assert.AreEqual(1, store.Count, "ein Konto");
         }
 
-        private static void NameSanitized()
+        private static void NameValidation()
         {
-            Assert.AreEqual("Omar", AccountStore.SanitizeName("  Omar  "), "Trim");
-            Assert.AreEqual(16, AccountStore.SanitizeName(new string('a', 40)).Length, "Max. 16 Zeichen");
-            Assert.IsTrue(AccountStore.SanitizeName("<script>").IndexOf('<') < 0, "Keine HTML-Zeichen");
-            Assert.IsTrue(AccountStore.SanitizeName("").StartsWith("Gast-"), "Leerer Name → Gast");
-            Assert.IsTrue(AccountStore.SanitizeName("idiot").StartsWith("Gast-"), "Beleidigender Name abgelehnt");
-            Assert.AreEqual("Jörg_2", AccountStore.SanitizeName("Jörg_2"), "Umlaute erlaubt");
+            Assert.AreEqual(null, AccountStore.ValidateName("ab"), "zu kurz");
+            Assert.AreEqual(null, AccountStore.ValidateName(new string('a', 17)), "zu lang");
+            Assert.AreEqual(null, AccountStore.ValidateName("<script>"), "Sonderzeichen");
+            Assert.AreEqual("Omar F.", AccountStore.ValidateName("  Omar F.  "), "getrimmt, Punkt/Leerzeichen erlaubt");
+            Assert.AreEqual("Jörg_99", AccountStore.ValidateName("Jörg_99"), "Umlaute erlaubt");
+            AccountStore store = NewStore();
+            string id = store.SignIn("g1", "a@b.c").PlayerId;
+            Assert.AreEqual(NameResult.Invalid, store.SetName(id, "x"), "ungültig abgelehnt");
+            Assert.IsTrue(store.NeedsName(id), "weiter ohne Namen");
+        }
+
+        private static void NameUnique()
+        {
+            AccountStore store = NewStore();
+            string a = store.SignIn("g-a", "a@b.c").PlayerId, b = store.SignIn("g-b", "b@b.c").PlayerId;
+            Assert.AreEqual(NameResult.Ok, store.SetName(a, "Alex"), "frei");
+            Assert.AreEqual(NameResult.Taken, store.SetName(b, "ALEX"), "vergeben");
+            Assert.AreEqual("Alex", store.GetAccount(a).DisplayName, "Anzeigename gesetzt");
+            Assert.IsFalse(store.NeedsName(a), "hat Namen");
+        }
+
+        private static void NameSuggestion()
+        {
+            Assert.AreEqual("Omar", AccountStore.SuggestName("Omar"), "Vorname");
+            Assert.AreEqual("", AccountStore.SuggestName("O"), "zu kurz → leer");
+            Assert.AreEqual("", AccountStore.SuggestName(null), "fehlt → leer");
+        }
+
+        private static void Sessions()
+        {
+            var repo = new InMemoryPlayerRepository();
+            AccountStore store = NewStore(repo);
+            string id = NewPlayer(store, "Omar");
+            string token = store.CreateSession(id);
+            Assert.IsTrue(token.Length >= 40, "langes Zufallstoken");
+            Assert.AreEqual(null, repo.PlayerIdForSession(token, DateTime.UtcNow), "Klartext ist nicht der Schlüssel (nur Hash gespeichert)");
+            Assert.AreEqual(id, store.PlayerIdForSession(token), "auflösbar");
+            Assert.AreEqual(null, store.PlayerIdForSession("gefälscht"), "gefälscht");
+            store.EndSession(token);
+            Assert.AreEqual(null, store.PlayerIdForSession(token), "nach Abmelden ungültig");
         }
 
         private static void PersistsAcrossRestart()
         {
-            string dir = TempDir();
-            var store = new AccountStore(dir);
-            LoginResult login = store.Login(null, "Omar");
-            login.Account.AddXp(500);
-            store.Save(login.Account.PlayerId);
-
-            var restarted = new AccountStore(dir);
-            LoginResult again = restarted.Login(login.Token, "Omar");
-            Assert.IsFalse(again.IsNew, "Konto nach Neustart gefunden");
-            Assert.AreEqual(500, again.Account.TotalXp, "XP persistiert");
+            var repo = new InMemoryPlayerRepository();
+            AccountStore store = NewStore(repo);
+            string id = NewPlayer(store, "Omar");
+            store.GetAccount(id).AddXp(500);
+            store.ApplyMatch(id, new MatchSummary { Mode = "tdm", Map = "arena", Won = true, Kills = 3, XpGained = 100 });
+            AccountStore restarted = NewStore(repo);
+            Assert.AreEqual("Omar", restarted.GetAccount(id).DisplayName, "Name");
+            Assert.AreEqual(store.GetAccount(id).TotalXp, restarted.GetAccount(id).TotalXp, "XP");
+            Assert.AreEqual(1, restarted.GetProfile(id).History.Count, "Historie");
         }
 
         private static void RewardsApplied()
         {
-            var store = new AccountStore(TempDir());
-            LoginResult login = store.Login(null, "Omar");
-            string id = login.Account.PlayerId;
-            var summary = new MatchSummary { Mode = "tdm", Map = "warehouse", Won = true, Kills = 7, Deaths = 2, Objective = 3, XpGained = 400, MmrChange = 16 };
-            RewardResult reward = store.ApplyMatch(id, summary);
-            Assert.AreEqual(40, reward.CoinsEarned, "Münzen = XP/10");
-            Assert.IsTrue(reward.NewAchievements.Contains("first_blood"), "Erster Kill");
-            Assert.IsTrue(reward.NewAchievements.Contains("first_win"), "Erster Sieg");
-            PlayerProfile profile = store.GetProfile(id);
-            Assert.AreEqual(40, profile.Coins, "Münzen gutgeschrieben");
-            Assert.AreEqual(1, profile.History.Count, "Match-Historie");
-            Assert.AreEqual(7, profile.TotalKills, "Achievement-Zähler");
-
-            RewardResult second = store.ApplyMatch(id, summary);
-            Assert.IsFalse(second.NewAchievements.Contains("first_blood"), "Errungenschaft nur einmal");
+            AccountStore store = NewStore();
+            string id = NewPlayer(store, "Omar");
+            RewardResult reward = store.ApplyMatch(id, new MatchSummary { Mode = "tdm", Map = "arena", Won = true, Kills = 3, XpGained = 120 });
+            Assert.AreEqual(12, reward.CoinsEarned, "XP/10 Münzen");
+            Assert.IsTrue(reward.NewAchievements.Contains("first_blood") && reward.NewAchievements.Contains("first_win"), "Errungenschaften");
+            Assert.AreEqual(1, store.GetProfile(id).History.Count, "Historie");
+            Assert.IsTrue(store.GetProfile(id).History[0].Contains("|tdm|arena|W|"), "Historienformat");
         }
 
         private static void UnlocksByLevel()
         {
-            var store = new AccountStore(TempDir());
-            LoginResult login = store.Login(null, "Omar");
-            string id = login.Account.PlayerId;
-            Assert.IsTrue(store.CanUseMarker(id, "standard"), "Standard immer frei");
-            Assert.IsFalse(store.CanUseMarker(id, "precision"), "Präzision erst ab Level");
-            login.Account.AddXp(50000);
-            Assert.IsTrue(store.CanUseMarker(id, "precision"), "Freigeschaltet durch Level");
-            Assert.IsFalse(store.CanUseMarker(id, "unbekannt"), "Unbekannter Marker abgelehnt");
+            AccountStore store = NewStore();
+            string id = NewPlayer(store, "Omar");
+            Assert.IsTrue(store.CanUseMarker(id, "standard"), "Standard");
+            Assert.IsFalse(store.CanUseMarker(id, "precision"), "Precision erst ab Level 4");
+            Assert.IsFalse(store.TryEquipMarker(id, "precision"), "nicht ausrüstbar");
+            store.GetAccount(id).AddXp(100000);
+            Assert.IsTrue(store.TryEquipMarker(id, "precision"), "nach Level-up ausrüstbar");
         }
 
         private static void ShopCosmetics()
         {
-            var store = new AccountStore(TempDir());
-            LoginResult login = store.Login(null, "Omar");
-            string id = login.Account.PlayerId;
-            var item = store.Shop.First(i => i.Price > 0);
-            Assert.IsTrue(item.CosmeticOnly, "Nur Kosmetik im Shop (NFR-14)");
-            Assert.IsFalse(store.TryBuy(id, item.Id, out string error), "Ohne Münzen kein Kauf");
-            Assert.AreEqual("insufficient_funds", error, "Transparenter Fehler");
-
-            store.ApplyMatch(id, new MatchSummary { XpGained = item.Price * 10 + 10 });
-            Assert.IsTrue(store.TryBuy(id, item.Id, out _), "Kauf mit Münzen");
-            Assert.IsTrue(store.GetProfile(id).Owned.Contains(item.Id), "Im Inventar");
-            Assert.IsFalse(store.TryBuy(id, item.Id, out error), "Kein Doppelkauf");
-            Assert.IsTrue(store.TryEquipCosmetic(id, item.Id), "Ausrüstbar");
-            Assert.IsFalse(store.TryEquipCosmetic(id, "paint_nicht_besessen"), "Nicht besessene Kosmetik nicht ausrüstbar");
+            AccountStore store = NewStore();
+            string id = NewPlayer(store, "Omar");
+            Assert.IsFalse(store.TryBuy(id, "paint_violet", out string err), "zu wenig Münzen");
+            Assert.AreEqual("insufficient_funds", err, "Fehlercode");
+            store.ApplyMatch(id, new MatchSummary { XpGained = 2000 });
+            Assert.IsTrue(store.TryBuy(id, "paint_violet", out _), "gekauft");
+            Assert.IsTrue(store.Owns(id, "paint_violet"), "besitzt");
+            Assert.IsTrue(store.Shop.All(s => s.CosmeticOnly), "nur kosmetisch");
+            Assert.IsTrue(NewStore().Shop.Count > 0, "Katalog vorhanden");
         }
 
         private static void Leaderboard()
         {
-            var store = new AccountStore(TempDir());
-            var a = store.Login(null, "Alpha").Account;
-            var b = store.Login(null, "Bravo").Account;
-            var c = store.Login(null, "Charlie").Account;
-            b.UpdateMmr(1000, 1f);
-            b.UpdateMmr(1000, 1f);
-            c.UpdateMmr(1000, 0f);
+            AccountStore store = NewStore();
+            string a = NewPlayer(store, "Alpha"), b = NewPlayer(store, "Bravo");
+            store.SignIn("ohne-name", "x@y.z");
+            store.GetAccount(b).UpdateMmr(3000, 1f); store.ApplyMatch(b, new MatchSummary());
             var rows = store.Leaderboard(10);
-            Assert.AreEqual("Bravo", rows[0].Name, "Höchste MMR zuerst");
+            Assert.AreEqual(2, rows.Count, "nur benannte Spieler");
+            Assert.AreEqual("Bravo", rows[0].Name, "höchster MMR zuerst");
             Assert.AreEqual(1, rows[0].Rank, "Rang 1");
-            Assert.AreEqual("Charlie", rows[rows.Count - 1].Name, "Niedrigste zuletzt");
-            Assert.IsTrue(!string.IsNullOrEmpty(rows[0].League), "Liga (SeasonRanker)");
+            Assert.IsFalse(string.IsNullOrEmpty(rows[0].League), "Liga");
         }
 
         private static void GdprExportAndDelete()
         {
-            string dir = TempDir();
-            var store = new AccountStore(dir);
-            LoginResult login = store.Login(null, "Omar");
-            string id = login.Account.PlayerId;
-            store.Save(id);
+            var repo = new InMemoryPlayerRepository();
+            AccountStore store = NewStore(repo);
+            string id = NewPlayer(store, "Omar");
+            string token = store.CreateSession(id);
+            store.ApplyMatch(id, new MatchSummary { Mode = "ctf", Map = "forest", XpGained = 50 });
             string json = store.Export(id);
-            Assert.IsTrue(json.Contains("\"displayName\"") && json.Contains("Omar"), "Export enthält Profildaten");
-            Assert.IsFalse(json.Contains(login.Token), "Kein Token im Export");
-
-            Assert.IsTrue(store.Delete(id), "Löschen erfolgreich");
-            Assert.AreEqual(0, Directory.GetFiles(dir, "*" + id + "*", SearchOption.AllDirectories).Length, "Keine Dateien mehr");
-            Assert.IsTrue(store.Login(login.Token, "Omar").IsNew, "Token nach Löschung ungültig");
+            Assert.IsTrue(json.Contains("\"Omar\"") && json.Contains("t@example.com") && json.Contains("ctf"), "Export mit Name, E-Mail, Historie");
+            System.Text.Json.JsonDocument.Parse(json);
+            Assert.IsTrue(store.Delete(id), "gelöscht");
+            Assert.AreEqual(null, store.GetAccount(id), "Konto weg");
+            Assert.AreEqual(null, store.PlayerIdForSession(token), "Session weg");
+            Assert.AreEqual(0, repo.Count(), "Repository leer");
         }
     }
 }

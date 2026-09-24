@@ -1,13 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
-using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using Paintball.Core.Economy;
-using Paintball.Core.Persistence;
-using Paintball.Core.Privacy;
 using Paintball.Core.Progression;
 using Paintball.Core.Ranking;
 using Paintball.Core.Social;
@@ -17,7 +14,6 @@ namespace Paintball.Net.Accounts
     /// <summary>Profil-Zusatzdaten neben dem Core-<see cref="PlayerAccount"/>.</summary>
     public sealed class PlayerProfile
     {
-        public string TokenHash = string.Empty;
         public PlayerWallet Wallet = new();
         public string Paint = "paint_pink";
         public string Accent = "accent_yellow";
@@ -33,12 +29,11 @@ namespace Paintball.Net.Accounts
         public int Coins => Wallet.SoftBalance;
     }
 
-    public sealed class LoginResult
+    public sealed class SignInResult
     {
-        public PlayerAccount Account;
-        public PlayerProfile Profile;
-        public string Token;
+        public string PlayerId;
         public bool IsNew;
+        public bool NeedsName;
     }
 
     /// <summary>Kurzfassung eines Matches für Belohnungen/Historie.</summary>
@@ -84,10 +79,10 @@ namespace Paintball.Net.Accounts
     }
 
     /// <summary>
-    /// Dateibasierter Konto-Speicher des Servers (FR-48 Gastkonten, FR-49 Fortschritt
-    /// geräteübergreifend per Token, NFR-11 Token nur als SHA-256-Hash, NFR-12 Export/Löschung).
-    /// Nutzt die Core-Klassen PlayerAccount, PlayerWallet, ShopCatalog, AchievementsCatalog,
-    /// LeaderboardRanking und SeasonRanker. Thread-sicher.
+    /// Konto-Speicher des Servers über <see cref="IPlayerRepository"/>: Identität per Google-sub,
+    /// eindeutige Anzeigenamen, Sessions nur als SHA-256-Hash (NFR-11), Export/Löschung (NFR-12).
+    /// Hält geladene Spieler als Core-<see cref="PlayerAccount"/> plus <see cref="PlayerProfile"/> im Speicher
+    /// und nutzt ShopCatalog, AchievementsCatalog und SeasonRanker. Thread-sicher.
     /// </summary>
     public sealed class AccountStore
     {
@@ -126,83 +121,125 @@ namespace Paintball.Net.Accounts
         };
 
         private readonly object _lock = new();
-        private readonly string _dir;
+        private readonly IPlayerRepository _repo;
         private readonly Dictionary<string, PlayerAccount> _accounts = new();
         private readonly Dictionary<string, PlayerProfile> _profiles = new();
-        private readonly Dictionary<string, string> _accountByTokenHash = new();
+        private readonly Dictionary<string, PlayerRecord> _records = new();
         private readonly ShopCatalog _shop = new();
+        public static readonly TimeSpan SessionLifetime = TimeSpan.FromDays(30);
 
         public IReadOnlyList<ShopEntry> Shop => Cosmetics;
         public static IReadOnlyList<AchievementDef> AchievementDefinitions => AchievementDefs;
 
-        public AccountStore(string directory)
+        public AccountStore(IPlayerRepository repository)
         {
-            _dir = Path.Combine(directory, "accounts");
-            Directory.CreateDirectory(_dir);
+            _repo = repository ?? throw new ArgumentNullException(nameof(repository));
             foreach (ShopEntry e in Cosmetics)
                 if (e.Price > 0)
                     _shop.Add(new ShopItem(e.Id, e.Name, e.Kind == "paint" ? ShopItemKind.PaintColor : ShopItemKind.Skin, CurrencyType.Soft, e.Price));
             foreach (ShopEntry e in Cosmetics) e.CosmeticOnly = true;
-            LoadAll();
         }
 
-        public int Count { get { lock (_lock) return _accounts.Count; } }
+        public int Count => _repo.Count();
 
-        // ---------------- Login ----------------
+        // ---------------- Anmeldung, Name, Sessions ----------------
 
-        public LoginResult Login(string token, string name)
+        public SignInResult SignIn(string googleSub, string email)
         {
+            if (string.IsNullOrWhiteSpace(googleSub)) throw new ArgumentException("googleSub fehlt");
             lock (_lock)
             {
-                if (!string.IsNullOrEmpty(token) && token.Length <= 128
-                    && _accountByTokenHash.TryGetValue(Hash(token), out string id)
-                    && _accounts.TryGetValue(id, out PlayerAccount existing))
+                PlayerRecord rec = _repo.FindBySub(googleSub);
+                bool isNew = rec == null;
+                if (isNew) rec = _repo.Create(googleSub, email);
+                else _repo.RecordLogin(rec.Id, email, DateTime.UtcNow);
+                if (!isNew && _records.TryGetValue(rec.Id, out PlayerRecord cached))
                 {
-                    if (!string.IsNullOrWhiteSpace(name)) existing.SetDisplayName(SanitizeName(name));
-                    SaveLocked(id);
-                    return new LoginResult { Account = existing, Profile = _profiles[id], Token = token, IsNew = false };
+                    // Bereits geladen: In-Memory-Stand behalten (Account-Objekte können schon referenziert sein),
+                    // nur die Login-Daten auffrischen.
+                    cached.Email = email;
+                    cached.LastLoginAt = rec.LastLoginAt;
+                    rec = cached;
                 }
-
-                PlayerAccount account = PlayerAccount.CreateNew(SanitizeName(name));
-                string newToken = NewToken();
-                var profile = new PlayerProfile { TokenHash = Hash(newToken) };
-                _accounts[account.PlayerId] = account;
-                _profiles[account.PlayerId] = profile;
-                _accountByTokenHash[profile.TokenHash] = account.PlayerId;
-                SaveLocked(account.PlayerId);
-                return new LoginResult { Account = account, Profile = profile, Token = newToken, IsNew = true };
+                else
+                {
+                    rec.Email = email;
+                    Cache(rec);
+                }
+                return new SignInResult { PlayerId = rec.Id, IsNew = isNew, NeedsName = rec.DisplayName == null };
             }
         }
 
+        public bool NeedsName(string playerId)
+        {
+            lock (_lock) return Load(playerId)?.DisplayName == null;
+        }
+
+        /// <summary>3–16 Zeichen, Buchstaben/Ziffern/Leer/_-., nicht toxisch; sonst null.</summary>
+        public static string ValidateName(string name)
+        {
+            string trimmed = (name ?? string.Empty).Trim();
+            if (trimmed.Length < 3 || trimmed.Length > 16) return null;
+            foreach (char c in trimmed)
+                if (!(char.IsLetterOrDigit(c) || c == ' ' || c == '_' || c == '-' || c == '.')) return null;
+            return new ChatFilter().IsOffensive(trimmed) ? null : trimmed;
+        }
+
+        public static string SuggestName(string givenName)
+        {
+            string v = ValidateName(givenName);
+            if (v != null) return v;
+            string cut = (givenName ?? string.Empty).Trim();
+            if (cut.Length > 16) cut = cut.Substring(0, 16).Trim();
+            return ValidateName(cut) ?? string.Empty;
+        }
+
+        public NameResult SetName(string playerId, string name)
+        {
+            string clean = ValidateName(name);
+            if (clean == null) return NameResult.Invalid;
+            lock (_lock)
+            {
+                if (Load(playerId) == null) return NameResult.Invalid;
+                NameResult r = _repo.TrySetName(playerId, clean);
+                if (r == NameResult.Ok)
+                {
+                    _records[playerId].DisplayName = clean;
+                    _accounts[playerId].SetDisplayName(clean);
+                }
+                return r;
+            }
+        }
+
+        public string CreateSession(string playerId)
+        {
+            string token = NewToken();
+            _repo.CreateSession(Hash(token), playerId, DateTime.UtcNow.Add(SessionLifetime));
+            return token;
+        }
+
+        public string PlayerIdForSession(string token)
+        {
+            if (string.IsNullOrEmpty(token) || token.Length > 128) return null;
+            string id = _repo.PlayerIdForSession(Hash(token), DateTime.UtcNow);
+            lock (_lock) return id != null && Load(id) != null ? id : null;
+        }
+
+        public void EndSession(string token)
+        {
+            if (!string.IsNullOrEmpty(token) && token.Length <= 128) _repo.DeleteSession(Hash(token));
+        }
+
+        public int CleanupSessions() => _repo.DeleteExpiredSessions(DateTime.UtcNow);
+
         public PlayerAccount GetAccount(string accountId)
         {
-            lock (_lock) return accountId != null && _accounts.TryGetValue(accountId, out PlayerAccount a) ? a : null;
+            lock (_lock) return Load(accountId) != null ? _accounts[accountId] : null;
         }
 
         public PlayerProfile GetProfile(string accountId)
         {
-            lock (_lock) return accountId != null && _profiles.TryGetValue(accountId, out PlayerProfile p) ? p : null;
-        }
-
-        public string AccountIdForToken(string token)
-        {
-            if (string.IsNullOrEmpty(token) || token.Length > 128) return null;
-            lock (_lock) return _accountByTokenHash.TryGetValue(Hash(token), out string id) ? id : null;
-        }
-
-        /// <summary>Anzeigename: max. 16 Zeichen, nur Buchstaben/Ziffern/Leer/_-., kein Toxisches (FR-52).</summary>
-        public static string SanitizeName(string name)
-        {
-            var sb = new StringBuilder();
-            foreach (char c in (name ?? string.Empty).Trim())
-            {
-                if (char.IsLetterOrDigit(c) || c == ' ' || c == '_' || c == '-' || c == '.') sb.Append(c);
-                if (sb.Length >= 16) break;
-            }
-            string clean = sb.ToString().Trim();
-            if (clean.Length < 2 || new ChatFilter().IsOffensive(clean))
-                clean = "Gast-" + RandomNumberGenerator.GetInt32(1000, 9999).ToString(CultureInfo.InvariantCulture);
-            return clean;
+            lock (_lock) return Load(accountId) != null ? _profiles[accountId] : null;
         }
 
         // ---------------- Progression ----------------
@@ -229,9 +266,9 @@ namespace Paintball.Net.Accounts
             lock (_lock)
             {
                 ShopEntry entry = Array.Find(Cosmetics, c => c.Id == cosmeticId);
-                if (entry == null || !_profiles.TryGetValue(accountId ?? string.Empty, out PlayerProfile profile)) return false;
+                if (entry == null || Load(accountId) == null) return false;
                 if (entry.Price == 0) return _accounts[accountId].Level >= entry.UnlockLevel;
-                return profile.Owned.Contains(cosmeticId);
+                return _profiles[accountId].Owned.Contains(cosmeticId);
             }
         }
 
@@ -243,7 +280,8 @@ namespace Paintball.Net.Accounts
             lock (_lock)
             {
                 error = null;
-                if (!_profiles.TryGetValue(accountId ?? string.Empty, out PlayerProfile profile)) { error = "unknown_account"; return false; }
+                if (Load(accountId) == null) { error = "unknown_account"; return false; }
+                PlayerProfile profile = _profiles[accountId];
                 if (!_shop.TryGet(itemId ?? string.Empty, out ShopItem item)) { error = "unknown_item"; return false; }
                 if (profile.Owned.Contains(itemId)) { error = "already_owned"; return false; }
                 if (!_shop.TryPurchase(itemId, profile.Wallet)) { error = "insufficient_funds"; return false; }
@@ -258,6 +296,7 @@ namespace Paintball.Net.Accounts
             if (!Owns(accountId, cosmeticId)) return false;
             lock (_lock)
             {
+                if (Load(accountId) == null) return false;
                 PlayerProfile profile = _profiles[accountId];
                 if (cosmeticId.StartsWith("paint_", StringComparison.Ordinal)) profile.Paint = cosmeticId;
                 else profile.Accent = cosmeticId;
@@ -271,6 +310,7 @@ namespace Paintball.Net.Accounts
             if (!CanUseMarker(accountId, markerId)) return false;
             lock (_lock)
             {
+                if (Load(accountId) == null) return false;
                 _profiles[accountId].Marker = markerId.ToLowerInvariant();
                 SaveLocked(accountId);
                 return true;
@@ -283,7 +323,8 @@ namespace Paintball.Net.Accounts
             lock (_lock)
             {
                 var result = new RewardResult();
-                if (!_profiles.TryGetValue(accountId ?? string.Empty, out PlayerProfile profile)) return result;
+                if (Load(accountId) == null) return result;
+                PlayerProfile profile = _profiles[accountId];
                 PlayerAccount account = _accounts[accountId];
 
                 result.CoinsEarned = Math.Max(0, summary.XpGained / 10);
@@ -304,12 +345,14 @@ namespace Paintball.Net.Accounts
                 }
                 if (result.AchievementXp > 0) account.AddXp(result.AchievementXp);
 
-                profile.History.Insert(0, string.Join("|",
-                    DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture),
-                    summary.Mode, summary.Map, summary.Won ? "W" : "L",
-                    summary.Kills.ToString(CultureInfo.InvariantCulture), summary.Deaths.ToString(CultureInfo.InvariantCulture),
-                    summary.XpGained.ToString(CultureInfo.InvariantCulture), summary.MmrChange.ToString(CultureInfo.InvariantCulture)));
+                var match = new MatchRecord
+                {
+                    Mode = summary.Mode, Map = summary.Map, Won = summary.Won, Kills = summary.Kills, Deaths = summary.Deaths,
+                    Objective = summary.Objective, XpGained = summary.XpGained, MmrChange = summary.MmrChange, PlayedAt = DateTime.UtcNow
+                };
+                profile.History.Insert(0, FormatHistory(match));
                 if (profile.History.Count > 20) profile.History.RemoveRange(20, profile.History.Count - 20);
+                _repo.AddMatch(accountId, match);
 
                 SaveLocked(accountId);
                 return result;
@@ -332,8 +375,8 @@ namespace Paintball.Net.Accounts
             lock (_lock)
             {
                 var list = new List<(AchievementDef, int, bool)>();
-                if (!_profiles.TryGetValue(accountId ?? string.Empty, out PlayerProfile profile)) return list;
-                AchievementsCatalog catalog = BuildAchievements(profile);
+                if (Load(accountId) == null) return list;
+                AchievementsCatalog catalog = BuildAchievements(_profiles[accountId]);
                 foreach (AchievementDef def in AchievementDefs)
                     list.Add((def, catalog.ProgressOf(def.Id), catalog.IsUnlocked(def.Id)));
                 return list;
@@ -342,25 +385,17 @@ namespace Paintball.Net.Accounts
 
         // ---------------- Bestenliste ----------------
 
-        public IReadOnlyList<LeaderboardRow> Leaderboard(int top, IEnumerable<string> onlyAccounts = null)
+        public IReadOnlyList<LeaderboardRow> Leaderboard(int top)
         {
-            lock (_lock)
-            {
-                var ranking = new LeaderboardRanking();
-                foreach (PlayerAccount a in _accounts.Values) ranking.AddOrUpdate(a.PlayerId, a.Mmr);
-                IReadOnlyList<LeaderboardEntry> entries = onlyAccounts == null ? ranking.GetRanking() : ranking.GetFriendsRanking(onlyAccounts);
-                var rows = new List<LeaderboardRow>();
-                foreach (LeaderboardEntry e in entries.Take(Math.Clamp(top, 1, 200)))
+            var rows = new List<LeaderboardRow>();
+            int rank = 0;
+            foreach (PlayerRecord p in _repo.TopByMmr(Math.Clamp(top, 1, 200)))
+                rows.Add(new LeaderboardRow
                 {
-                    PlayerAccount a = _accounts[e.PlayerId];
-                    rows.Add(new LeaderboardRow
-                    {
-                        Rank = e.Rank, Name = a.DisplayName, Mmr = e.Mmr, Level = a.Level,
-                        League = SeasonRanker.GetRankName(e.Mmr), Division = SeasonRanker.GetDivision(e.Mmr), AccountId = a.PlayerId
-                    });
-                }
-                return rows;
-            }
+                    Rank = ++rank, Name = p.DisplayName, Mmr = p.Mmr, Level = p.Level,
+                    League = SeasonRanker.GetRankName(p.Mmr), Division = SeasonRanker.GetDivision(p.Mmr), AccountId = p.Id
+                });
+            return rows;
         }
 
         // ---------------- DSGVO ----------------
@@ -369,19 +404,20 @@ namespace Paintball.Net.Accounts
         {
             lock (_lock)
             {
-                if (!_accounts.TryGetValue(accountId ?? string.Empty, out PlayerAccount account)) return "{}";
-                PlayerProfile p = _profiles[accountId];
-                string core = AccountDataExport.ExportJson(account).TrimEnd().TrimEnd('}').TrimEnd();
-                var sb = new StringBuilder(core);
-                sb.Append(",\n  \"coins\": ").Append(p.Coins);
-                sb.Append(",\n  \"paint\": \"").Append(p.Paint).Append('"');
-                sb.Append(",\n  \"accent\": \"").Append(p.Accent).Append('"');
-                sb.Append(",\n  \"marker\": \"").Append(p.Marker).Append('"');
-                sb.Append(",\n  \"owned\": [").Append(string.Join(", ", p.Owned.Select(o => "\"" + o + "\""))).Append(']');
-                sb.Append(",\n  \"achievements\": [").Append(string.Join(", ", p.Achievements.Select(o => "\"" + o + "\""))).Append(']');
-                sb.Append(",\n  \"history\": [").Append(string.Join(", ", p.History.Select(h => "\"" + h + "\""))).Append(']');
-                sb.Append("\n}");
-                return sb.ToString();
+                PlayerRecord rec = Load(accountId);
+                if (rec == null) return "{}";
+                SaveLocked(accountId);
+                var matches = _repo.RecentMatches(accountId, int.MaxValue);
+                return System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    id = rec.Id, googleAccountId = rec.GoogleSub, email = rec.Email, name = rec.DisplayName,
+                    createdAt = rec.CreatedAt, lastLoginAt = rec.LastLoginAt,
+                    level = rec.Level, xp = rec.Xp, mmr = rec.Mmr, matches = rec.Matches, wins = rec.Wins,
+                    eliminations = rec.Eliminations, deaths = rec.Deaths, accuracy = rec.Accuracy, coins = rec.Coins,
+                    paint = rec.Paint, accent = rec.Accent, marker = rec.Marker,
+                    owned = rec.Items, achievements = rec.Achievements,
+                    history = matches.Select(m => new { m.Mode, m.Map, m.Won, m.Kills, m.Deaths, m.Objective, m.XpGained, m.MmrChange, m.PlayedAt })
+                }, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
             }
         }
 
@@ -389,100 +425,75 @@ namespace Paintball.Net.Accounts
         {
             lock (_lock)
             {
-                if (!_accounts.Remove(accountId ?? string.Empty)) return false;
-                if (_profiles.Remove(accountId, out PlayerProfile profile)) _accountByTokenHash.Remove(profile.TokenHash);
-                LocalPersistence.Delete(AccountPath(accountId));
-                LocalPersistence.Delete(ProfilePath(accountId));
-                return true;
+                _records.Remove(accountId ?? string.Empty);
+                _accounts.Remove(accountId ?? string.Empty);
+                _profiles.Remove(accountId ?? string.Empty);
+                return _repo.Delete(accountId);
             }
         }
 
         // ---------------- Persistenz ----------------
 
+        /// <summary>Lädt einen Spieler bei Bedarf aus dem Repository in den Speicher (unter _lock aufrufen).</summary>
+        private PlayerRecord Load(string id)
+        {
+            if (string.IsNullOrEmpty(id)) return null;
+            if (_records.TryGetValue(id, out PlayerRecord cached)) return cached;
+            PlayerRecord rec = _repo.Get(id);
+            if (rec != null) Cache(rec);
+            return rec;
+        }
+
+        private void Cache(PlayerRecord rec)
+        {
+            string data = string.Join("\n",
+                "playerId=" + rec.Id,
+                "displayName=" + (rec.DisplayName ?? string.Empty),
+                "level=" + rec.Level.ToString(CultureInfo.InvariantCulture),
+                "totalXp=" + rec.Xp.ToString(CultureInfo.InvariantCulture),
+                "mmr=" + rec.Mmr.ToString(CultureInfo.InvariantCulture),
+                "totalMatches=" + rec.Matches.ToString(CultureInfo.InvariantCulture),
+                "totalWins=" + rec.Wins.ToString(CultureInfo.InvariantCulture),
+                "totalEliminations=" + rec.Eliminations.ToString(CultureInfo.InvariantCulture),
+                "totalDeaths=" + rec.Deaths.ToString(CultureInfo.InvariantCulture),
+                "totalAccuracy=" + rec.Accuracy.ToString("R", CultureInfo.InvariantCulture));
+            PlayerAccount account = PlayerAccount.Deserialize(data);
+            account.PlayerId = rec.Id;
+            var profile = new PlayerProfile
+            {
+                Paint = rec.Paint, Accent = rec.Accent, Marker = rec.Marker,
+                Owned = new HashSet<string>(rec.Items), Achievements = new HashSet<string>(rec.Achievements),
+                TotalKills = rec.AchKills, TotalWins = rec.AchWins, TotalMatches = rec.AchMatches, TotalObjective = rec.AchObjective
+            };
+            if (rec.Coins > 0) profile.Wallet.Earn(CurrencyType.Soft, rec.Coins);
+            foreach (MatchRecord m in _repo.RecentMatches(rec.Id, 20)) profile.History.Add(FormatHistory(m));
+            _records[rec.Id] = rec;
+            _accounts[rec.Id] = account;
+            _profiles[rec.Id] = profile;
+        }
+
+        private static string FormatHistory(MatchRecord m) => string.Join("|",
+            m.PlayedAt.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture), m.Mode, m.Map, m.Won ? "W" : "L",
+            m.Kills.ToString(CultureInfo.InvariantCulture), m.Deaths.ToString(CultureInfo.InvariantCulture),
+            m.XpGained.ToString(CultureInfo.InvariantCulture), m.MmrChange.ToString(CultureInfo.InvariantCulture));
+
+        /// <summary>Schreibt den Speicherstand zurück (unter _lock aufrufen). Gelöschte Spieler werden ignoriert.</summary>
+        private void SaveLocked(string accountId)
+        {
+            if (accountId == null || !_records.TryGetValue(accountId, out PlayerRecord rec)) return;
+            PlayerAccount a = _accounts[accountId];
+            PlayerProfile p = _profiles[accountId];
+            rec.Level = a.Level; rec.Xp = a.TotalXp; rec.Mmr = a.Mmr; rec.Matches = a.TotalMatches; rec.Wins = a.TotalWins;
+            rec.Eliminations = a.TotalEliminations; rec.Deaths = a.TotalDeaths; rec.Accuracy = a.Accuracy; rec.Coins = p.Coins;
+            rec.AchKills = p.TotalKills; rec.AchWins = p.TotalWins; rec.AchMatches = p.TotalMatches; rec.AchObjective = p.TotalObjective;
+            rec.Paint = p.Paint; rec.Accent = p.Accent; rec.Marker = p.Marker;
+            rec.Items = new HashSet<string>(p.Owned); rec.Achievements = new HashSet<string>(p.Achievements);
+            _repo.SaveProgress(rec);
+        }
+
         public void Save(string accountId)
         {
             lock (_lock) SaveLocked(accountId);
-        }
-
-        private void SaveLocked(string accountId)
-        {
-            if (!_accounts.TryGetValue(accountId ?? string.Empty, out PlayerAccount account)) return;
-            LocalPersistence.SaveAccount(account, AccountPath(accountId));
-            PlayerProfile p = _profiles[accountId];
-            var sb = new StringBuilder();
-            sb.Append("tokenHash=").Append(p.TokenHash).Append('\n');
-            sb.Append("coins=").Append(p.Coins.ToString(CultureInfo.InvariantCulture)).Append('\n');
-            sb.Append("paint=").Append(p.Paint).Append('\n');
-            sb.Append("accent=").Append(p.Accent).Append('\n');
-            sb.Append("marker=").Append(p.Marker).Append('\n');
-            sb.Append("owned=").Append(string.Join(",", p.Owned)).Append('\n');
-            sb.Append("achievements=").Append(string.Join(",", p.Achievements)).Append('\n');
-            sb.Append("totals=").Append(string.Join(",", p.TotalKills, p.TotalWins, p.TotalMatches, p.TotalObjective)).Append('\n');
-            foreach (string h in p.History) sb.Append("history=").Append(h).Append('\n');
-            LocalPersistence.SaveText(ProfilePath(accountId), sb.ToString());
-        }
-
-        private void LoadAll()
-        {
-            foreach (string file in Directory.GetFiles(_dir, "*.account"))
-            {
-                string id = Path.GetFileNameWithoutExtension(file);
-                PlayerAccount account = LocalPersistence.LoadAccount(file);
-                if (account == null) continue;
-                account.PlayerId = id;
-                PlayerProfile profile = ParseProfile(LocalPersistence.LoadText(ProfilePath(id)));
-                if (string.IsNullOrEmpty(profile.TokenHash)) continue;
-                _accounts[id] = account;
-                _profiles[id] = profile;
-                _accountByTokenHash[profile.TokenHash] = id;
-            }
-        }
-
-        private static PlayerProfile ParseProfile(string text)
-        {
-            var p = new PlayerProfile();
-            if (string.IsNullOrEmpty(text)) return p;
-            foreach (string raw in text.Split('\n'))
-            {
-                int eq = raw.IndexOf('=');
-                if (eq <= 0) continue;
-                string key = raw.Substring(0, eq), value = raw.Substring(eq + 1).Trim();
-                switch (key)
-                {
-                    case "tokenHash": p.TokenHash = value; break;
-                    case "coins":
-                        if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int coins) && coins > 0)
-                            p.Wallet.Earn(CurrencyType.Soft, coins);
-                        break;
-                    case "paint": p.Paint = value; break;
-                    case "accent": p.Accent = value; break;
-                    case "marker": p.Marker = value; break;
-                    case "owned": p.Owned = new HashSet<string>(value.Split(',', StringSplitOptions.RemoveEmptyEntries)); break;
-                    case "achievements": p.Achievements = new HashSet<string>(value.Split(',', StringSplitOptions.RemoveEmptyEntries)); break;
-                    case "history": p.History.Add(value); break;
-                    case "totals":
-                        string[] t = value.Split(',');
-                        if (t.Length == 4)
-                        {
-                            int.TryParse(t[0], out p.TotalKills);
-                            int.TryParse(t[1], out p.TotalWins);
-                            int.TryParse(t[2], out p.TotalMatches);
-                            int.TryParse(t[3], out p.TotalObjective);
-                        }
-                        break;
-                }
-            }
-            return p;
-        }
-
-        private string AccountPath(string id) => Path.Combine(_dir, SafeId(id) + ".account");
-        private string ProfilePath(string id) => Path.Combine(_dir, SafeId(id) + ".profile");
-
-        private static string SafeId(string id)
-        {
-            foreach (char c in id)
-                if (!(char.IsLetterOrDigit(c) || c == '-')) throw new ArgumentException("Ungültige Konto-ID");
-            return id;
         }
 
         private static string NewToken()
