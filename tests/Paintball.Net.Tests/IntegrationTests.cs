@@ -30,6 +30,10 @@ namespace Paintball.Net.Tests
             r.RunAsync("WSS: Übergroße Nachricht wird abgelehnt, Verbindung bleibt (NFR-10)", OversizeMessage);
             r.RunAsync("Web: Client-Dateien werden ausgeliefert und komprimiert (PA-03)", ServesClient);
             r.RunAsync("Web: 3D-Modelle (glTF/bin) und HDRI werden mit korrektem Typ ausgeliefert", ServesModels);
+            r.RunAsync("Proxy: Hinter TLS-Reverse-Proxy nur HTTP, X-Forwarded-Proto zählt als HTTPS", ProxyTrustsForwardedProto);
+            r.RunAsync("Proxy: Ohne Forwarded-Proto Weiterleitung auf HTTPS ohne internen Port", ProxyRedirectsWithoutPort);
+            r.RunAsync("Proxy: WebSocket über den Proxy mit gleicher Origin", ProxyWebSocket);
+            r.RunAsync("Proxy: Container-Healthcheck erreicht /api/health ohne Proxy-Header", ProxyHealthWithoutForwarding);
         }
 
         private static string HarnessWebRoot;
@@ -233,6 +237,80 @@ namespace Paintball.Net.Tests
             HttpResponseMessage res = await h.Http.SendAsync(req);
             Assert.AreEqual(HttpStatusCode.OK, res.StatusCode, "index.html ausgeliefert");
             Assert.IsTrue(res.Content.Headers.ContentEncoding.Contains("br"), "Brotli-Kompression (PA-03)");
+        }
+            private static async Task<(WebApplication App, int Port)> StartProxyModeAsync()
+        {
+            var options = new ServerHostOptions
+            {
+                BehindProxy = true,
+                HttpPort = 0,
+                DataDirectory = AccountTests.TempDir(),
+                WebRoot = AccountTests.TempDir(),
+                Game = new Paintball.Net.Rooms.ServerOptions { LobbyCountdownSeconds = 0.5f }
+            };
+            WebApplication app = ServerHost.Build(Array.Empty<string>(), options);
+            await app.StartAsync();
+            var addresses = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>().Addresses;
+            Assert.IsTrue(addresses.All(a => a.StartsWith("http:")), "Kein eigener TLS-Listener hinter dem Proxy");
+            return (app, new Uri(addresses.First()).Port);
+        }
+
+        private static async Task ProxyTrustsForwardedProto()
+        {
+            var (app, port) = await StartProxyModeAsync();
+            try
+            {
+                using var http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false });
+                var req = new HttpRequestMessage(HttpMethod.Get, $"http://localhost:{port}/api/health");
+                req.Headers.Add("X-Forwarded-Proto", "https");
+                HttpResponseMessage res = await http.SendAsync(req);
+                Assert.AreEqual(HttpStatusCode.OK, res.StatusCode, "Health 200 über den Proxy");
+                Assert.IsTrue(res.Headers.Contains("Strict-Transport-Security"), "HSTS auch hinter dem Proxy");
+            }
+            finally { await app.StopAsync(); await app.DisposeAsync(); }
+        }
+
+        private static async Task ProxyRedirectsWithoutPort()
+        {
+            var (app, port) = await StartProxyModeAsync();
+            try
+            {
+                using var http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false });
+                var req = new HttpRequestMessage(HttpMethod.Get, $"http://localhost:{port}/index.html");
+                req.Headers.Host = "paint-ball-game.example";
+                HttpResponseMessage res = await http.SendAsync(req);
+                Assert.IsTrue((int)res.StatusCode >= 300 && (int)res.StatusCode < 400, "Redirect");
+                Assert.AreEqual("https://paint-ball-game.example/index.html", res.Headers.Location.ToString(), "Öffentliche HTTPS-URL ohne Port");
+            }
+            finally { await app.StopAsync(); await app.DisposeAsync(); }
+        }
+
+        private static async Task ProxyHealthWithoutForwarding()
+        {
+            var (app, port) = await StartProxyModeAsync();
+            try
+            {
+                using var http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false });
+                HttpResponseMessage res = await http.GetAsync($"http://localhost:{port}/api/health");
+                Assert.AreEqual(HttpStatusCode.OK, res.StatusCode, "Docker-Healthcheck ohne Umleitung");
+            }
+            finally { await app.StopAsync(); await app.DisposeAsync(); }
+        }
+
+        private static async Task ProxyWebSocket()
+        {
+            var (app, port) = await StartProxyModeAsync();
+            try
+            {
+                using var ws = new ClientWebSocket();
+                ws.Options.SetRequestHeader("Origin", $"https://localhost:{port}");
+                ws.Options.SetRequestHeader("X-Forwarded-Proto", "https");
+                await ws.ConnectAsync(new Uri($"ws://localhost:{port}/ws"), CancellationToken.None);
+                await SendAsync(ws, new { t = "hello", name = "Proxy" });
+                Assert.IsTrue((await ReceiveUntil(ws, "welcome")).GetProperty("token").GetString().Length >= 32, "Login über den Proxy");
+                await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "bye", CancellationToken.None);
+            }
+            finally { await app.StopAsync(); await app.DisposeAsync(); }
         }
     }
 }

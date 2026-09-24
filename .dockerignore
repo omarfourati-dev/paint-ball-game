@@ -1,0 +1,16 @@
+.git
+.github
+**/bin
+**/obj
+**/node_modules
+server-data
+e2e-output
+tests
+docs
+Packages
+ProjectSettings
+Assets/Editor
+Assets/Scripts/Unity
+*.md
+.env
+.env*

@@ -7,6 +7,7 @@ on:
   pull_request:
     paths: ['Assets/Scripts/Core/**', 'server/**', 'web/**', 'tests/**']
   workflow_dispatch:
+  workflow_call:   # von deploy.yml vor dem Deployment aufgerufen
 
 jobs:
   server-and-client:

@@ -15,6 +15,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.ResponseCompression;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
@@ -35,6 +36,11 @@ namespace Paintball.Server
         /// <summary>HTTP-Port nur für die Weiterleitung auf HTTPS (-1 = aus, 0 = zufällig).</summary>
         public int HttpPort = 5080;
         public bool ListenAnyIp;
+        /// <summary>
+        /// Betrieb hinter einem TLS-terminierenden Reverse-Proxy (z. B. Caddy): nur HTTP auf <see cref="HttpPort"/>,
+        /// X-Forwarded-Proto/-For werden übernommen, Weiterleitung auf die öffentliche HTTPS-URL ohne Port.
+        /// </summary>
+        public bool BehindProxy;
         public string DataDirectory = "server-data";
         public string WebRoot;
         /// <summary>Zusätzlich erlaubte WebSocket-Origins (gleicher Host ist immer erlaubt).</summary>
@@ -68,6 +74,11 @@ namespace Paintball.Server
                 k.AddServerHeader = false;
                 IPAddress ip = options.ListenAnyIp ? IPAddress.Any : IPAddress.Loopback;
                 // TLS: Zertifikat aus Kestrel-Konfiguration oder ASP.NET-Entwicklerzertifikat (dotnet dev-certs https)
+                if (options.BehindProxy)
+                {
+                    k.Listen(ip, options.HttpPort);
+                    return;
+                }
                 k.Listen(ip, options.HttpsPort, o => o.UseHttps());
                 if (options.HttpPort >= 0) k.Listen(ip, options.HttpPort);
             });
@@ -88,14 +99,24 @@ namespace Paintball.Server
 
             WebApplication app = builder.Build();
 
+            if (options.BehindProxy)
+            {
+                // Der Container ist nur im internen Docker-Netz des Proxys erreichbar – daher jedem Proxy vertrauen.
+                var forwarded = new ForwardedHeadersOptions { ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto };
+                forwarded.KnownIPNetworks.Clear();
+                forwarded.KnownProxies.Clear();
+                app.UseForwardedHeaders(forwarded);
+            }
+
             app.Use(async (ctx, next) =>
             {
-                // HTTP → HTTPS (NFR-11)
-                if (!ctx.Request.IsHttps)
+                // HTTP → HTTPS (NFR-11); hinter dem Proxy bleibt /api/health für den Container-Healthcheck erreichbar
+                bool internalProbe = options.BehindProxy && ctx.Request.Path == "/api/health";
+                if (!ctx.Request.IsHttps && !internalProbe)
                 {
                     string host = ctx.Request.Host.Host;
-                    int httpsPort = HttpsPortOf(app, options);
-                    ctx.Response.Redirect($"https://{host}:{httpsPort}{ctx.Request.Path}{ctx.Request.QueryString}", permanent: false);
+                    string authority = options.BehindProxy ? host : $"{host}:{HttpsPortOf(app, options)}";
+                    ctx.Response.Redirect($"https://{authority}{ctx.Request.Path}{ctx.Request.QueryString}", permanent: false);
                     return;
                 }
                 IHeaderDictionary h = ctx.Response.Headers;

@@ -1,0 +1,28 @@
+services:
+  paintball:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: paintball
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      TZ: Europe/Berlin
+    volumes:
+      - paintball-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    networks:
+      - web
+
+volumes:
+  paintball-data:
+    name: paintball-data
+
+networks:
+  web:
+    external: true

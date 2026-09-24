@@ -1,0 +1,79 @@
+name: CI & Deploy – paint-ball-game.omarfourati.de
+
+# Kein pull_request-Trigger: Code aus Forks darf nie auf dem Self-hosted-Runner laufen (öffentliches Repo).
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  DEPLOY_DIR: /home/paintball
+
+jobs:
+  # ─── Tests (Core, Server, Client) ────────────────────
+  test:
+    name: Tests
+    uses: ./.github/workflows/web-mvp.yml
+
+  # ─── Deploy (nur main, nur wenn Tests grün) ──────────
+  deploy:
+    name: Deploy to Production
+    runs-on: self-hosted
+    environment: production
+    needs: [test]
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Sync code to deploy directory
+        run: |
+          mkdir -p $DEPLOY_DIR
+          rsync -rlD --no-owner --no-group --delete \
+            --exclude='.git' \
+            --exclude='node_modules' \
+            --exclude='bin' \
+            --exclude='obj' \
+            --exclude='server-data' \
+            --exclude='.env' \
+            $GITHUB_WORKSPACE/ $DEPLOY_DIR/
+
+      - name: Ensure Docker network 'web' exists
+        run: docker network create web 2>/dev/null || echo "Network 'web' already exists."
+
+      - name: Build image
+        working-directory: ${{ env.DEPLOY_DIR }}
+        run: docker compose build --no-cache
+
+      - name: Stop old container
+        run: docker rm -f paintball 2>/dev/null || true
+
+      - name: Start service
+        working-directory: ${{ env.DEPLOY_DIR }}
+        run: docker compose up -d --remove-orphans
+
+      - name: Wait for health
+        run: |
+          echo "Waiting for paintball to become healthy..."
+          for i in $(seq 1 12); do
+            if docker inspect --format='{{.State.Health.Status}}' paintball 2>/dev/null | grep -q "healthy"; then
+              echo "Paintball is healthy."
+              exit 0
+            fi
+            echo "  Attempt $i/12 – waiting 10s..."
+            sleep 10
+          done
+          echo "Paintball did not become healthy in time."
+          docker logs paintball --tail=50
+          exit 1
+
+      - name: Show status
+        working-directory: ${{ env.DEPLOY_DIR }}
+        run: docker compose ps
+
+      - name: Reload Caddy
+        run: docker compose -f /opt/caddy/docker-compose.yml exec caddy caddy reload --config /etc/caddy/Caddyfile
+
+      - name: Clean up dangling images
+        run: docker image prune -f
