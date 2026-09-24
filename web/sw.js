@@ -20,13 +20,25 @@ const OFFLINE_HTML = '<!doctype html><html lang="de"><meta charset="utf-8"><meta
   'color:#fdf8ff;font:18px system-ui,sans-serif;text-align:center;padding:24px"><div><div style="font-size:64px">📡</div>' +
   '<h1>Du bist offline</h1><p>Paint-Ball braucht eine Internetverbindung.<br>You are offline – Paint-Ball needs an internet connection.</p></div></body></html>';
 
-function strategyFor(url, origin, mode) {
+// Alles Eigene außer API/WebSocket/Spieldaten: network-first, damit nach einem Deploy nie neues HTML mit altem JS läuft.
+function strategyFor(url, origin) {
   const u = new URL(url);
   if (u.origin !== origin) return 'ignore';
   if (u.pathname.startsWith('/api/') || u.pathname === '/ws') return 'network-only';
   if (u.pathname.startsWith('/assets/')) return 'cache-first';
-  if (mode === 'navigate') return 'network-first';
-  return 'stale-while-revalidate';
+  return 'network-first';
+}
+
+// Navigationen ohne Query speichern (ein Eintrag für /play statt einer je ?join=CODE), alles andere exakt.
+function cacheKey(url, mode) {
+  if (mode !== 'navigate') return url;
+  const u = new URL(url);
+  return u.origin + u.pathname;
+}
+
+// Serverfehler (z. B. 502 von Caddy während des Container-Neustarts) bei Navigationen aus dem Cache überbrücken.
+function navigationFallback(status) {
+  return status >= 500;
 }
 
 function shouldCache(res) {
@@ -37,26 +49,40 @@ function staleCaches(keys, version) {
   return keys.filter(k => /^pb-v\d+-/.test(k) && !k.startsWith(`${version}-`));
 }
 
-async function put(cacheName, req, res) {
-  if (shouldCache(res)) await (await caches.open(cacheName)).put(req, res.clone());
+// Schreibt im Hintergrund: Die Antwort geht sofort zurück, ein voller Speicher (QuotaExceeded) bleibt folgenlos.
+function put(event, cacheName, key, res) {
+  if (shouldCache(res)) {
+    const clone = res.clone();
+    try {
+      event.waitUntil(caches.open(cacheName).then(c => c.put(key, clone)).catch(() => {}));
+    } catch { /* Event bereits abgeschlossen: dann eben ohne Cache */ }
+  }
   return res;
 }
 
-async function handle(req, strategy) {
+function offlinePage() {
+  return new Response(OFFLINE_HTML, { status: 503, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+}
+
+async function handle(event, strategy) {
+  const req = event.request;
+  const key = cacheKey(req.url, req.mode);
   if (strategy === 'cache-first') {
-    return (await caches.match(req)) ?? put(ASSET_CACHE, req, await fetch(req));
+    return (await caches.match(key)) ?? put(event, ASSET_CACHE, key, await fetch(req));
   }
-  if (strategy === 'network-first') {
-    try {
-      return await put(SHELL_CACHE, req, await fetch(req));
-    } catch {
-      return (await caches.match(req, { ignoreSearch: true }))
-        ?? new Response(OFFLINE_HTML, { status: 503, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
-    }
+  const nav = req.mode === 'navigate';
+  const cached = () => caches.match(key, { ignoreSearch: nav });
+  let res;
+  try {
+    res = await fetch(req);
+  } catch {
+    return (await cached()) ?? (nav ? offlinePage() : Response.error());
   }
-  const cached = await caches.match(req);
-  const network = fetch(req).then(res => put(SHELL_CACHE, req, res)).catch(() => cached ?? Response.error());
-  return cached ?? network;
+  if (nav && navigationFallback(res.status)) {
+    const hit = await cached();
+    if (hit) return hit;
+  }
+  return put(event, SHELL_CACHE, key, res);
 }
 
 if (typeof self.addEventListener === 'function') {
@@ -70,10 +96,10 @@ if (typeof self.addEventListener === 'function') {
   self.addEventListener('fetch', e => {
     const req = e.request;
     if (req.method !== 'GET') return;
-    const strategy = strategyFor(req.url, self.location.origin, req.mode);
+    const strategy = strategyFor(req.url, self.location.origin);
     if (strategy === 'ignore' || strategy === 'network-only') return;
-    e.respondWith(handle(req, strategy));
+    e.respondWith(handle(e, strategy));
   });
 }
 
-self.PB_SW = { CACHE_VERSION, SHELL, strategyFor, shouldCache, staleCaches };
+self.PB_SW = { CACHE_VERSION, SHELL, strategyFor, cacheKey, navigationFallback, shouldCache, staleCaches };

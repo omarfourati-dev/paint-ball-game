@@ -16,12 +16,30 @@ test('SW: API und WebSocket laufen nie über den Cache', () => {
   assert.equal(SW.strategyFor(`${O}/ws`, O, 'websocket'), 'network-only');
 });
 
-test('SW: Spieldaten cache-first, Seiten network-first, Shell stale-while-revalidate, fremde Origin ignoriert', () => {
+test('SW: Spieldaten cache-first, Seiten und Shell network-first, fremde Origin ignoriert', () => {
   assert.equal(SW.strategyFor(`${O}/assets/hdri/orlando_stadium_2k.hdr`, O, 'cors'), 'cache-first');
   assert.equal(SW.strategyFor(`${O}/play?join=AB12`, O, 'navigate'), 'network-first');
   assert.equal(SW.strategyFor(`${O}/`, O, 'navigate'), 'network-first');
-  assert.equal(SW.strategyFor(`${O}/js/app.js`, O, 'same-origin'), 'stale-while-revalidate');
+  assert.equal(SW.strategyFor(`${O}/js/app.js`, O, 'same-origin'), 'network-first');
+  assert.equal(SW.strategyFor(`${O}/css/style.css`, O, 'no-cors'), 'network-first');
+  assert.equal(SW.strategyFor(`${O}/manifest.webmanifest`, O, 'same-origin'), 'network-first');
   assert.equal(SW.strategyFor('https://evil.example/x.js', O, 'no-cors'), 'ignore');
+});
+
+test('SW: Navigationen werden ohne Query gecacht, Spieldaten mit Query', () => {
+  assert.equal(SW.cacheKey(`${O}/play?join=AB12`, 'navigate'), `${O}/play`);
+  assert.equal(SW.cacheKey(`${O}/?utm=x#top`, 'navigate'), `${O}/`);
+  assert.equal(SW.cacheKey(`${O}/assets/maps/lager.jpg?v=2`, 'cors'), `${O}/assets/maps/lager.jpg?v=2`);
+  assert.equal(SW.cacheKey(`${O}/js/app.js`, 'same-origin'), `${O}/js/app.js`);
+});
+
+test('SW: Navigation fällt erst ab Status 500 auf den Cache zurück', () => {
+  assert.equal(SW.navigationFallback(502), true, 'Caddy während des Neustarts');
+  assert.equal(SW.navigationFallback(500), true);
+  assert.equal(SW.navigationFallback(503), true);
+  assert.equal(SW.navigationFallback(499), false);
+  assert.equal(SW.navigationFallback(404), false);
+  assert.equal(SW.navigationFallback(200), false);
 });
 
 test('SW: nur vollständige, direkte 200-Antworten werden gecacht', () => {
@@ -38,6 +56,11 @@ test('SW: beim Aktivieren nur eigene alte Caches löschen', () => {
   const keys = ['pb-v1-shell', 'pb-v1-assets', 'pb-v2-shell', 'pb-v2-assets', 'pb-v10-shell', 'fremd'];
   assert.deepEqual(SW.staleCaches(keys, 'pb-v2'), ['pb-v1-shell', 'pb-v1-assets', 'pb-v10-shell']);
   assert.match(SW.CACHE_VERSION, /^pb-v\d+$/);
+});
+
+test('SW: alte Caches werden auch bei Zeitstempel-Versionen erkannt', () => {
+  assert.deepEqual(SW.staleCaches(['pb-v1-shell', 'pb-v1790000000-shell'], 'pb-v1790000000'), ['pb-v1-shell']);
+  assert.deepEqual(SW.staleCaches(['pb-v1790000000-assets', 'pb-v1790000001-assets'], 'pb-v1790000001'), ['pb-v1790000000-assets']);
 });
 
 test('SW: Shell enthält jedes Client-Modul und verweist nur auf existierende Dateien', () => {
