@@ -36,3 +36,14 @@ test('Spiel-Seite verlinkt Manifest und Apple-Icon', () => {
   assert.match(html, /<link rel="manifest" href="\/manifest\.webmanifest">/);
   assert.match(html, /<link rel="apple-touch-icon" href="\/icons\/apple-touch-icon\.png">/);
 });
+
+test('Rechtstexte: Impressum mit Pflichtangaben, Datenschutz mit Betroffenenrechten', () => {
+  const imprint = readFileSync(webPath('impressum.html'), 'utf8');
+  for (const s of ['Omar Fourati', 'Am Sandberg 28', '51643 Gummersbach', 'info@omarfourati.de', '§ 5 DDG', '§ 18 Abs. 2 MStV'])
+    assert.ok(imprint.includes(s), `Impressum enthält ${s}`);
+  const privacy = readFileSync(webPath('datenschutz.html'), 'utf8');
+  for (const s of ['Verantwortlich', 'IONOS', "Let's Encrypt", 'keine Cookies', 'Art. 6 Abs. 1 lit. b DSGVO', 'Art. 6 Abs. 1 lit. f DSGVO',
+    'Meine Daten exportieren', 'Konto löschen', 'Landesbeauftragte für Datenschutz und Informationsfreiheit Nordrhein-Westfalen'])
+    assert.ok(privacy.includes(s), `Datenschutz enthält ${s}`);
+  for (const html of [imprint, privacy]) assert.doesNotMatch(html, /<script(?![^>]*\bsrc=)[^>]*>/, 'kein Inline-Skript');
+});
