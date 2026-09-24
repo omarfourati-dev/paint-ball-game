@@ -1,6 +1,19 @@
 // Screenshots für die Landingpage: Übersicht jeder Karte + Action-Motiv für den Hero.
 // Ausführen über Playwright-MCP browser_run_code_unsafe, Server muss unter BASE laufen.
-// OUT ist relativ zum Arbeitsverzeichnis des Playwright-MCP (Repo-Wurzel) – bei Bedarf absolut setzen.
+// OUT ist ein fest einprogrammierter absoluter Pfad in diesem Checkout (Playwright-MCP hat ein
+// anderes Arbeitsverzeichnis als das Repo, ein relativer Pfad landet also woanders). Auf einer
+// anderen Maschine oder bei einem anderen Checkout-Pfad muss OUT entsprechend angepasst werden.
+//
+// ZUVERLÄSSIGKEIT: Der volle Durchlauf unten (4 Karten + Hero in einem einzigen
+// browser_run_code_unsafe-Aufruf) wurde bei der Erzeugung der finalen Bilder (Task 7) in der
+// MCP-Session nie beobachtet, wie er in einem Stück durchläuft – mehrere Versuche liefen trotz
+// schnell antwortendem Server in page.waitForFunction-Timeouts (bis 60 s), vermutlich wegen
+// Ressourcen-/GPU-Kontention im von der MCP verwalteten Chromium-Prozess bei mehreren
+// nacheinander erzeugten WebGL-lastigen Seiten in einem Skriptlauf. Isolierte Einzelaufrufe
+// (eine Karte bzw. der Hero pro browser_run_code_unsafe-Aufruf) liefen dagegen jedes Mal
+// zuverlässig in 2–15 s durch. Zum zuverlässigen Neu-Erzeugen: ONLY unten auf eine Karten-ID
+// (oder 'hero') setzen und das Skript 5× einzeln ausführen (einmal pro Karte, einmal für den
+// Hero), statt den vollen Durchlauf in einem Aufruf zu versuchen.
 //
 // Hinweis aus der Erzeugung der finalen Bilder (Task 7):
 // - Pro Karte kann der Kamera-Faktor abweichen: "forest" hat ein sehr kurzes Nebel-Setting
@@ -15,6 +28,9 @@
 //   ein Marketing-Motiv).
 async (page) => {
   const BASE = 'https://localhost:5443', OUT = 'C:/Users/ABUS Dev/paint-ball-game-landing/web/assets/landing/';
+  // null = voller Durchlauf (4 Karten + Hero, siehe ZUVERLÄSSIGKEIT oben); sonst eine Karten-ID
+  // ('warehouse'|'forest'|'arena'|'speedball') für nur diese Karte, oder 'hero' für nur den Hero.
+  const ONLY = null;
   const ctx = await page.context().browser().newContext({ ignoreHTTPSErrors: true, viewport: { width: 1280, height: 720 } });
   try {
     const maps = (await (await ctx.request.get(BASE + '/api/maps')).json()).maps;
@@ -61,7 +77,8 @@ async (page) => {
     const eyeFactor = mapId => mapId === 'forest' ? { h: 0.28, d: 0.42 } : { h: 0.5, d: 0.62 };
 
     const results = [];
-    for (const m of maps) {
+    const mapTargets = ONLY === 'hero' ? [] : ONLY ? maps.filter(m => m.id === ONLY) : maps;
+    for (const m of mapTargets) {
       const p = await startTraining(m.id);
       await p.evaluate(() => { document.getElementById('hud').style.visibility = 'hidden'; });
       const size = Math.max(m.sizeX, m.sizeZ);
@@ -73,14 +90,17 @@ async (page) => {
       results.push(m.id);
     }
 
-    const hero = await startTraining('speedball');
-    await hero.waitForTimeout(4000);
-    await hero.evaluate(() => { document.getElementById('hud').style.visibility = 'hidden'; });
-    // -1.6 statt -3.4: am Speedball-Spawn steht die Figur nur ~1.8 Einheiten vor dem Grenzzaun
-    // (Cover-Kind "net"); ein größerer Rückversatz setzt die Kamera hinter den Zaun.
-    await setCamera(hero, { eye: [0.5, 1.7, -1.6], at: [0, 1.3, 4], fov: 55 }); // Schulterblick nach vorn
-    await shoot(hero, 'hero');
-    await hero.close();
+    if (!ONLY || ONLY === 'hero') {
+      const hero = await startTraining('speedball');
+      await hero.waitForTimeout(4000);
+      await hero.evaluate(() => { document.getElementById('hud').style.visibility = 'hidden'; });
+      // -1.6 statt -3.4: am Speedball-Spawn steht die Figur nur ~1.8 Einheiten vor dem Grenzzaun
+      // (Cover-Kind "net"); ein größerer Rückversatz setzt die Kamera hinter den Zaun.
+      await setCamera(hero, { eye: [0.5, 1.7, -1.6], at: [0, 1.3, 4], fov: 55 }); // Schulterblick nach vorn
+      await shoot(hero, 'hero');
+      await hero.close();
+      results.push('hero');
+    }
     return results;
   } finally {
     await ctx.close();
