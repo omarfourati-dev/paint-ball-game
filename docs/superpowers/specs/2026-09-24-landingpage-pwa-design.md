@@ -156,7 +156,7 @@ Hinweis auf Haftung für Inhalte/Links; Link auf https://omarfourati.de.
   keine Analyse-Tools, keine Drittanbieter-Ressourcen** (Schriften, Modelle, Texturen selbst gehostet).
 - Service Worker/Cache: speichert Programmdateien lokal für schnelleres Laden.
 - Betroffenenrechte (Art. 15–21 DSGVO), Beschwerderecht bei der Aufsichtsbehörde (LDI NRW);
-  Auskunft/Löschung direkt im Spiel (Profil → Daten exportieren / Konto löschen,
+  Auskunft/Löschung direkt im Spiel (Einstellungen → „Meine Daten exportieren“ / „Konto löschen“,
   `/api/me/export`, `DELETE /api/me`) oder per E-Mail.
 
 Hinweis: Die Texte sind eine sorgfältige Grundlage, keine Rechtsberatung.
