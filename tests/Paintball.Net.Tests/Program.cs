@@ -16,6 +16,7 @@ namespace Paintball.Net.Tests
             var runner = new TestRunner(args.Length > 0 ? args[0] : null);
             Console.WriteLine("=== Paintball.Net Tests (QA-01/QA-02) ===");
 
+            RepositoryContractTests.RegisterFor(runner, "memory", () => new Paintball.Net.Accounts.InMemoryPlayerRepository());
             MovementTests.Register(runner);
             MatchTests.Register(runner);
             BotTests.Register(runner);
