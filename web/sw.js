@@ -1,5 +1,6 @@
 // Service Worker (PWA, Scope /): Shell vorab cachen, Spieldaten beim ersten Laden, API/WebSocket nie.
-// Bei jeder Änderung an Shell-Dateien CACHE_VERSION erhöhen. sw.js selbst wird mit no-cache ausgeliefert.
+// sw.js selbst wird mit no-cache ausgeliefert.
+// Wird beim Docker-Build automatisch durch pb-v<Zeitstempel> ersetzt; manuell nicht mehr erhöhen.
 const CACHE_VERSION = 'pb-v1';
 const SHELL_CACHE = `${CACHE_VERSION}-shell`;
 const ASSET_CACHE = `${CACHE_VERSION}-assets`;

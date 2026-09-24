@@ -5,6 +5,8 @@ WORKDIR /src
 COPY Assets/Scripts/Core ./Assets/Scripts/Core
 COPY server ./server
 COPY web ./web
+# Service-Worker-Cache pro Build neu versionieren; der grep lässt den Build scheitern, falls das Ersetzen nicht greift.
+RUN sed -i "s/'pb-v1'/'pb-v$(date +%s)'/" web/sw.js && grep -q "pb-v[0-9]\{6,\}" web/sw.js
 RUN dotnet publish server/Paintball.Server -c Release -o /app
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0-alpine AS runner
