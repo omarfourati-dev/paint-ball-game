@@ -118,6 +118,8 @@ namespace Paintball.Core.Tests
             Run("TDD: Errungenschaften Fortschritt und Freischaltung (FR-45)", Achievements_Unlock);
             Run("TDD: Balance-Katalog datengetrieben Roundtrip (NFR-17)", BalanceCatalog_Roundtrip);
             Run("TDD: Faires Team-Balancing nach MMR (NFR-15)", TeamBalance_Fair);
+            Run("TDD: Unentschieden kostet kein MMR (Elo 0,5, NFR-15)", MatchCompletion_DrawIsNeutral);
+            Run("TDD: Reales Speedball-Turnierfeld nach NXL-Standard (FR-53/55)", MapCatalog_RealSpeedballField);
 
             Console.WriteLine();
             Console.WriteLine($"=== Ergebnis: {_passed} bestanden, {_failed} fehlgeschlagen ===");
@@ -1570,6 +1572,62 @@ namespace Paintball.Core.Tests
 
         // ---------- TDD: Match-Abschluss-Pipeline (MVP) ----------
 
+        private static void MapCatalog_RealSpeedballField()
+        {
+            var catalog = new MapCatalog();
+            MapDefinition field = catalog.GetById("speedball");
+            Check.IsTrue(field != null, "Turnierfeld vorhanden");
+            Check.AreEqual(4, catalog.Count, "4 Karten inkl. Turnierfeld");
+            Check.AreClose(45.72f, field.SizeZ, 0.05f, "Länge 150 ft (NXL)");
+            Check.AreClose(36.58f, field.SizeX, 0.05f, "Breite 120 ft (NXL)");
+            Check.AreEqual(MapSymmetry.Symmetric, field.Symmetry, "Symmetrisch");
+            Check.IsTrue(field.IsSpawnFair(), "Faire Spawns");
+            Check.IsTrue(field.MaxPlayers >= 10, "Platz für 5 gegen 5 (NXL-Format)");
+            foreach (var c in field.Covers)
+            {
+                bool mirrored = field.Covers.Exists(o => System.Math.Abs(o.X - c.X) < 0.01f && System.Math.Abs(o.Z + c.Z) < 0.01f
+                    && System.Math.Abs(o.ScaleX - c.ScaleX) < 0.01f && System.Math.Abs(o.ScaleZ - c.ScaleZ) < 0.01f && o.Kind == c.Kind);
+                Check.IsTrue(mirrored, $"Bunker ({c.X},{c.Z}) an der Mittellinie gespiegelt – Snake für beide Teams auf derselben Seite");
+                Check.IsTrue(!string.IsNullOrEmpty(c.Kind), "Jeder Bunker hat seine reale Form");
+                if (c.IsResupply) Check.IsTrue(System.Math.Abs(c.Z) > 20f, "Nachladen nur an der eigenen Start-Box");
+            }
+            Check.IsFalse(field.Covers.Exists(c => c.IsDynamic), "Echte Felder haben keine beweglichen Bunker");
+            Check.IsFalse(field.AllowPowerUps, "Echte Turnierfelder haben keine Power-Ups");
+            Check.IsTrue(catalog.GetById("warehouse").AllowPowerUps, "Arcade-Karten behalten Power-Ups");
+            foreach (string kind in new[] { "snake", "dorito", "temple", "can", "cake", "brick", "tombstone", "maya", "net", "tires" })
+                Check.IsTrue(field.Covers.Exists(c => c.Kind == kind), $"Standard-Bunker {kind}");
+            var tires = field.Covers.FindAll(c => c.Kind == "tires");
+            Check.IsTrue(tires.Count >= 4, "Reifenstapel in beiden Hälften");
+            foreach (var t in tires)
+            {
+                Check.IsTrue(t.ScaleY > 0.5f && t.ScaleY < 1.0f, "Reifenstapel = Deckung im Hocken (0,5–1 m)");
+                Check.AreClose(t.ScaleY / 2f, t.Y, 0.01f, "Reifen stehen auf dem Boden");
+                Check.IsTrue(t.ScaleZ >= 0.55f && t.ScaleZ <= 0.7f, "Tiefe = ein echter Reifen (≈0,6 m)");
+                foreach (var o in field.Covers)
+                {
+                    if (ReferenceEquals(o, t) || o.Kind == "net") continue;
+                    bool overlap = System.Math.Abs(o.X - t.X) < (o.ScaleX + t.ScaleX) / 2f && System.Math.Abs(o.Z - t.Z) < (o.ScaleZ + t.ScaleZ) / 2f;
+                    Check.IsFalse(overlap, $"Reifen ({t.X},{t.Z}) überlappen nicht mit {o.Kind}");
+                }
+            }
+        }
+
+        private static void MatchCompletion_DrawIsNeutral()
+        {
+            var account = PlayerAccount.CreateNew("Remis");
+            var stats = new MatchStatsTracker();
+            stats.RegisterPlayer(0);
+            stats.AssignPlayerToTeam(0, 0);
+            stats.RegisterPlayer(1);
+            stats.AssignPlayerToTeam(1, 1);
+            int before = account.Mmr;
+            var result = new MatchCompletionService(stats, account, -1, 0, 0).Complete(5.0, abandoned: false, draw: true);
+            Check.IsTrue(result.RewardsGranted, "Remis wird belohnt");
+            Check.AreEqual(before, account.Mmr, "Gleich starke Gegner, Remis → MMR unverändert");
+            Check.IsFalse(result.Won, "Kein Sieg");
+            Check.AreEqual(1, account.TotalMatches, "Match gezählt");
+        }
+
         private static void MatchCompletion_Pipeline()
         {
             var account = PlayerAccount.CreateNew("MVP-Spieler");
@@ -1890,7 +1948,7 @@ namespace Paintball.Core.Tests
         private static void MapCatalog_ThreeFairMaps()
         {
             var catalog = new MapCatalog();
-            Check.AreEqual(3, catalog.Count, "3 Launch-Karten (FR-53)");
+            Check.IsTrue(catalog.Count >= 3, "Mindestens 3 Launch-Karten (FR-53)");
 
             var warehouse = catalog.GetById("warehouse");
             var forest = catalog.GetById("forest");
@@ -1911,7 +1969,7 @@ namespace Paintball.Core.Tests
             var catalog = new MapCatalog();
             Check.AreEqual("warehouse", catalog.Get(0).Id, "Index 0 = Lagerhaus");
             Check.AreEqual("forest", catalog.Next(0).Id, "Rotation: next nach Lagerhaus = Wald");
-            Check.AreEqual("warehouse", catalog.Get(3).Id, "Rotation wrapped (Index % Count)");
+            Check.AreEqual("warehouse", catalog.Get(catalog.Count).Id, "Rotation wrapped (Index % Count)");
 
             foreach (var map in catalog.All)
             {

@@ -1,0 +1,36 @@
+name: web-mvp
+
+# NFR-18: Server-Simulation, Lobby, WSS-Integration und Browser-Client-Logik bei jedem Push testen.
+on:
+  push:
+    paths: ['Assets/Scripts/Core/**', 'server/**', 'web/**', 'tests/**', '.github/workflows/web-mvp.yml']
+  pull_request:
+    paths: ['Assets/Scripts/Core/**', 'server/**', 'web/**', 'tests/**']
+  workflow_dispatch:
+
+jobs:
+  server-and-client:
+    name: Server (.NET) + Client (Node) Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Entwicklerzertifikat für WSS-Integrationstests
+        run: dotnet dev-certs https
+      - name: Core-Tests
+        run: dotnet run --project tests/Paintball.Core.Tests
+      - name: Server-Tests (Simulation, Lobby, WSS)
+        run: dotnet run --project tests/Paintball.Net.Tests
+      - name: Client-Tests (Prediction-Golden, Netcode, i18n)
+        run: node --test tests/web/*.test.mjs
+      - name: Publish Server + Web-Client
+        run: dotnet publish server/Paintball.Server -c Release -o publish
+      - uses: actions/upload-artifact@v4
+        with:
+          name: paintball-server
+          path: publish

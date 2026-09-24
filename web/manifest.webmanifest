@@ -1,0 +1,11 @@
+{
+  "name": "Paint-Ball",
+  "short_name": "Paint-Ball",
+  "description": "Schnelles Online-Paintball im Browser",
+  "start_url": "/",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#1b1433",
+  "theme_color": "#1b1433",
+  "icons": [{ "src": "favicon.svg", "sizes": "any", "type": "image/svg+xml" }]
+}

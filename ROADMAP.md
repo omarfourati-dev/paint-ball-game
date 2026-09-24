@@ -1,6 +1,68 @@
 # Roadmap & Scrum Board – Paintball Multiplayer
 
-> Aktualisiert: 2026-09-16 | Tests: 78/78 grün | Core-Module: 65 | Unity-Skripte: 55
+> Aktualisiert: 2026-09-24 | Tests: Core 81/81 · Server 82/82 · Web 48/48 · Browser-E2E grün | **Web-MVP über WSS spielbar**
+
+---
+
+## Web-MVP über WSS (2026-09-24) – DONE
+
+**Architektur:** Der Unity-Netcode-Pfad war ohne Editor nicht bau-/testbar (BUG-005). Deshalb läuft der
+Multiplayer-Kern jetzt als **server-autoritativer C#-Gameserver** (`server/Paintball.Net` + ASP.NET-Core-Host
+`server/Paintball.Server`), der die **unveränderte Core-Logik** (`Assets/Scripts/Core`) kompiliert. Transport:
+**WebSocket über TLS (wss://)**. Der Browser-Client (`web/`, WebGL2, ~250 KB, keine Abhängigkeiten) nutzt das
+engine-neutrale Protokoll `docs/protocol.md` – ein Unity-WebGL-Client kann später denselben Server verwenden.
+
+| ID | Anforderung | Umsetzung im Web-MVP | Tests |
+|----|-------------|----------------------|-------|
+| FR-01/02 | Third-Person, Laufen/Sprinten/Ducken/Springen | Schulterkamera mit Kollision; `Simulation/Movement.cs` ↔ `web/js/movement.js` | Server 10, Golden 10 |
+| FR-03 | Ballistik | Core `BallisticSolver`, Paintballs mit Flugzeit, Drop, Streuung | Match-Tests |
+| FR-04 | Farbkleckse | Server-`ImpactEvent` → gebatchte Decals (Welt) + Kleckse an Spielern | E2E |
+| FR-05 | Trefferzonen | Kopf/Torso/Beine-Hitboxen, Core `DamageResolver` | 3 Tests |
+| FR-06/08 | Munition, Nachladen, Nachschub | Core `MarkerStateMachine`, Nachschubkisten, Ammo-Power-Up | 2 Tests |
+| FR-07 | Deckung/Peek | physische Deckung + Core `CoverRules` (geduckt an Deckung) | 2 Tests |
+| FR-09 | Power-Ups | 5 Typen auf der Karte, Respawn, Core `ActivePowerUps` | 2 Tests |
+| FR-10 | Trefferfeedback | Hitmarker, Kopftreffer, Schadensrichtung, Sound, Vibration, Teamtreffer-Hinweis | E2E |
+| FR-11/26 | Netz-Sync, Prediction/Interpolation | Sequenzierte Eingaben, Reconciliation, 100 ms Interpolation, Uhrensync | Golden + 7 Netcode |
+| FR-12 | Spawn-Schutz | Core `RespawnRules`/`SpawnPointSelector`, Schießen beendet Schutz | 1 Test |
+| FR-13 | Schnelles Match | Queue mit Wartezeit, Bot-Auffüllung, laufende Matches übernehmen Bot-Slots | 3 Tests |
+| FR-14..18 | TDM, FFA, CTF, Elimination (Runden), KotH | Adapter auf Core-Modusregeln | je 1 Test |
+| FR-19 | Training gegen Bots | Bot-KI (Sichtlinie, Reaktionszeit, Skill, Drop-Vorhalt, Objectives) + Tutorial | 7 Bot-Tests |
+| FR-20/21/24 | Privat, Custom Rules, Lobby | Einladungscode/-link, Teamwahl, Ready, Host-Regeln (Core `CustomGameRules`), Bots | 5 Tests |
+| FR-22 | 8–16 Spieler | Quick-Match füllt auf ≥ 8 (Team) auf, Kartenlimit bis 16 | 1 Test + Soak |
+| FR-23/NFR-15 | MMR-Matchmaking, faire Teams | MMR-Fenster weitet sich, Core `TeamBalancer` | 1 Test |
+| FR-25/NFR-10 | Server-autoritativ | Server entscheidet Bewegung/Treffer/Punkte; Feuerrate und Zielrichtung serverseitig geprüft | 3 Tests |
+| FR-27/NFR-09 | Reconnect | Core `ReconnectManager`, KI übernimmt bis zur Rückkehr per Token | 2 Tests + E2E |
+| FR-28/PA-05 | Cross-Play | Schalter, getrennte Eingabe-Pools, Core `CrossPlayPolicy` | 1 Test |
+| FR-29 | Ping/Verlust/Qualität | RTT/Verlust im HUD und Scoreboard, Core `MatchTelemetry` | Tests |
+| FR-30/31 | Party bleibt zusammen, Leaver/AFK | Raum bleibt nach Match zusammen; Core `LeaverDetection`, Bot-Ersatz | 3 Tests |
+| FR-32 | Match-Ende serverseitig | Core `MatchCompletionService` (Anti-Cheat → Leaver → XP/MMR); Remis = ±0 MMR (neu) | 2 Tests |
+| FR-33..37 | Kosmetik, Marker, Slots, Farbe, 3D-Vorschau | 3 Marker, Dash-Gadget, Heil-Spray, Farb-/Akzent-Kosmetik, drehbare 3D-Vorschau | 3 Tests |
+| FR-40..47 | XP, Freischaltungen, Stats, Errungenschaften, Bestenliste, Liga | Core `PlayerAccount`, `AchievementsCatalog`, `LeaderboardRanking`, `SeasonRanker` | 6 Tests |
+| FR-48/49 | Gastkonto, Fortschritt per Token | Token (nur SHA-256-Hash gespeichert), dateibasierte Persistenz | 4 Tests |
+| FR-51/52 | Quick-Chat, Emotes, Ping, Melden/Blockieren | nur Phrasen-IDs, Team-Chat, Spam-Drossel, Core `ReportEvaluator`, lokale Blockliste | 3 Tests |
+| FR-53..56 | 3 Karten, Deckung, Symmetrie, Dynamik | Karten aus Core `MapCatalog` (auch per `/api/maps` an den Client) | 1 Test + Soak |
+| FR-53 (neu) | Echtes Turnierfeld | NXL-Speedball-Feld 150 × 120 ft mit realen Luftbunkern (Snake, Dorito, Temple, Can, Cake, Maya …) und **Reifenstapeln** (Kind `tires`), gespiegelt, ohne Power-Ups | 1 Test |
+| Grafik | Fotorealistischer Renderer | PBR, Stadion-HDRI + Fototexturen (Poly Haven, CC0), Schatten, ACES | 7 HDR-Tests |
+| Grafik | Echte Menschen statt Roboter | Quaternius-Figur (CC0) mit GPU-Skinning (43 Knochen) und 17 Animationen: Laufen/Rennen mit Tempo-Anpassung, Schießen, Hocken, Springen, Treffer, Tod, Emotes; Paintball-Maske und Markierer an den Knochen | 6 glTF + 7 Avatar-Tests |
+| Grafik | Echte Props | Fotogescannte Reifen, Fässer, Kisten (glTF, UV-PBR mit Normal-/ARM-Maps) auf und um das Feld | Server-Test (MIME) + E2E |
+| UI-01..12 | Alle Screens | Laden/Tipps, Menü, Modi, Lobby, HUD, Pause, Ergebnis, Anpassen, Shop, Profil, Einstellungen, Tutorial | E2E |
+| UX-04..25 | Touch/Gamepad/Maus, Auto-Erkennung, Zielhilfe, Barrierefreiheit, DE/EN | Farbenblind-Paletten + Formen, UI-Skala, reduzierte Bewegung, Untertitel, Neubelegung | 9 Tests + E2E |
+| NFR-01 | Feste Tickrate | 30-Hz-Loop, driftfrei | – |
+| NFR-06/20 | Beobachtbarkeit | `/api/health` mit Metriken | 1 Test |
+| NFR-11 | TLS | Kestrel HTTPS/WSS, HTTP→HTTPS, HSTS, CSP, Origin-Prüfung | 3 Tests |
+| NFR-12 | DSGVO | Export/Löschung per API + Einstellungen | 2 Tests |
+| NFR-13 | Anti-Cheat | Flood-Schutz, Nachrichtenlimits, Eingabevalidierung, Anti-Wallhack-Sichtbarkeit, `MatchIntegrityValidator` | 4 Tests |
+| NFR-14/M-02..06 | Kein Pay-to-Win | Shop nur Kosmetik mit Münzen aus Spielzeit, keine Lootboxen | 1 Test |
+| NFR-18 | CI | `.github/workflows/web-mvp.yml` (Core, Server, Client, Publish-Artefakt) | – |
+| PA-02/03/04 | Responsiv, < 50 MB, FPS-Cap | 250 KB Client, Brotli, FPS-Limit 30/60 | E2E |
+
+**Behoben im Zuge des MVP:** `Paintball.Core.Tests.csproj` war durch `*.csproj` in `.gitignore` nie eingecheckt
+(CI `core-tests.yml` konnte nicht laufen) · Tippfehler „Störmt“ im Core-Quick-Chat · Remis zählte als Niederlage (MMR).
+
+**Bewusst offen / nächste Schritte:** echte Login-Anbieter (E-Mail/Google/Apple/Steam) mit Gastkonto-Verknüpfung;
+Lag-Kompensation per Rewind (heute: Projektile mit Flugzeit); regionale Server-Instanzen/horizontale Skalierung
+(AR-10, Räume sind pro Prozess); Unity-Client an `docs/protocol.md` anbinden; Store-Builds (P-01..P-05);
+Moderations-Backend für Meldungen (heute Log + Telemetrie).
 
 ---
 
@@ -188,9 +250,9 @@
 
 | ID | Anforderung | Status | Core/Unity | Tests |
 |----|-------------|--------|------------|-------|
-| FR-22 | Echtzeit-Multiplayer 8–16 Spieler | BLOCKED | Netcode-Pakete nicht installiert | — |
-| FR-25 | Server-autoritative Architektur | BLOCKED | (Netcode) | — |
-| FR-26 | Client-Prediction & Interpolation | BLOCKED | (Netcode) | — |
+| FR-22 | Echtzeit-Multiplayer 8–16 Spieler | DONE (Web-MVP/WSS; Unity-Netcode weiterhin offen) | `server/Paintball.Net` | Server-Tests |
+| FR-25 | Server-autoritative Architektur | DONE (Web-MVP) | `server/Paintball.Net/Simulation/GameMatch.cs` | Server-Tests |
+| FR-26 | Client-Prediction & Interpolation | DONE (Web-MVP) | `web/js/prediction.js`, `interpolation.js` | Golden + Netcode |
 | FR-24 | Lobby-System mit Team-/Ready-/Kartenwahl | DONE (Netzwerk-Team-Zuweisung → mit Netcode) | `Unity/UI/LobbyScreen.cs` + `Unity/Match/LobbyConfig.cs` (Modus/Karte/Invite/Team/Ready/Countdown/Start); Core: `PartyLogic.SetTeam` | 1 Test |
 | FR-27 | Reconnect-Funktion | DONE (Core; Netzwerk-Anbindung → FR-22) | `Core/Session/ReconnectManager.cs` (Slot-Reservierung, Team-Wiederherstellung, Grace-Frist, Prune) | 1 Test |
 | FR-28 | Cross-Play (optional) | DONE (Core `CrossPlayPolicy` + `CrossPlaySettings` + SettingsProfile-Flag + Toggle; Netcode-Anbindung → FR-22) | — |
@@ -231,7 +293,7 @@
 | NFR-01 | 60 FPS Mid-Range / 30 FPS Low-End | TODO (Profiling) |
 | NFR-02 | Ladezeit < 10s Desktop, < 15s Web | TODO |
 | NFR-08 | Absturzrate < 1 % | TODO (Crash-Reporting) |
-| NFR-11 | TLS-verschlüsselte Kommunikation | TODO |
+| NFR-11 | TLS-verschlüsselte Kommunikation | DONE (Kestrel HTTPS/WSS, HSTS, CSP) |
 | NFR-12 | DSGVO: Datensparsamkeit, Löschbarkeit | DONE (Core `AccountDataExport` exportiert portables JSON + löscht alle lokalen Dateien; `PrivacyScreen` mit Export/Lösch-Buttons und `ResetAccount`) |
 | — | Store-Submission (Google Play, App Store, Steam) | TODO |
 
@@ -295,7 +357,7 @@
 | BUG-002 | `ScoreboardView` zeigt add-only Kill-Summen, nicht echte Match-Stats | FIXED |
 | BUG-003 | `PlayerProfile` nutzt verstreute PlayerPrefs statt konsolidierter Persistenz | FIXED |
 | BUG-004 | `FriendsManager` / `PartyManager`: Nur Debug.Log, keine Daten | FIXED |
-| BUG-005 | Netcode-Pakete nicht installiert → `NetworkPlayer`/`NetworkGameManager` kompilieren nicht | BLOCKED |
+| BUG-005 | Netcode-Pakete nicht installiert → `NetworkPlayer`/`NetworkGameManager` kompilieren nicht | BLOCKED (umgangen: Web-MVP-Server) |
 | BUG-006 | `SceneBuilder` braucht Unity Editor (kein CI-Test) | LOW |
 | BUG-007 | `ChatFilter.WordList` nur DE, keine EN-Wörter | FIXED |
 

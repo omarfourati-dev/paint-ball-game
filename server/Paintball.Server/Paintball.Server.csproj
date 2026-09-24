@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!--
+    WSS-Gameserver (NFR-11: TLS) + Auslieferung des Browser-Clients (P-06).
+    Start: dotnet run im Ordner server/Paintball.Server  →  https://localhost:5443
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>Paintball.Server</AssemblyName>
+    <RootNamespace>Paintball.Server</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Paintball.Net\Paintball.Net.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="..\..\web\**\*" LinkBase="web" CopyToPublishDirectory="PreserveNewest" CopyToOutputDirectory="Never" />
+  </ItemGroup>
+
+</Project>

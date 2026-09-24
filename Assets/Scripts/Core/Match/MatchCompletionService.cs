@@ -40,8 +40,11 @@ namespace Paintball.Core.Match
             _localTeamId = localTeamId;
         }
 
-        /// <summary>Schließt das Match ab. Rufen Sie diese Methode genau einmal pro Match auf.</summary>
-        public MatchCompletionResult Complete(double matchDurationMinutes, bool abandoned = false)
+        /// <summary>
+        /// Schließt das Match ab. Rufen Sie diese Methode genau einmal pro Match auf.
+        /// <paramref name="draw"/>: Unentschieden – MMR wird mit 0,5 (Elo-Remis) gewertet.
+        /// </summary>
+        public MatchCompletionResult Complete(double matchDurationMinutes, bool abandoned = false, bool draw = false)
         {
             if (_tracker == null || _account == null)
                 return Denied("fehlende Daten");
@@ -61,14 +64,14 @@ namespace Paintball.Core.Match
             int xpBefore = _account.TotalXp;
             int mmrBefore = _account.Mmr;
 
-            summary.ApplyLocalPlayer(_account, _localPlayerId);
+            summary.ApplyLocalPlayer(_account, _localPlayerId, draw);
 
             return new MatchCompletionResult
             {
                 RewardsGranted = true,
                 XpGained = _account.TotalXp - xpBefore,
                 MmrChange = _account.Mmr - mmrBefore,
-                Won = _winningTeamId == _localTeamId,
+                Won = !draw && _winningTeamId == _localTeamId,
                 Summary = summary
             };
         }

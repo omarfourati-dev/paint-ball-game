@@ -148,7 +148,7 @@ namespace Paintball.Core.Match
         /// Wendet das Evaluator-Ergebnis atomar auf einen Account an (FR-40/FR-44/FR-43):
         /// XP, Match-Statistik und MMR basierend auf Sieg/Niederlage und Gegner-MMR.
         /// </summary>
-        public void ApplyLocalPlayer(PlayerAccount account, int playerId)
+        public void ApplyLocalPlayer(PlayerAccount account, int playerId, bool draw = false)
         {
             if (account == null) return;
 
@@ -172,7 +172,7 @@ namespace Paintball.Core.Match
                 Won = entry.Value.Won
             });
             account.UpdateMmr((int)System.MathF.Round(OpponentAverageMmr),
-                entry.Value.Won ? 1f : 0f);
+                draw ? 0.5f : entry.Value.Won ? 1f : 0f); // Remis = halber Punkt (Elo)
         }
     }
 }

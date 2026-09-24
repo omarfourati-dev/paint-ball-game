@@ -21,6 +21,8 @@ namespace Paintball.Core.Maps
         public float ScaleZ;
         public bool IsDynamic;      // FR-56: bewegliche Deckung
         public bool IsResupply;     // FR-54: Nachschubpunkt an diesem Block
+        /// <summary>Materialart für die Darstellung (z. B. crate, container, brick, vat) – rein visuell, AR-03.</summary>
+        public string Kind = string.Empty;
     }
 
     /// <summary>Spawn-Zone einer Karte (FR-54).</summary>
@@ -42,6 +44,8 @@ namespace Paintball.Core.Maps
         public float SizeX;
         public float SizeZ;
         public int MaxPlayers;
+        /// <summary>Power-Ups erlaubt (Arcade-Karten); echte Turnierfelder ohne (FR-09 abschaltbar).</summary>
+        public bool AllowPowerUps = true;
         public List<MapCoverBlock> Covers = new();
         public List<MapSpawnZone> Spawns = new();
 
@@ -74,7 +78,7 @@ namespace Paintball.Core.Maps
 
         public MapCatalog()
         {
-            _maps = new[] { CreateWarehouse(), CreateForest(), CreateArena() };
+            _maps = new[] { CreateWarehouse(), CreateForest(), CreateArena(), CreateSpeedball() };
         }
 
         public MapDefinition Get(int index)
@@ -204,6 +208,84 @@ namespace Paintball.Core.Maps
             return map;
         }
 
+        /// <summary>
+        /// Reales Speedball-Turnierfeld nach NXL-/Millennium-Standard (150 × 120 ft, 45,72 × 36,58 m):
+        /// Kunstrasen, Netze, aufblasbare Standard-Bunker (Snake, Dorito, Temple, Can, Cake, Brick,
+        /// Tombstone, Maya als „X“). Wie echte Layouts an der Mittellinie gespiegelt – die Snake liegt
+        /// für beide Teams an derselben Seitenlinie. Keine beweglichen Bunker, Nachladen nur an der
+        /// eigenen Start-Box. Entwurf: Design-Canvas „Kartenplan“ (scratch speedball.py).
+        /// </summary>
+        private static MapDefinition CreateSpeedball()
+        {
+            var map = new MapDefinition
+            {
+                Id = "speedball",
+                DisplayName = "Turnierfeld",
+                Description = "Echtes Speedball-Turnierfeld (NXL-Standard, 150 × 120 ft) mit aufblasbaren Bunkern.",
+                Symmetry = MapSymmetry.Symmetric,
+                SizeX = 36.58f,
+                SizeZ = 45.72f,
+                MaxPlayers = 10,
+                AllowPowerUps = false
+            };
+            map.Covers.Add(new MapCoverBlock { X = 0f, Y = 1.5f, Z = -23.11f, ScaleX = 37.58f, ScaleY = 3f, ScaleZ = 0.5f, Kind = "net" });
+            map.Covers.Add(new MapCoverBlock { X = 0f, Y = 1.5f, Z = 23.11f, ScaleX = 37.58f, ScaleY = 3f, ScaleZ = 0.5f, Kind = "net" });
+            map.Covers.Add(new MapCoverBlock { X = -18.54f, Y = 1.5f, Z = 0f, ScaleX = 0.5f, ScaleY = 3f, ScaleZ = 46.72f, Kind = "net" });
+            map.Covers.Add(new MapCoverBlock { X = 18.54f, Y = 1.5f, Z = 0f, ScaleX = 0.5f, ScaleY = 3f, ScaleZ = 46.72f, Kind = "net" });
+            map.Covers.Add(new MapCoverBlock { X = 0f, Y = 1.2f, Z = 0f, ScaleX = 3f, ScaleY = 2.4f, ScaleZ = 3f, Kind = "maya" });
+            map.Covers.Add(new MapCoverBlock { X = -9.5f, Y = 0.6f, Z = 0f, ScaleX = 1.2f, ScaleY = 1.2f, ScaleZ = 3f, Kind = "brick" });
+            map.Covers.Add(new MapCoverBlock { X = 10f, Y = 0.75f, Z = 0f, ScaleX = 1.5f, ScaleY = 1.5f, ScaleZ = 1.5f, Kind = "can" });
+            map.Covers.Add(new MapCoverBlock { X = -15.2f, Y = 0.55f, Z = -5.5f, ScaleX = 1.2f, ScaleY = 1.1f, ScaleZ = 7f, Kind = "snake" });
+            map.Covers.Add(new MapCoverBlock { X = -15.2f, Y = 0.75f, Z = -13f, ScaleX = 1.5f, ScaleY = 1.5f, ScaleZ = 1.5f, Kind = "can" });
+            map.Covers.Add(new MapCoverBlock { X = -10f, Y = 0.9f, Z = -8.5f, ScaleX = 2.6f, ScaleY = 1.8f, ScaleZ = 1.3f, Kind = "temple" });
+            map.Covers.Add(new MapCoverBlock { X = -6f, Y = 0.6f, Z = -13.5f, ScaleX = 3f, ScaleY = 1.2f, ScaleZ = 1.2f, Kind = "brick" });
+            map.Covers.Add(new MapCoverBlock { X = -4f, Y = 0.6f, Z = -3f, ScaleX = 3f, ScaleY = 1.2f, ScaleZ = 1.2f, Kind = "brick" });
+            map.Covers.Add(new MapCoverBlock { X = 0f, Y = 0.65f, Z = -16.5f, ScaleX = 2.2f, ScaleY = 1.3f, ScaleZ = 2.2f, Kind = "cake" });
+            map.Covers.Add(new MapCoverBlock { X = 0f, Y = 0.75f, Z = -9f, ScaleX = 1.5f, ScaleY = 1.5f, ScaleZ = 1.5f, Kind = "can" });
+            map.Covers.Add(new MapCoverBlock { X = 5.5f, Y = 0.8f, Z = -12f, ScaleX = 1.2f, ScaleY = 1.6f, ScaleZ = 0.7f, Kind = "tombstone" });
+            map.Covers.Add(new MapCoverBlock { X = 9f, Y = 0.45f, Z = -16f, ScaleX = 1.6f, ScaleY = 0.9f, ScaleZ = 1.2f, Kind = "minidorito" });
+            map.Covers.Add(new MapCoverBlock { X = 12.5f, Y = 0.65f, Z = -8f, ScaleX = 2f, ScaleY = 1.3f, ScaleZ = 1.6f, Kind = "dorito" });
+            map.Covers.Add(new MapCoverBlock { X = 15.5f, Y = 0.65f, Z = -3f, ScaleX = 2f, ScaleY = 1.3f, ScaleZ = 1.6f, Kind = "dorito" });
+            map.Covers.Add(new MapCoverBlock { X = 15.5f, Y = 0.45f, Z = -14.5f, ScaleX = 1.6f, ScaleY = 0.9f, ScaleZ = 1.2f, Kind = "minidorito" });
+            map.Covers.Add(new MapCoverBlock { X = 6.5f, Y = 0.9f, Z = -4.5f, ScaleX = 2.6f, ScaleY = 1.8f, ScaleZ = 1.3f, Kind = "temple" });
+            map.Covers.Add(new MapCoverBlock { X = -6.5f, Y = 0.45f, Z = -21.9f, ScaleX = 1.2f, ScaleY = 0.9f, ScaleZ = 0.8f, Kind = "podrack", IsResupply = true });
+            map.Covers.Add(new MapCoverBlock { X = 6.5f, Y = 0.45f, Z = -21.9f, ScaleX = 1.2f, ScaleY = 0.9f, ScaleZ = 0.8f, Kind = "podrack", IsResupply = true });
+            map.Covers.Add(new MapCoverBlock { X = -15.2f, Y = 0.55f, Z = 5.5f, ScaleX = 1.2f, ScaleY = 1.1f, ScaleZ = 7f, Kind = "snake" });
+            map.Covers.Add(new MapCoverBlock { X = -15.2f, Y = 0.75f, Z = 13f, ScaleX = 1.5f, ScaleY = 1.5f, ScaleZ = 1.5f, Kind = "can" });
+            map.Covers.Add(new MapCoverBlock { X = -10f, Y = 0.9f, Z = 8.5f, ScaleX = 2.6f, ScaleY = 1.8f, ScaleZ = 1.3f, Kind = "temple" });
+            map.Covers.Add(new MapCoverBlock { X = -6f, Y = 0.6f, Z = 13.5f, ScaleX = 3f, ScaleY = 1.2f, ScaleZ = 1.2f, Kind = "brick" });
+            map.Covers.Add(new MapCoverBlock { X = -4f, Y = 0.6f, Z = 3f, ScaleX = 3f, ScaleY = 1.2f, ScaleZ = 1.2f, Kind = "brick" });
+            map.Covers.Add(new MapCoverBlock { X = 0f, Y = 0.65f, Z = 16.5f, ScaleX = 2.2f, ScaleY = 1.3f, ScaleZ = 2.2f, Kind = "cake" });
+            map.Covers.Add(new MapCoverBlock { X = 0f, Y = 0.75f, Z = 9f, ScaleX = 1.5f, ScaleY = 1.5f, ScaleZ = 1.5f, Kind = "can" });
+            map.Covers.Add(new MapCoverBlock { X = 5.5f, Y = 0.8f, Z = 12f, ScaleX = 1.2f, ScaleY = 1.6f, ScaleZ = 0.7f, Kind = "tombstone" });
+            map.Covers.Add(new MapCoverBlock { X = 9f, Y = 0.45f, Z = 16f, ScaleX = 1.6f, ScaleY = 0.9f, ScaleZ = 1.2f, Kind = "minidorito" });
+            map.Covers.Add(new MapCoverBlock { X = 12.5f, Y = 0.65f, Z = 8f, ScaleX = 2f, ScaleY = 1.3f, ScaleZ = 1.6f, Kind = "dorito" });
+            map.Covers.Add(new MapCoverBlock { X = 15.5f, Y = 0.65f, Z = 3f, ScaleX = 2f, ScaleY = 1.3f, ScaleZ = 1.6f, Kind = "dorito" });
+            map.Covers.Add(new MapCoverBlock { X = 15.5f, Y = 0.45f, Z = 14.5f, ScaleX = 1.6f, ScaleY = 0.9f, ScaleZ = 1.2f, Kind = "minidorito" });
+            map.Covers.Add(new MapCoverBlock { X = 6.5f, Y = 0.9f, Z = 4.5f, ScaleX = 2.6f, ScaleY = 1.8f, ScaleZ = 1.3f, Kind = "temple" });
+            map.Covers.Add(new MapCoverBlock { X = -6.5f, Y = 0.45f, Z = 21.9f, ScaleX = 1.2f, ScaleY = 0.9f, ScaleZ = 0.8f, Kind = "podrack", IsResupply = true });
+            map.Covers.Add(new MapCoverBlock { X = 6.5f, Y = 0.45f, Z = 21.9f, ScaleX = 1.2f, ScaleY = 0.9f, ScaleZ = 0.8f, Kind = "podrack", IsResupply = true });
+            // Reifenstapel (je 5 echte Autoreifen, Ø 0,6 m) – klassische Deckung im Hocken, gespiegelt
+            foreach (float side in new[] { -1f, 1f })
+            {
+                map.Covers.Add(new MapCoverBlock { X = 3f, Y = 0.42f, Z = side * 7f, ScaleX = 1.25f, ScaleY = 0.84f, ScaleZ = 0.62f, Kind = "tires" });
+                map.Covers.Add(new MapCoverBlock { X = -11f, Y = 0.42f, Z = side * 17.5f, ScaleX = 1.25f, ScaleY = 0.84f, ScaleZ = 0.62f, Kind = "tires" });
+                map.Covers.Add(new MapCoverBlock { X = 12f, Y = 0.42f, Z = side * 19.5f, ScaleX = 1.9f, ScaleY = 0.84f, ScaleZ = 0.62f, Kind = "tires" });
+            }
+            map.Spawns.Add(new MapSpawnZone { TeamId = 0, X = -4f, Y = 0f, Z = -21.3f });
+            map.Spawns.Add(new MapSpawnZone { TeamId = 0, X = -2f, Y = 0f, Z = -21.3f });
+            map.Spawns.Add(new MapSpawnZone { TeamId = 0, X = 0f, Y = 0f, Z = -21.3f });
+            map.Spawns.Add(new MapSpawnZone { TeamId = 0, X = 2f, Y = 0f, Z = -21.3f });
+            map.Spawns.Add(new MapSpawnZone { TeamId = 0, X = 4f, Y = 0f, Z = -21.3f });
+            map.Spawns.Add(new MapSpawnZone { TeamId = 1, X = -4f, Y = 0f, Z = 21.3f });
+            map.Spawns.Add(new MapSpawnZone { TeamId = 1, X = -2f, Y = 0f, Z = 21.3f });
+            map.Spawns.Add(new MapSpawnZone { TeamId = 1, X = 0f, Y = 0f, Z = 21.3f });
+            map.Spawns.Add(new MapSpawnZone { TeamId = 1, X = 2f, Y = 0f, Z = 21.3f });
+            map.Spawns.Add(new MapSpawnZone { TeamId = 1, X = 4f, Y = 0f, Z = 21.3f });
+
+            return map;
+        }
+
         private static void AddWall(MapDefinition map, int angleDeg)
         {
             float rad = angleDeg * MathF.PI / 180f;
@@ -218,7 +300,8 @@ namespace Paintball.Core.Maps
                 Y = 2f,
                 ScaleX = Math.Abs(cx) > 0.1f ? 1f : length,
                 ScaleY = 4f,
-                ScaleZ = Math.Abs(cz) > 0.1f ? 1f : length
+                ScaleZ = Math.Abs(cz) > 0.1f ? 1f : length,
+                Kind = "boundary"
             });
         }
     }

@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Server-autoritative Spielsimulation für den Web-MVP (FR-25, NFR-10, AR-06).
+    Kompiliert dieselben Core-Quellen wie die Unity-Assembly "Paintball.Core",
+    damit Server, Unity-Client und Tests identische Spielregeln nutzen.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <AssemblyName>Paintball.Net</AssemblyName>
+    <RootNamespace>Paintball.Net</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\..\Assets\Scripts\Core\**\*.cs" />
+    <Compile Include="**\*.cs" Exclude="bin\**;obj\**" />
+  </ItemGroup>
+
+</Project>

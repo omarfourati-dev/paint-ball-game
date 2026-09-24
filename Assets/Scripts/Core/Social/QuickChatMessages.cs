@@ -35,7 +35,7 @@ namespace Paintball.Core.Social
             },
             [QuickChatCategory.Tactical] = new[]
             {
-                "Zurück zur Basis!", "Störmt jetzt!", "Halte die Position!", "Konzentriert auf das Ziel!"
+                "Zurück zur Basis!", "Stürmt jetzt!", "Halte die Position!", "Konzentriert auf das Ziel!"
             }
         };
 

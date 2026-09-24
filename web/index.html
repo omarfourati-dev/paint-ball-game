@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="de" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <title>Paint-Ball</title>
+  <meta name="description" content="Schnelles Online-Paintball im Browser – Team-Deathmatch, Capture the Flag, King of the Hill und mehr.">
+  <meta name="theme-color" content="#1b1433">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <canvas id="game" aria-label="Spielansicht"></canvas>
+  <canvas id="hud" aria-hidden="true"></canvas>
+
+  <div id="touch" class="touch hidden" aria-hidden="true">
+    <div class="stick"><div class="knob"></div></div>
+    <div class="touch-buttons">
+      <button data-btn="fire" class="tb tb-fire">🎯</button>
+      <button data-btn="jump" class="tb tb-jump">⤒</button>
+      <button data-btn="crouch" class="tb tb-crouch">⤓</button>
+      <button data-btn="reload" class="tb tb-reload">⟳</button>
+      <button data-btn="dash" class="tb tb-dash">⇢</button>
+      <button data-btn="use" class="tb tb-use">✚</button>
+      <button data-btn="chat" class="tb tb-chat">💬</button>
+      <button data-btn="pause" class="tb tb-pause">❚❚</button>
+    </div>
+  </div>
+
+  <main id="screens">
+    <section id="screen-loading" class="screen active" aria-live="polite"></section>
+    <section id="screen-welcome" class="screen"></section>
+    <section id="screen-menu" class="screen"></section>
+    <section id="screen-lobby" class="screen"></section>
+    <section id="screen-results" class="screen"></section>
+    <section id="screen-customize" class="screen"></section>
+    <section id="screen-shop" class="screen"></section>
+    <section id="screen-profile" class="screen"></section>
+    <section id="screen-leaderboard" class="screen"></section>
+    <section id="screen-settings" class="screen"></section>
+  </main>
+
+  <div id="click-to-play" class="overlay hidden"><button class="btn big" id="btn-click-play"></button></div>
+  <div id="pause" class="overlay hidden" role="dialog" aria-modal="true"></div>
+  <div id="wheel" class="overlay hidden" role="dialog"></div>
+  <div id="toast" role="status" aria-live="polite"></div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
