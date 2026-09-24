@@ -21,6 +21,12 @@ namespace Paintball.Net.Accounts
             Items = new HashSet<string>(p.Items), Achievements = new HashSet<string>(p.Achievements)
         };
 
+        private static MatchRecord Copy(MatchRecord m) => m == null ? null : new MatchRecord
+        {
+            Mode = m.Mode, Map = m.Map, Won = m.Won, Kills = m.Kills, Deaths = m.Deaths, Objective = m.Objective,
+            XpGained = m.XpGained, MmrChange = m.MmrChange, PlayedAt = m.PlayedAt
+        };
+
         public PlayerRecord FindBySub(string googleSub)
         {
             lock (_lock) return Copy(_players.Values.FirstOrDefault(p => p.GoogleSub == googleSub));
@@ -79,7 +85,7 @@ namespace Paintball.Net.Accounts
             {
                 if (!_players.ContainsKey(playerId)) return;
                 if (!_matches.TryGetValue(playerId, out var list)) _matches[playerId] = list = new List<MatchRecord>();
-                list.Add(match);
+                list.Add(Copy(match));
             }
         }
 
@@ -87,7 +93,7 @@ namespace Paintball.Net.Accounts
         {
             lock (_lock)
                 return _matches.TryGetValue(playerId ?? string.Empty, out var list)
-                    ? list.OrderByDescending(m => m.PlayedAt).Take(limit).ToList()
+                    ? list.OrderByDescending(m => m.PlayedAt).Take(limit).Select(Copy).ToList()
                     : new List<MatchRecord>();
         }
 

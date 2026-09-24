@@ -96,6 +96,24 @@ namespace Paintball.Net.Tests
                 Assert.AreEqual(0, repo.RecentMatches(p.Id, 20).Count, "Historie weg");
                 Assert.IsFalse(repo.Delete(p.Id), "zweites Löschen → false");
             });
+
+            r.Run($"Repo[{label}]: Match-Mutation beeinflußt nicht persistierte Geschichte", () =>
+            {
+                IPlayerRepository repo = factory();
+                PlayerRecord p = repo.Create("sub-" + Guid.NewGuid().ToString("N"), "m@x.de");
+                var m = new MatchRecord { Mode = "tdm", Map = "arena", Kills = 5, Won = true, PlayedAt = DateTime.UtcNow };
+                repo.AddMatch(p.Id, m);
+                m.Kills = 99;
+                m.Mode = "x";
+                var recent = repo.RecentMatches(p.Id, 20);
+                Assert.AreEqual(5, recent[0].Kills, "Kills ursprünglich");
+                Assert.AreEqual("tdm", recent[0].Mode, "Mode ursprünglich");
+                recent[0].Kills = 77;
+                recent[0].Mode = "y";
+                var again = repo.RecentMatches(p.Id, 20);
+                Assert.AreEqual(5, again[0].Kills, "Kills nach Mutation zurückgegeben");
+                Assert.AreEqual("tdm", again[0].Mode, "Mode nach Mutation zurückgegeben");
+            });
         }
     }
 }
