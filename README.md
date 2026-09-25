@@ -57,7 +57,7 @@ ist; ohne die Variable werden diese Tests übersprungen.
 ```bash
 dotnet run --project tests/Paintball.Core.Tests   # Core-Spiellogik (82)
 dotnet run --project tests/Paintball.Net.Tests    # Server: Simulation, Bots, Lobby, Konten, Google-Login, Postgres, WSS-Integration, Seitenrouting (180)
-node --test tests/web/*.test.mjs                  # Client: Prediction-Golden, Netcode, glTF, Avatar, HDR, PWA/Service Worker, Landingpage (135)
+node --test tests/web/*.test.mjs                  # Client: Prediction-Golden, Netcode, glTF, Avatar, HDR, PWA/Service Worker, Landingpage (138)
 ```
 
 Lasttest (20 simulierte Spieler, 5 Minuten, Pizzeria): einen Server mit

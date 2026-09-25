@@ -456,6 +456,26 @@ export class Renderer {
     this.cmds = [];
     this.transparent = [];
     this.ready = false;
+    this.capture = null;
+    // Matrizen-Pool für draw(): pro Frame wiederverwendete Float32Arrays statt einer Neuallokation je Aufruf
+    // (Perf-Review Paket B: ~355 zusätzliche Zeichenaufrufe/Frame durch die Pizzeria). Während captureDraws()
+    // (einmalig je Kartenwechsel) wird weiterhin frisch allokiert, weil die Matrizen dort über Frames hinweg
+    // gültig bleiben müssen (Cache-Replay) – der Pool wird nur für Befehle benutzt, die noch im selben Frame
+    // verbraucht werden.
+    this.matPool = []; this.matPoolIdx = 0;
+    this.normPool = []; this.normPoolIdx = 0;
+  }
+
+  #poolMat() {
+    if (this.capture) return new Float32Array(16);
+    if (this.matPoolIdx >= this.matPool.length) this.matPool.push(new Float32Array(16));
+    return this.matPool[this.matPoolIdx++];
+  }
+
+  #poolNorm() {
+    if (this.capture) return new Float32Array(9);
+    if (this.normPoolIdx >= this.normPool.length) this.normPool.push(new Float32Array(9));
+    return this.normPool[this.normPoolIdx++];
   }
 
   #uniforms(prog, names) {
@@ -702,7 +722,7 @@ export class Renderer {
       mesh, model, normal, scale: scale.map(v => v * ws), color: opts.color ?? [1, 1, 1], emissive: opts.emissive ?? 0,
       alpha: opts.alpha ?? 1, mat: opts.mat ?? 0, shadow: opts.shadow !== false, cull: opts.cull !== false
     };
-    (cmd.alpha < 1 ? this.transparent : this.cmds).push(cmd);
+    this.#push(cmd);
   }
 
   // ---------------- Farbkleckse ----------------
@@ -790,19 +810,51 @@ export class Renderer {
     this.camPos = eye;
     this.cmds.length = 0;
     this.transparent.length = 0;
+    this.matPoolIdx = 0;
+    this.normPoolIdx = 0;
   }
 
   /** Zeichenbefehl. opts: yaw, pitch, scale [x,y,z], color (sRGB), emissive, alpha, mat, shadow. */
   draw(meshName, pos, opts) {
     const mesh = this.meshes[meshName] ?? this.meshes.cube;
-    const model = new Float32Array(16), normal = new Float32Array(9);
+    const model = this.#poolMat(), normal = this.#poolNorm();
     const scale = opts.scale ?? [1, 1, 1];
     trs(pos, opts.yaw ?? 0, opts.pitch ?? 0, scale, model, normal);
     const cmd = {
       mesh, model, normal, scale, color: opts.color ?? [1, 1, 1], emissive: opts.emissive ?? 0, alpha: opts.alpha ?? 1,
       mat: opts.mat ?? 0, shadow: opts.shadow !== false, cull: opts.cull !== false
     };
-    (cmd.alpha < 1 || cmd.mat === MAT.NET ? this.transparent : this.cmds).push(cmd);
+    this.#push(cmd);
+  }
+
+  /** Ziel-Liste eines Zeichenbefehls (deckend/transparent), auch für zwischengespeicherte Befehle (Cache-Replay). */
+  #bucket(cmd) {
+    return (cmd.alpha < 1 || cmd.mat === MAT.NET) ? this.transparent : this.cmds;
+  }
+
+  #push(cmd) {
+    (this.capture ?? this.#bucket(cmd)).push(cmd);
+  }
+
+  /**
+   * Zeichnet fn() in eine neue Liste statt in den aktuellen Frame, z. B. um statische Deko (Karten-Deckung,
+   * die sich nie bewegt) einmal beim Kartenwechsel mit fertig berechneten Matrizen abzulegen und danach per
+   * `replay()` ohne erneute Matrizenberechnung/-allokation in jeden Frame einzuspielen.
+   */
+  captureDraws(fn) {
+    const outer = this.capture;
+    this.capture = [];
+    try {
+      fn();
+      return this.capture;
+    } finally {
+      this.capture = outer;
+    }
+  }
+
+  /** Spielt eine mit `captureDraws()` erzeugte Liste in den aktuellen Frame ein (keine neuen Allokationen). */
+  replay(cache) {
+    for (const cmd of cache) this.#bucket(cmd).push(cmd);
   }
 
   #lightVP() {

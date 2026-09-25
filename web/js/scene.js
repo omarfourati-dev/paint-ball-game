@@ -302,29 +302,16 @@ export const PIZZERIA_KINDS = { oven: drawOven, counter: drawCounter, table: dra
 
 // ---------------- Welt ----------------
 
-export function drawWorld(r, map, world, time) {
-  const theme = THEMES[map.id] ?? THEMES.warehouse;
-  const hx = world.halfX, hz = world.halfZ;
-  if (map.id === 'speedball') {
-    r.draw('cube', [0, -0.5, 0], { scale: [hx * 2, 1, hz * 2], color: theme.ground, mat: MAT.TURF, shadow: false });
-    drawSpeedballDecor(r, world, time);
-  } else {
-    r.draw('cube', [0, -0.5, 0], { scale: [map.sizeX + 80, 1, map.sizeZ + 80], color: theme.ground, mat: theme.groundMat, shadow: false });
-  }
-  if (map.id === 'pizzeria') drawPizzeriaFloor(r, hx, hz);
-  if (map.id === 'warehouse') {
-    // Industrie-Deko an den Wänden (außerhalb der Laufwege)
-    for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
-      const x = sx * (hx - 2.2), z = sz * (hz - 6);
-      drawBarrel(r, x, z, 0.3); drawBarrel(r, x - sx * 0.62, z + 0.15, 2.1); drawBarrel(r, x - sx * 0.3, z - sz * 0.6, 4.2);
-      drawTireStack(r, x, z - sz * 3, 4, sx + sz); drawTireStack(r, x - sx * 0.65, z - sz * 3.1, 2, 9);
-      drawCrates(r, sx * (hx - 6), sz * (hz - 2), 3, 0.2);
-    }
-  }
-
+/**
+ * Deckung/Wände (`world.boxes`), aufgeteilt in statisch (Position ändert sich nie – cachebar) und dynamisch
+ * (bewegliche Hazards, `flags & 1`, Position kommt aus `World.updateDynamic` und muss jeden Frame neu gelesen
+ * werden). `dynamicOnly` wählt die Teilmenge; welche Zeichenfunktion pro Box läuft, bleibt unverändert.
+ */
+function drawCovers(r, map, world, theme, dynamicOnly) {
   world.boxes.forEach((b, i) => {
     const cov = map.covers[i];
     const flags = cov ? cov[6] : 0;
+    if (((flags & 1) === 1) !== dynamicOnly) return;
     const kind = cov?.[7] ?? '';
     const { c, s } = boxOf(b);
     if (kind === 'net') {
@@ -366,6 +353,54 @@ export function drawWorld(r, map, world, time) {
     }
     r.draw('cube', c, { scale: s, color, mat: theme.coverMat ?? MAT.PLAIN, outline: INK });
   });
+}
+
+/**
+ * Zeitunabhängiger Teil der Welt (Boden, Wände, Deko, unbewegliche Deckung) – identisch in jedem Frame,
+ * solange Karte/`world` sich nicht ändern. Wird direkt gezeichnet (kein Cache) oder über `captureDraws()`
+ * in `buildStaticWorld()` einmalig aufgezeichnet.
+ */
+function drawStaticWorld(r, map, world) {
+  const theme = THEMES[map.id] ?? THEMES.warehouse;
+  const hx = world.halfX, hz = world.halfZ;
+  if (map.id === 'speedball') {
+    r.draw('cube', [0, -0.5, 0], { scale: [hx * 2, 1, hz * 2], color: theme.ground, mat: MAT.TURF, shadow: false });
+  } else {
+    r.draw('cube', [0, -0.5, 0], { scale: [map.sizeX + 80, 1, map.sizeZ + 80], color: theme.ground, mat: theme.groundMat, shadow: false });
+  }
+  if (map.id === 'pizzeria') drawPizzeriaFloor(r, hx, hz);
+  if (map.id === 'warehouse') {
+    // Industrie-Deko an den Wänden (außerhalb der Laufwege)
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+      const x = sx * (hx - 2.2), z = sz * (hz - 6);
+      drawBarrel(r, x, z, 0.3); drawBarrel(r, x - sx * 0.62, z + 0.15, 2.1); drawBarrel(r, x - sx * 0.3, z - sz * 0.6, 4.2);
+      drawTireStack(r, x, z - sz * 3, 4, sx + sz); drawTireStack(r, x - sx * 0.65, z - sz * 3.1, 2, 9);
+      drawCrates(r, sx * (hx - 6), sz * (hz - 2), 3, 0.2);
+    }
+  }
+  drawCovers(r, map, world, theme, false);
+}
+
+/**
+ * Einmal je Kartenwechsel aufrufen (z. B. `ClientGame.start`): zeichnet die statische Welt in eine
+ * `Renderer.captureDraws()`-Liste, mit fertig berechneten Matrizen. Das Ergebnis an `drawWorld()` als
+ * `cache` übergeben, um sie jeden Frame ohne erneute Matrizenberechnung einzuspielen (Perf-Review Paket B).
+ */
+export function buildStaticWorld(r, map, world) {
+  return r.captureDraws(() => drawStaticWorld(r, map, world));
+}
+
+/**
+ * `cache` (aus `buildStaticWorld()`) ist optional: ohne Cache wird wie bisher jeden Frame neu gezeichnet
+ * (z. B. Kartenvorschau in `app.js`, Tests). Bewegliche Hazards und – auf dem Speedball – die animierte
+ * Tribüne hängen von `time` ab und werden deshalb immer frisch gezeichnet, nie zwischengespeichert.
+ */
+export function drawWorld(r, map, world, time, cache) {
+  const theme = THEMES[map.id] ?? THEMES.warehouse;
+  if (cache) r.replay(cache);
+  else drawStaticWorld(r, map, world);
+  drawCovers(r, map, world, theme, true);
+  if (map.id === 'speedball') drawSpeedballDecor(r, world, time);
 }
 
 export function drawPickups(r, pickups, available, time) {

@@ -39,6 +39,9 @@ export class ClientGame {
     this.rules = msg.rules;
     this.mapDef = this.maps.get(msg.map);
     this.world = World.fromMap(this.mapDef, msg.time);
+    // Statische Deko (Wände, Deckung, Boden) einmal pro Kartenwechsel mit fertigen Matrizen aufzeichnen,
+    // statt sie jeden Frame neu zu berechnen (Perf-Review Paket B: Pizzeria ~355 Zeichenaufrufe/Frame).
+    this.worldCache = S.buildStaticWorld(this.renderer, this.mapDef, this.world);
     this.predictor = new Predictor(this.world, DT, this.mapDef);
     this.buffer = new SnapshotBuffer();
     this.clock = new ServerClock();
@@ -598,7 +601,7 @@ export class ClientGame {
 
     const r = this.renderer;
     r.begin(cam, target, settings.fov, S.envFor(this.mapDef, this.world), nowS);
-    S.drawWorld(r, this.mapDef, this.world, nowS);
+    S.drawWorld(r, this.mapDef, this.world, nowS, this.worldCache);
     S.drawPickups(r, this.pickups, this.pickupAvail, nowS);
     if (this.mode === 'ctf' && this.flagsDef) S.drawFlags(r, this.flagsDef, this.flagState, this.palette, nowS);
     if (this.mode === 'koth' && this.zone) S.drawZone(r, this.zone, this.zoneState?.[0] ?? -1, this.zoneState?.[1] ?? false, this.palette, nowS);
