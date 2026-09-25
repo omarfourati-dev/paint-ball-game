@@ -428,7 +428,7 @@ namespace Paintball.Net.Rooms
             room.BotSkill = (float)msg.Num("skill", 0.55, 0.05, 1.0);
             room.AddHuman(s, Time);
 
-            int bots = msg.Int("bots", 0, 0, 15);
+            int bots = msg.Int("bots", 0, 0, Room.MaxRoomPlayers - 1);
             if (mode == GameMode.Training)
             {
                 var training = new TrainingRules();
@@ -467,7 +467,7 @@ namespace Paintball.Net.Rooms
             string code = msg.Str("code", 12);
             Room room = FindRoom(code);
             if (room == null) { s.Send(Json.Error("room_not_found", "Kein Raum mit diesem Code gefunden.")); return; }
-            if (room.Members.Count >= room.MaxPlayers) { s.Send(Json.Error("room_full")); return; }
+            if (room.Members.Count >= room.Capacity) { s.Send(Json.Error("room_full")); return; }
             if (room.State == RoomState.Results) { s.Send(Json.Error("room_busy")); return; }
             if (s.Room == room) { s.Send(room.LobbyJson(s.Member)); return; }
             LeaveCurrent(s, abandoned: true);

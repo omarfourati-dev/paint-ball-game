@@ -81,7 +81,15 @@ namespace Paintball.Net.Rooms
         public float ResultsEnd { get; private set; }
 
         public MapDefinition MapDef => _maps.GetById(Settings.MapId) ?? _maps.Get(0);
-        public int MaxPlayers => Math.Min(16, Math.Max(2, MapDef.MaxPlayers));
+        /// <summary>Höchstzahl Mitglieder je Raum (Event-Paket: 10 gegen 10).</summary>
+        public const int MaxRoomPlayers = 20;
+        /// <summary>Ab mehr als so vielen Menschen wechselt eine Quick-Lobby auf die große Karte.</summary>
+        public const int LargeQuickMatchPlayers = 12;
+        public const string LargeMapId = "pizzeria";
+
+        public int MaxPlayers => Math.Min(MaxRoomPlayers, Math.Max(2, MapDef.MaxPlayers));
+        /// <summary>Plätze für Beitritte: Quick-Lobbys nehmen bis 20 auf (Kartenwechsel beim Beitritt), sonst die Karte.</summary>
+        public int Capacity => IsQuick && State == RoomState.Lobby ? MaxRoomPlayers : MaxPlayers;
         public int HumanCount => Members.Count(m => !m.IsBot);
         public bool IsEmpty => HumanCount == 0;
         public double AverageMmr => Members.Where(m => !m.IsBot).Select(m => (double)m.Mmr).DefaultIfEmpty(1000).Average();
@@ -106,7 +114,7 @@ namespace Paintball.Net.Rooms
         /// <summary>Cross-Play-Kompatibilität (FR-28, PA-05, NFR-15).</summary>
         public bool Accepts(Session s)
         {
-            if (Members.Count >= MaxPlayers || State == RoomState.Results) return false;
+            if (Members.Count >= Capacity || State == RoomState.Results) return false;
             string pool = s.CrossPlay ? "mixed" : s.Input;
             if (HumanCount > 0 && pool != InputPool) return false;
             var policy = new CrossPlayPolicy { Enabled = s.CrossPlay };
@@ -141,7 +149,11 @@ namespace Paintball.Net.Rooms
             s.Member = m;
             s.QueueSince = now;
             if (HostId < 0 || FindMember(HostId) == null || FindMember(HostId).IsBot) HostId = m.Id;
-            if (IsQuick && HumanCount == MaxPlayers) QuickStartAt = now;
+            // Event: mehr als 12 Menschen (oder Rotationskarte zu klein) → Pizzeria
+            if (IsQuick && State == RoomState.Lobby && (HumanCount > LargeQuickMatchPlayers || HumanCount > MapDef.MaxPlayers)
+                && _maps.GetById(LargeMapId) != null)
+                Settings.MapId = LargeMapId;
+            if (IsQuick && HumanCount == Capacity) QuickStartAt = now;
 
             // Späteinstieg in laufendes Quick-Match: Bot-Slot übernehmen (FR-31 Ersatz)
             if (State == RoomState.Match && Match != null)
@@ -258,7 +270,7 @@ namespace Paintball.Net.Rooms
             w.WriteNumber("you", viewer?.Id ?? -1);
             w.WriteString("state", State.ToString().ToLowerInvariant());
             w.Num("countdown", State == RoomState.Countdown ? Math.Max(0f, CountdownEnd - _server.Time) : 0f, 1);
-            w.WriteNumber("maxPlayers", MaxPlayers);
+            w.WriteNumber("maxPlayers", Capacity);
             w.WriteStartObject("rules");
             w.WriteNumber("timeLimit", (int)Settings.TimeLimitSeconds);
             w.WriteNumber("targetScore", Settings.TargetScore);
@@ -332,7 +344,7 @@ namespace Paintball.Net.Rooms
             w.Num("waited", now - (m.Session?.QueueSince ?? now), 1);
             w.Num("startsIn", Math.Max(0f, QuickStartAt - now), 1);
             w.WriteNumber("humans", HumanCount);
-            w.WriteNumber("max", MaxPlayers);
+            w.WriteNumber("max", Capacity);
             w.WriteString("mode", GameModes.Id(Settings.Mode));
         });
 

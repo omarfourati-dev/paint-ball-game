@@ -33,7 +33,7 @@ Touch (virtueller Stick, zwei Schuss-Buttons – halten und ziehen zielt und sch
 ## Inhalte
 
 - **Modi:** Team-Deathmatch, Jeder gegen jeden, Capture the Flag, Last Player Standing (Runden), King of the Hill, Training gegen Bots mit Tutorial
-- **Karten:** Lagerhaus, Wald, Arena (aus Core-`MapCatalog`) mit Deckung, beweglicher Deckung, Nachschubkisten, Power-Ups
+- **Karten:** Lagerhaus, Wald, Arena, Turnierfeld und Pizzeria (Event-Karte für 10 gegen 10) aus Core-`MapCatalog` mit Deckung, beweglicher Deckung, Nachschubkisten, Power-Ups
 - **Kampf:** ballistische Paintballs mit Drop/Streuung, Trefferzonen (Kopf ×2), Deckung, Spawn-Schutz, 3 Marker, Dash & Heil-Spray
 - **Online:** Quick-Match mit Bot-Auffüllung & fairen Teams (MMR), private Räume per Code/Einladungslink, Reconnect mit KI-Übernahme, AFK-/Leaver-Handling, Cross-Play-Schalter
 - **Progression:** XP/Level, MMR/Ligen, Errungenschaften, Münzen, Kosmetik-Shop (kein Pay-to-Win), Bestenliste, Match-Historie

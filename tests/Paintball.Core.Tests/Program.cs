@@ -120,6 +120,7 @@ namespace Paintball.Core.Tests
             Run("TDD: Faires Team-Balancing nach MMR (NFR-15)", TeamBalance_Fair);
             Run("TDD: Unentschieden kostet kein MMR (Elo 0,5, NFR-15)", MatchCompletion_DrawIsNeutral);
             Run("TDD: Reales Speedball-Turnierfeld nach NXL-Standard (FR-53/55)", MapCatalog_RealSpeedballField);
+            Run("Event: Pizzeria – symmetrisch, 40 × 50 m, 10 Spawns je Team, Deckung innerhalb, kein Spawn in Deckung", MapCatalog_Pizzeria);
 
             Console.WriteLine();
             Console.WriteLine($"=== Ergebnis: {_passed} bestanden, {_failed} fehlgeschlagen ===");
@@ -1577,7 +1578,7 @@ namespace Paintball.Core.Tests
             var catalog = new MapCatalog();
             MapDefinition field = catalog.GetById("speedball");
             Check.IsTrue(field != null, "Turnierfeld vorhanden");
-            Check.AreEqual(4, catalog.Count, "4 Karten inkl. Turnierfeld");
+            Check.AreEqual(5, catalog.Count, "5 Karten inkl. Turnierfeld und Pizzeria");
             Check.AreClose(45.72f, field.SizeZ, 0.05f, "Länge 150 ft (NXL)");
             Check.AreClose(36.58f, field.SizeX, 0.05f, "Breite 120 ft (NXL)");
             Check.AreEqual(MapSymmetry.Symmetric, field.Symmetry, "Symmetrisch");
@@ -1610,6 +1611,54 @@ namespace Paintball.Core.Tests
                     Check.IsFalse(overlap, $"Reifen ({t.X},{t.Z}) überlappen nicht mit {o.Kind}");
                 }
             }
+        }
+
+        private static void MapCatalog_Pizzeria()
+        {
+            var catalog = new MapCatalog();
+            MapDefinition p = catalog.GetById("pizzeria");
+            Check.IsTrue(p != null, "Pizzeria vorhanden");
+            Check.AreEqual("Pizzeria", p.DisplayName, "Name");
+            Check.AreEqual(MapSymmetry.Symmetric, p.Symmetry, "symmetrisch");
+            Check.AreClose(40f, p.SizeX, 0.001f, "40 m breit");
+            Check.AreClose(50f, p.SizeZ, 0.001f, "50 m lang");
+            Check.AreEqual(20, p.MaxPlayers, "10 gegen 10");
+            Check.IsTrue(p.AllowPowerUps, "Power-Ups erlaubt");
+            Check.IsTrue(p.IsSpawnFair(), "IsSpawnFair");
+            Check.AreEqual(10, p.Spawns.FindAll(s => s.TeamId == 0).Count, "10 Spawns Team 0");
+            Check.AreEqual(10, p.Spawns.FindAll(s => s.TeamId == 1).Count, "10 Spawns Team 1");
+            foreach (var s in p.Spawns)
+            {
+                Check.IsTrue(s.TeamId == 0 ? s.Z < -20f : s.Z > 20f, $"Spawn ({s.X},{s.Z}) an der eigenen Schmalseite");
+                Check.IsTrue(p.Spawns.Exists(o => o.TeamId != s.TeamId && System.Math.Abs(o.X - s.X) < 0.01f && System.Math.Abs(o.Z + s.Z) < 0.01f), "Spawn gespiegelt");
+            }
+            foreach (var c in p.Covers)
+            {
+                Check.IsTrue(System.Math.Abs(c.X) + c.ScaleX / 2f <= p.SizeX / 2f + 0.001f && System.Math.Abs(c.Z) + c.ScaleZ / 2f <= p.SizeZ / 2f + 0.001f,
+                    $"{c.Kind} ({c.X},{c.Z}) liegt innerhalb der Karte");
+                Check.AreClose(c.ScaleY / 2f, c.Y, 0.001f, $"{c.Kind} ({c.X},{c.Z}) steht auf dem Boden");
+                Check.IsFalse(c.IsDynamic, "keine bewegliche Deckung");
+                bool mirrored = p.Covers.Exists(o => System.Math.Abs(o.X - c.X) < 0.01f && System.Math.Abs(o.Z + c.Z) < 0.01f
+                    && System.Math.Abs(o.ScaleX - c.ScaleX) < 0.01f && System.Math.Abs(o.ScaleZ - c.ScaleZ) < 0.01f && o.Kind == c.Kind && o.IsResupply == c.IsResupply);
+                Check.IsTrue(mirrored, $"{c.Kind} ({c.X},{c.Z}) an der Mittellinie gespiegelt");
+                foreach (var s in p.Spawns)
+                {
+                    // Spieler-Radius 0,4 m + bis zu 1 m Zufallsversatz beim Spawnen (GameMatch.PlaceAtSpawn)
+                    const float clearance = 1.4f;
+                    bool inside = System.Math.Abs(s.X - c.X) < c.ScaleX / 2f + clearance && System.Math.Abs(s.Z - c.Z) < c.ScaleZ / 2f + clearance;
+                    Check.IsFalse(inside, $"Spawn ({s.X},{s.Z}) liegt nicht in oder an {c.Kind} ({c.X},{c.Z})");
+                }
+            }
+            foreach (string kind in new[] { "oven", "counter", "table", "pizzabox", "flour", "fridge", "boundary" })
+                Check.IsTrue(p.Covers.Exists(c => c.Kind == kind), $"Deckung {kind}");
+            Check.AreEqual(3, p.Covers.FindAll(c => c.Kind == "oven").Count, "drei Holzöfen");
+            Check.IsTrue(p.Covers.Exists(c => c.Kind == "oven" && c.X == 0f && c.Z == 0f && c.ScaleY >= 2f), "Ofen in der Mitte, blickdicht");
+            Check.IsTrue(p.Covers.TrueForAll(c => c.Kind != "pizzabox" || c.IsResupply), "Pizzakartons sind Nachschub");
+            Check.IsTrue(p.Covers.TrueForAll(c => !c.IsResupply || c.Kind == "pizzabox"), "Nachschub nur an Pizzakartons");
+            Check.IsTrue(p.Covers.Exists(c => c.IsResupply && c.Z < 0f) && p.Covers.Exists(c => c.IsResupply && c.Z > 0f), "Nachschub für beide Teams");
+            Check.IsTrue(p.Covers.TrueForAll(c => c.Kind != "counter" || c.ScaleY <= 1.2f), "Theke hüfthoch");
+            Check.IsTrue(p.Covers.TrueForAll(c => c.Kind != "table" || c.ScaleY <= 0.9f), "Tische niedrig");
+            Check.IsTrue(p.Covers.TrueForAll(c => c.Kind != "fridge" || (c.ScaleY >= 2f && System.Math.Max(c.ScaleX, c.ScaleZ) <= 1f)), "Kühlschrank hoch und schmal");
         }
 
         private static void MatchCompletion_DrawIsNeutral()

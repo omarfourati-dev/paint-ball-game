@@ -14,7 +14,7 @@ Fremde Origins werden beim WebSocket-Handshake abgewiesen (CSWSH-Schutz).
 |-----|--------|--------------|
 | `hello` | `name`, `token?`, `input` (`kbm`/`touch`/`pad`), `crossPlay`, `platform`, `lang` | Anmeldung/Gastkonto (FR-48). Mit gültigem Token: gleiches Konto + Reconnect ins laufende Match (FR-27). |
 | `quick` | `mode` (`tdm`/`ffa`/`ctf`/`elim`/`koth`) | Schnelles Match (FR-13/FR-23): Modus, Cross-Play-Pool, MMR-Fenster. |
-| `create` | `mode`, `map`, `private`, `bots`, `skill`, `timeLimit`, `targetScore`, `friendlyFire`, `powerUps` | Eigener Raum (FR-20/21). `mode: training` startet sofort gegen Bots (FR-19). |
+| `create` | `mode`, `map`, `private`, `bots` (0–19), `skill`, `timeLimit`, `targetScore`, `friendlyFire`, `powerUps` | Eigener Raum (FR-20/21). `mode: training` startet sofort gegen Bots (FR-19). |
 | `join` | `code` | Beitritt per 6-stelligem Einladungscode. |
 | `leave` | – | Raum/Match verlassen (im gewerteten Match = Leaver, FR-31). |
 | `team` / `ready` | `team` 0/1 · `ready` bool | Lobby (FR-24). |
@@ -32,7 +32,7 @@ Fremde Origins werden beim WebSocket-Handshake abgewiesen (CSWSH-Schutz).
 | `t` | Inhalt |
 |-----|--------|
 | `welcome` | `account`, `token`, `name`, `isNew`, `profile` |
-| `lobby` | `code`, `mode`, `map`, `private`, `quick`, `host`, `you`, `state` (`lobby`/`countdown`/`match`/`results`), `rules`, `members[]` |
+| `lobby` | `code`, `mode`, `map`, `private`, `quick`, `host`, `you`, `state` (`lobby`/`countdown`/`match`/`results`), `rules`, `maxPlayers` (Quick-Lobby: 20, sonst Plätze der Karte, höchstens 20), `members[]` |
 | `queue` | `waited`, `startsIn`, `humans`, `max` (NFR-24) |
 | `start` | `you` (Spieler-ID im Match), `team`, `mode`, `map`, `ranked`, `rules`, `players[]`, `pickups[]`, `flags[]`, `zone` |
 | `s` (Snapshot) | `k` Tick, `tm` Matchzeit, `ack` letzte verarbeitete Eingabe, `ph` Phase, `tr` Restzeit, `cd` Countdown, `sc`/`ps` Punkte, `pl` Spieler, `me` eigene Werte, `pk` verfügbare Power-Ups, `fl` Flaggen, `zn` Zone, alle 30 Ticks `sb` Scoreboard |

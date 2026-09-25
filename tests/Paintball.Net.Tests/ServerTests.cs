@@ -97,6 +97,8 @@ namespace Paintball.Net.Tests
             r.Run("Lobby: Host-Migration beim Verlassen", HostMigration);
             r.Run("Lobby: Host konfiguriert Regeln/Karte/Bots (FR-21)", HostConfiguresRules);
             r.Run("Matchmaking: Quick-Match bündelt Spieler, füllt Bots auf, faire Teams (FR-13/FR-22/NFR-15)", QuickMatchFillsBots);
+            r.Run("Event: Pizzeria-Raum nimmt 20 Mitglieder auf, der 21. bekommt room_full, 10 gegen 10", PizzeriaRoomHoldsTwenty);
+            r.Run("Event: Quick-Match mit mehr als 12 Spielern wechselt auf die Pizzeria", QuickMatchLargeUsesPizzeria);
             r.Run("Matchmaking: Cross-Play aus trennt Touch und Maus (FR-28/PA-05)", CrossPlayOffSeparates);
             r.Run("Matchmaking: Warteschlangenstatus wird gemeldet (NFR-24)", QueueStatusReported);
             r.Run("Training: sofortiger Start gegen Bots, keine XP/MMR (FR-19)", TrainingStartsWithBots);
@@ -348,6 +350,63 @@ namespace Paintball.Net.Tests
             int t1 = players.Count(p => p.GetProperty("team").GetInt32() == 1);
             Assert.IsTrue(Math.Abs(t0 - t1) <= 1, $"Ausgeglichene Teams ({t0}:{t1})");
             Assert.IsTrue(players.Count(p => p.GetProperty("bot").GetBoolean()) >= 6, "Bots aufgefüllt");
+        }
+
+        private static void PizzeriaRoomHoldsTwenty()
+        {
+            GameServer server = NewServer();
+            var host = new TestClient(server, "Host20");
+            host.Send(new { t = "create", mode = "tdm", map = "pizzeria", @private = true });
+            server.Tick();
+            string code = host.RoomCode;
+            Assert.AreEqual("pizzeria", host.Lobby.GetProperty("map").GetString(), "Karte");
+            Assert.AreEqual(20, host.Lobby.GetProperty("maxPlayers").GetInt32(), "maxPlayers 20");
+            var all = new List<TestClient> { host };
+            for (int i = 1; i < 20; i++)
+            {
+                var g = new TestClient(server, $"Gast{i:00}");
+                g.Send(new { t = "join", code });
+                all.Add(g);
+            }
+            server.Tick();
+            Assert.AreEqual(20, MemberCount(host.Lobby), "20 Mitglieder");
+            var late = new TestClient(server, "Zu spät");
+            late.Send(new { t = "join", code });
+            server.Tick();
+            Assert.AreEqual("room_full", late.Sink.Last("error").Value.GetProperty("code").GetString(), "21. abgewiesen");
+            foreach (TestClient c in all) c.Send(new { t = "ready", ready = true });
+            server.Tick();
+            host.Send(new { t = "start" });
+            TickUntil(server, () => host.Sink.Last("start") != null);
+            JsonElement[] players = host.Sink.Last("start").Value.GetProperty("players").EnumerateArray().ToArray();
+            Assert.AreEqual(20, players.Length, "20 Spieler im Match");
+            Assert.AreEqual(10, players.Count(p => p.GetProperty("team").GetInt32() == 0), "10 gegen 10");
+        }
+
+        private static void QuickMatchLargeUsesPizzeria()
+        {
+            GameServer server = NewServer(o => o.QuickMatchWaitSeconds = 5f);
+            var clients = new List<TestClient>();
+            for (int i = 0; i < 12; i++)
+            {
+                var c = new TestClient(server, $"Quick{i:00}");
+                c.Send(new { t = "quick", mode = "tdm" });
+                clients.Add(c);
+            }
+            server.Tick();
+            string code = clients[0].RoomCode;
+            Assert.IsTrue(clients.All(c => c.RoomCode == code), "12 im selben Raum");
+            Assert.IsTrue(clients[0].Lobby.GetProperty("map").GetString() != "pizzeria", "bis 12 bleibt die Rotationskarte");
+            var thirteenth = new TestClient(server, "Quick12");
+            thirteenth.Send(new { t = "quick", mode = "tdm" });
+            server.Tick();
+            Assert.AreEqual(code, thirteenth.RoomCode, "13. Spieler im selben Quick-Match");
+            Assert.AreEqual("pizzeria", thirteenth.Lobby.GetProperty("map").GetString(), "mehr als 12 → Pizzeria");
+            Assert.AreEqual(20, thirteenth.Lobby.GetProperty("maxPlayers").GetInt32(), "Quick-Lobby fasst 20");
+            TickUntil(server, () => thirteenth.Sink.Last("start") != null);
+            JsonElement start = thirteenth.Sink.Last("start").Value;
+            Assert.AreEqual("pizzeria", start.GetProperty("map").GetString(), "Match auf der Pizzeria");
+            Assert.IsTrue(start.GetProperty("players").GetArrayLength() >= 14, "13 Menschen, gerade aufgefüllt");
         }
 
         private static void CrossPlayOffSeparates()

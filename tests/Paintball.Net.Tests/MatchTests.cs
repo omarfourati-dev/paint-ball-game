@@ -39,6 +39,7 @@ namespace Paintball.Net.Tests
             r.Run("Match: Elimination ohne Respawn, Runden bis Sieger (FR-17)", EliminationRounds);
             r.Run("Match: Zeitlimit beendet Match (FR-32)", TimeLimitEnds);
             r.Run("Match: Alle Karten spielbar mit fairen Spawns (FR-53/FR-55)", AllMapsPlayable);
+            r.Run("Event: Pizzeria mit 20 Spielern spielbar, kein Spawn in Deckung", PizzeriaTwentyPlayers);
             r.Run("Match: Echtes Turnierfeld ohne Power-Ups, auch wenn aktiviert", RealFieldHasNoPowerUps);
         }
 
@@ -543,6 +544,25 @@ namespace Paintball.Net.Tests
                 TickFor(m, 3f);
                 Assert.AreEqual(MatchPhase.Running, m.Phase, $"{map.Id}: läuft stabil");
             }
+        }
+
+        private static void PizzeriaTwentyPlayers()
+        {
+            MapDefinition map = new MapCatalog().GetById("pizzeria");
+            GameMatch m = NewMatch(GameMode.TeamDeathmatch, map, s => s.PowerUpsEnabled = true);
+            var players = new List<SimPlayer>();
+            for (int i = 0; i < 20; i++) players.Add(m.AddPlayer("P" + i, i % 2, false));
+            StartRunning(m);
+            Assert.AreEqual(10, players.Count(p => p.Team == 0), "10 gegen 10");
+            foreach (SimPlayer p in players)
+            {
+                Assert.IsFalse(m.World.OverlapsAny(Movement.BoundsOf(p.Move.Position, Movement.StandHeight)), $"Spawn von {p.Name} nicht in Deckung");
+                Assert.IsTrue(p.Team == 0 ? p.Position.Z < -19f : p.Position.Z > 19f, $"{p.Name} startet an der eigenen Schmalseite");
+            }
+            foreach (PickupState pu in m.Pickups)
+                Assert.IsFalse(m.World.OverlapsAny(Movement.BoundsOf(pu.Position, 1f)), "Power-Up frei erreichbar");
+            TickFor(m, 3f);
+            Assert.AreEqual(MatchPhase.Running, m.Phase, "läuft stabil");
         }
     }
 }

@@ -66,8 +66,8 @@ namespace Paintball.Core.Maps
     /// <summary>
     /// Karten-Katalog (FR-53–FR-56): drei Launch-Karten (Lagerhaus, Wald, Arena)
     /// mit Deckung, Hindernissen, Nachschubpunkten, Spawn-Zonen und dynamischen
-    /// Elementen. Reine Datenlogik (Unity-frei) – Grundlage für SceneBuilder und
-    /// symmetrische/asymmetrische Kartendesigns.
+    /// Elementen, und die Event-Karte Pizzeria. Reine Datenlogik (Unity-frei) –
+    /// Grundlage für SceneBuilder und symmetrische/asymmetrische Kartendesigns.
     /// </summary>
     public sealed class MapCatalog
     {
@@ -78,7 +78,7 @@ namespace Paintball.Core.Maps
 
         public MapCatalog()
         {
-            _maps = new[] { CreateWarehouse(), CreateForest(), CreateArena(), CreateSpeedball() };
+            _maps = new[] { CreateWarehouse(), CreateForest(), CreateArena(), CreateSpeedball(), CreatePizzeria() };
         }
 
         public MapDefinition Get(int index)
@@ -283,6 +283,68 @@ namespace Paintball.Core.Maps
             map.Spawns.Add(new MapSpawnZone { TeamId = 1, X = 2f, Y = 0f, Z = 21.3f });
             map.Spawns.Add(new MapSpawnZone { TeamId = 1, X = 4f, Y = 0f, Z = 21.3f });
 
+            return map;
+        }
+
+        /// <summary>
+        /// Event-Karte „Pizzeria“ (KERAVONOS-Pizza-Event): 40 × 50 m, an der Mittellinie (Z = 0) gespiegelt, 10 gegen 10.
+        /// Die Teams starten an den Schmalseiten (Z = ±21,5). Deckung: drei Holzöfen (blickdicht), Theken (hüfthoch),
+        /// Tische (niedrig), Mehlsäcke, Kühlschränke; Pizzakarton-Stapel sind der Nachschub. Rand aus Backsteinwänden.
+        /// </summary>
+        private static MapDefinition CreatePizzeria()
+        {
+            var map = new MapDefinition
+            {
+                Id = "pizzeria",
+                DisplayName = "Pizzeria",
+                Description = "Pizzeria mit Holzöfen, Theken und Pizzakartons – gebaut für 10 gegen 10.",
+                Symmetry = MapSymmetry.Symmetric,
+                SizeX = 40f,
+                SizeZ = 50f,
+                MaxPlayers = 20,
+                AllowPowerUps = true
+            };
+
+            void Add(float x, float z, float sx, float sy, float sz, string kind, bool resupply = false)
+                => map.Covers.Add(new MapCoverBlock { X = x, Y = sy / 2f, Z = z, ScaleX = sx, ScaleY = sy, ScaleZ = sz, Kind = kind, IsResupply = resupply });
+            void Mirrored(float x, float z, float sx, float sy, float sz, string kind, bool resupply = false)
+            {
+                Add(x, -z, sx, sy, sz, kind, resupply);
+                Add(x, z, sx, sy, sz, kind, resupply);
+            }
+
+            // Backsteinwände als Rand, vollständig innerhalb der Karte
+            Mirrored(0f, 24.5f, 40f, 4f, 1f, "boundary");
+            Add(-19.5f, 0f, 1f, 4f, 48f, "boundary");
+            Add(19.5f, 0f, 1f, 4f, 48f, "boundary");
+            // Holzöfen mit Glut: einer in der Mitte, zwei an den Seiten (blickdicht)
+            Add(0f, 0f, 4f, 2.6f, 4f, "oven");
+            Add(-14f, 0f, 3f, 2.6f, 3f, "oven");
+            Add(14f, 0f, 3f, 2.6f, 3f, "oven");
+            // Theken (hüfthoch, Deckung im Hocken)
+            Mirrored(-7f, 9f, 6f, 1.1f, 1.2f, "counter");
+            Mirrored(7f, 5f, 1.2f, 1.1f, 5f, "counter");
+            // Tische mit Karodecke (niedrig)
+            Mirrored(-12f, 14f, 2f, 0.8f, 2f, "table");
+            Mirrored(4f, 13f, 2f, 0.8f, 2f, "table");
+            Mirrored(-3f, 16f, 1.6f, 0.8f, 1.6f, "table");
+            // Mehlsäcke
+            Mirrored(12f, 15f, 1.6f, 0.9f, 1f, "flour");
+            Mirrored(-15f, 7f, 1f, 0.9f, 1.6f, "flour");
+            // Kühlschränke (hoch und schmal): an der Wand und als Sichtschutz vor den Startlinien
+            Mirrored(18.4f, 9f, 1f, 2.2f, 0.8f, "fridge");
+            Mirrored(-4.5f, 18.5f, 0.8f, 2.2f, 0.8f, "fridge");
+            Mirrored(4.5f, 18.5f, 0.8f, 2.2f, 0.8f, "fridge");
+            // Pizzakarton-Stapel = Nachschub, je zwei neben jeder Startlinie
+            Mirrored(-13f, 21.5f, 1.2f, 1f, 1.2f, "pizzabox", resupply: true);
+            Mirrored(13f, 21.5f, 1.2f, 1f, 1.2f, "pizzabox", resupply: true);
+
+            for (int i = 0; i < 10; i++)
+            {
+                float x = -9f + i * 2f;
+                map.Spawns.Add(new MapSpawnZone { TeamId = 0, X = x, Y = 0f, Z = -21.5f });
+                map.Spawns.Add(new MapSpawnZone { TeamId = 1, X = x, Y = 0f, Z = 21.5f });
+            }
             return map;
         }
 

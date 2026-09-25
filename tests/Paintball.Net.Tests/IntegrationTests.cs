@@ -574,7 +574,10 @@ namespace Paintball.Net.Tests
             await using Harness h = await Harness.StartAsync();
             JsonElement body = JsonDocument.Parse(await h.Http.GetStringAsync("/api/maps")).RootElement;
             JsonElement[] maps = body.GetProperty("maps").EnumerateArray().ToArray();
-            Assert.AreEqual(4, maps.Length, "3 Launch-Karten + Turnierfeld");
+            Assert.AreEqual(5, maps.Length, "3 Launch-Karten + Turnierfeld + Pizzeria");
+            JsonElement pizzeria = maps.Single(m => m.GetProperty("id").GetString() == "pizzeria");
+            Assert.AreEqual(20, pizzeria.GetProperty("maxPlayers").GetInt32(), "Pizzeria in /api/maps mit 20 Plätzen");
+            Assert.IsTrue(pizzeria.GetProperty("covers").EnumerateArray().Any(c => c[7].GetString() == "oven"), "Kind oven für den Client");
             Assert.IsTrue(maps.Any(m => m.GetProperty("id").GetString() == "speedball" && m.GetProperty("covers")[0].GetArrayLength() == 8), "Bunker mit realer Form (Kind) für den Client");
             Assert.IsTrue(maps.All(m => m.GetProperty("covers").GetArrayLength() > 3), "Deckung enthalten");
         }
