@@ -6,7 +6,8 @@ services:
     container_name: paintball
     restart: unless-stopped
     env_file:
-      - .env
+      - path: .env
+        required: false   # lokal ohne .env startbar; der Deploy schreibt sie aus den GitHub-Secrets
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       TZ: Europe/Berlin
@@ -15,7 +16,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
-      - paintball-data:/data
+      - paintball-data:/data   # altes Volume der Datei-Konten, nach Umstieg löschen
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/api/health"]
       interval: 30s
@@ -26,6 +27,7 @@ services:
       - web
 
 volumes:
+  # altes Volume der Datei-Konten, nach Umstieg löschen
   paintball-data:
     name: paintball-data
 

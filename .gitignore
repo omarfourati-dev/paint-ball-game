@@ -44,3 +44,7 @@ e2e-output/
 node_modules/
 !server/**/*.csproj
 !tests/**/*.csproj
+
+# ===== Secrets (Deploy schreibt .env aus GitHub-Secrets) =====
+.env
+.env.*
