@@ -31,10 +31,16 @@ export function keyLabel(code, lang = 'de') {
   return String(code).replace(/^Key/, '').replace(/^Digit/, '');
 }
 
-const browserLang = () => {
-  const l = (globalThis.navigator?.language || 'de').slice(0, 2);
-  return l === 'en' ? 'en' : 'de';
-};
+/**
+ * Sprache ohne gespeicherte Wahl: Eine Seite kann per <html data-default-lang="de"> eine feste Vorgabe machen
+ * (Startseite: Deutsch, damit Suchmaschinen die deutschen Texte indexieren), sonst entscheidet die Browsersprache.
+ */
+export function defaultLang(pageDefault, navigatorLang) {
+  if (pageDefault === 'de' || pageDefault === 'en') return pageDefault;
+  return (navigatorLang || 'de').slice(0, 2) === 'en' ? 'en' : 'de';
+}
+
+const browserLang = () => defaultLang(globalThis.document?.documentElement?.dataset?.defaultLang, globalThis.navigator?.language);
 
 export const DEFAULTS = Object.freeze({
   lang: browserLang(),

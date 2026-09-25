@@ -36,6 +36,9 @@ namespace Paintball.Net.Tests
             r.RunAsync("Web: Landingpage unter /, Einladung /?join= leitet ins Spiel (Query bleibt)", LandingAndJoinRedirect);
             r.RunAsync("Web: /play, /impressum, /datenschutz liefern ihre Seite, /play/ → /play", PageRoutes);
             r.RunAsync("Web: Service Worker wird nie gecacht (no-cache)", ServiceWorkerNoCache);
+            r.Run("Werbung: ADSENSE_* wird geprüft – ungültige Publisher-ID heißt aus, ungültige Slots fallen weg", AdsConfigFromEnvironment);
+            r.RunAsync("Werbung: ohne Publisher-ID /api/ads enabled=false, /ads.txt 404, CSP und Referrer unverändert", AdsDisabled);
+            r.RunAsync("Werbung: mit Publisher-ID /api/ads mit Slots, /ads.txt, CSP um Google-Domains erweitert", AdsEnabled);
             r.RunAsync("SEO: robots.txt, sitemap.xml, llms.txt mit Typ und UTF-8, /play mit noindex", ServesSeoFiles);
             r.RunAsync("Proxy: Hinter TLS-Reverse-Proxy nur HTTP, X-Forwarded-Proto zählt als HTTPS", ProxyTrustsForwardedProto);
             r.RunAsync("Proxy: Ohne Forwarded-Proto Weiterleitung auf HTTPS ohne internen Port", ProxyRedirectsWithoutPort);
@@ -316,7 +319,7 @@ namespace Paintball.Net.Tests
             public int HttpPort;
             public HttpClient Http;
 
-            public static async Task<Harness> StartAsync(bool devLogin = true, IGoogleOAuthClient google = null, bool googleConfigured = true, Paintball.Net.Accounts.IPlayerRepository repository = null, bool backgroundPersistence = false, int[] retryDelaysMs = null)
+            public static async Task<Harness> StartAsync(bool devLogin = true, IGoogleOAuthClient google = null, bool googleConfigured = true, Paintball.Net.Accounts.IPlayerRepository repository = null, bool backgroundPersistence = false, int[] retryDelaysMs = null, AdsConfig ads = null)
             {
                 string web = AccountTests.TempDir();
                 HarnessWebRoot = web;
@@ -338,6 +341,7 @@ namespace Paintball.Net.Tests
                     Repository = repository,
                     BackgroundPersistence = backgroundPersistence,
                     RetryDelaysMs = retryDelaysMs,
+                    Ads = ads,
                     Game = new Paintball.Net.Rooms.ServerOptions { LobbyCountdownSeconds = 0.5f }
                 };
                 WebApplication app = ServerHost.Build(Array.Empty<string>(), options);
@@ -598,6 +602,76 @@ namespace Paintball.Net.Tests
             HttpResponseMessage res = await h.Http.GetAsync("/sw.js");
             Assert.AreEqual(HttpStatusCode.OK, res.StatusCode, "sw.js 200");
             Assert.IsTrue(res.Headers.CacheControl?.NoCache == true, "sw.js mit no-cache, damit Updates sofort ankommen");
+        }
+
+        private static AdsConfig Ads(Dictionary<string, string> env) => AdsConfig.FromEnvironment(k => env.TryGetValue(k, out string v) ? v : null);
+
+        private const string BaseCsp = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; " +
+            "connect-src 'self' wss:; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
+
+        private static void AdsConfigFromEnvironment()
+        {
+            Assert.IsFalse(Ads(new()).Enabled, "ohne Variablen aus");
+            foreach (string bad in new[] { "", "pub-1234567890123456", "ca-pub-123", "ca-pub-12345678901234567", "ca-pub-12345678901234ab", "ca-pub-1234567890123456;x" })
+                Assert.IsFalse(Ads(new() { ["ADSENSE_CLIENT"] = bad }).Enabled, "ungültig: " + bad);
+            AdsConfig ok = Ads(new()
+            {
+                ["ADSENSE_CLIENT"] = " ca-pub-1234567890123456 ", ["ADSENSE_SLOT_LANDING"] = "111", ["ADSENSE_SLOT_LOBBY"] = "12a",
+                ["ADSENSE_SLOT_RESULTS"] = "333", ["ADSENSE_INTERSTITIAL_EVERY"] = "5"
+            });
+            Assert.IsTrue(ok.Enabled, "gültige Publisher-ID");
+            Assert.AreEqual("ca-pub-1234567890123456", ok.Client, "getrimmt");
+            Assert.AreEqual("111", ok.Slots["landing"], "Slot landing");
+            Assert.IsFalse(ok.Slots.ContainsKey("lobby"), "Slot mit Buchstaben verworfen");
+            Assert.AreEqual(5, ok.InterstitialEvery, "Intervall aus der Umgebung");
+            Assert.AreEqual(3, Ads(new() { ["ADSENSE_CLIENT"] = "ca-pub-1234567890123456" }).InterstitialEvery, "Standard 3");
+            Assert.AreEqual(3, Ads(new() { ["ADSENSE_CLIENT"] = "ca-pub-1234567890123456", ["ADSENSE_INTERSTITIAL_EVERY"] = "0" }).InterstitialEvery, "0 ungültig → 3");
+            Assert.AreEqual(BaseCsp, AdsConfig.Disabled.ContentSecurityPolicy(), "CSP ohne Werbung wie bisher");
+        }
+
+        private static async Task AdsDisabled()
+        {
+            await using Harness h = await Harness.StartAsync();
+            HttpResponseMessage res = await h.Http.GetAsync("/api/ads");
+            Assert.AreEqual(HttpStatusCode.OK, res.StatusCode, "/api/ads 200");
+            JsonElement body = JsonDocument.Parse(await res.Content.ReadAsStringAsync()).RootElement;
+            Assert.IsFalse(body.GetProperty("enabled").GetBoolean(), "enabled=false");
+            Assert.IsFalse(body.TryGetProperty("client", out _), "keine Publisher-ID");
+            Assert.AreEqual(HttpStatusCode.NotFound, (await h.Http.GetAsync("/ads.txt")).StatusCode, "ads.txt 404");
+            HttpResponseMessage page = await h.Http.GetAsync("/");
+            Assert.AreEqual(BaseCsp, page.Headers.GetValues("Content-Security-Policy").First(), "CSP unverändert");
+            Assert.AreEqual("no-referrer", page.Headers.GetValues("Referrer-Policy").First(), "Referrer-Policy unverändert");
+        }
+
+        private static async Task AdsEnabled()
+        {
+            AdsConfig cfg = Ads(new() { ["ADSENSE_CLIENT"] = "ca-pub-1234567890123456", ["ADSENSE_SLOT_LANDING"] = "1111111111", ["ADSENSE_SLOT_RESULTS"] = "3333333333" });
+            await using Harness h = await Harness.StartAsync(ads: cfg);
+            HttpResponseMessage res = await h.Http.GetAsync("/api/ads");
+            JsonElement body = JsonDocument.Parse(await res.Content.ReadAsStringAsync()).RootElement;
+            Assert.IsTrue(body.GetProperty("enabled").GetBoolean(), "enabled=true");
+            Assert.AreEqual("ca-pub-1234567890123456", body.GetProperty("client").GetString(), "client");
+            Assert.AreEqual("1111111111", body.GetProperty("slots").GetProperty("landing").GetString(), "Slot landing");
+            Assert.AreEqual("3333333333", body.GetProperty("slots").GetProperty("results").GetString(), "Slot results");
+            Assert.IsFalse(body.GetProperty("slots").TryGetProperty("lobby", out _), "fehlender Slot fehlt");
+            Assert.AreEqual(3, body.GetProperty("interstitialEvery").GetInt32(), "interstitialEvery");
+
+            HttpResponseMessage txt = await h.Http.GetAsync("/ads.txt");
+            Assert.AreEqual(HttpStatusCode.OK, txt.StatusCode, "ads.txt 200");
+            Assert.AreEqual("text/plain", txt.Content.Headers.ContentType?.MediaType, "ads.txt Typ");
+            Assert.AreEqual("google.com, pub-1234567890123456, DIRECT, f08c47fec0942fa0\n", await txt.Content.ReadAsStringAsync(), "ads.txt Inhalt");
+
+            HttpResponseMessage page = await h.Http.GetAsync("/");
+            string csp = page.Headers.GetValues("Content-Security-Policy").First();
+            Dictionary<string, string> dirs = csp.Split(';').Select(d => d.Trim()).ToDictionary(d => d.Split(' ')[0], d => d);
+            foreach (string dir in new[] { "script-src", "frame-src", "img-src", "connect-src" })
+                foreach (string src in AdsConfig.CspSources)
+                    Assert.IsTrue((" " + dirs[dir] + " ").Contains(" " + src + " "), $"{dir} enthält {src}");
+            Assert.IsTrue(dirs["script-src"].StartsWith("script-src 'self' "), "eigene Skripte weiter erlaubt");
+            Assert.IsFalse(csp.Contains("unsafe-eval") || dirs["script-src"].Contains("unsafe-inline"), "keine unsicheren Skript-Quellen");
+            Assert.AreEqual("default-src 'self'", dirs["default-src"], "default-src unverändert");
+            Assert.AreEqual("frame-ancestors 'none'", dirs["frame-ancestors"], "nicht einbettbar");
+            Assert.AreEqual("strict-origin-when-cross-origin", page.Headers.GetValues("Referrer-Policy").First(), "Referrer für AdSense");
         }
 
         /// <summary>Echte Dateien aus web/ in den Test-Webroot kopieren und wie ein Crawler abrufen.</summary>

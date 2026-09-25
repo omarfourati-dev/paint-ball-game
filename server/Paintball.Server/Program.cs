@@ -11,7 +11,8 @@ namespace Paintball.Server
     /// Optionen: --port 5443 --http-port 5080 --public --origin https://example.com
     ///   --behind-proxy  nur HTTP auf --http-port, TLS terminiert ein Reverse-Proxy (Produktion hinter Caddy)
     ///   --dev-login     aktiviert /api/auth/dev (nur lokale Entwicklung, nie in Produktion)
-    /// Umgebung: DATABASE_URL, PUBLIC_URL, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
+    /// Umgebung: DATABASE_URL, PUBLIC_URL, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET,
+    ///   ADSENSE_CLIENT, ADSENSE_SLOT_LANDING/_LOBBY/_RESULTS, ADSENSE_INTERSTITIAL_EVERY (Werbung aus ohne gültige Publisher-ID)
     /// </summary>
     public static class Program
     {
@@ -39,6 +40,7 @@ namespace Paintball.Server
             options.PublicUrl ??= Environment.GetEnvironmentVariable("PUBLIC_URL");
             options.GoogleClientId ??= Environment.GetEnvironmentVariable("GOOGLE_CLIENT_ID");
             options.GoogleClientSecret ??= Environment.GetEnvironmentVariable("GOOGLE_CLIENT_SECRET");
+            options.Ads ??= AdsConfig.FromEnvironment(Environment.GetEnvironmentVariable);
 
             WebApplication app = ServerHost.Build(args.Where(a => !a.StartsWith("--", StringComparison.Ordinal)).ToArray(), options);
             Console.WriteLine(options.BehindProxy

@@ -17,7 +17,7 @@ function jsonLd(html) {
 }
 
 test('SEO: Landingpage mit Titel, Beschreibung, Canonical, robots, Autor', () => {
-  assert.match(index, /<html lang="de">/);
+  assert.match(index, /<html lang="de"[ >]/);
   const title = index.match(/<title>([^<]+)<\/title>/)[1];
   assert.ok(title.includes('Paintball online spielen') && title.length <= 65, `Titel: ${title}`);
   assert.equal(STRINGS.de['landing.title'], title, 'landing.js setzt denselben Titel per i18n');
@@ -71,14 +71,14 @@ test('SEO: FAQPage im JSON-LD entspricht wörtlich der sichtbaren FAQ und den DE
   }
 });
 
-test('SEO: /play ist noindex, Rechtstexte haben eigenen Titel, Beschreibung und Canonical', () => {
+test('SEO: /play ist noindex, Rechtstexte noindex (Privatanschrift) mit eigenem Titel, Beschreibung und Canonical', () => {
   assert.match(web('play.html'), /<meta name="robots" content="noindex">/);
   for (const [file, path] of [['impressum.html', '/impressum'], ['datenschutz.html', '/datenschutz']]) {
     const html = web(file);
     assert.match(html, /<title>[^<]+ – Paint-Ball<\/title>/, file);
     assert.ok(meta(html, 'name', 'description')?.length > 50, `${file} Beschreibung`);
     assert.match(html, new RegExp(`<link rel="canonical" href="${ORIGIN}${path}">`));
-    assert.doesNotMatch(html, /noindex/, `${file} steht in der Sitemap, darf also nicht noindex sein`);
+    assert.match(html, /<meta name="robots" content="noindex">/, `${file} bleibt noindex – Privatanschrift`);
   }
 });
 
@@ -91,11 +91,11 @@ test('SEO: robots.txt sperrt nur /api/, erlaubt KI-Crawler, verweist auf die Sit
   assert.match(robots, new RegExp(`^Sitemap: ${ORIGIN}/sitemap.xml$`, 'm'));
 });
 
-test('SEO: sitemap.xml enthält /, /datenschutz, /impressum mit lastmod, aber nicht /play', () => {
+test('SEO: sitemap.xml enthält nur / mit lastmod – nicht /play und keine noindex-Rechtstexte', () => {
   const xml = web('sitemap.xml');
   const locs = [...xml.matchAll(/<loc>([^<]+)<\/loc>/g)].map(m => m[1]);
-  assert.deepEqual(locs, [`${ORIGIN}/`, `${ORIGIN}/datenschutz`, `${ORIGIN}/impressum`]);
-  assert.equal([...xml.matchAll(/<lastmod>2026-09-25<\/lastmod>/g)].length, 3);
+  assert.deepEqual(locs, [`${ORIGIN}/`]);
+  assert.equal([...xml.matchAll(/<lastmod>2026-09-25<\/lastmod>/g)].length, 1);
   assert.match(xml, /xmlns="http:\/\/www\.sitemaps\.org\/schemas\/sitemap\/0\.9"/);
 });
 
@@ -111,4 +111,14 @@ test('GEO: llms.txt im llmstxt.org-Format mit Fakten und Links', () => {
 test('GEO: zitierfähiger Einleitungssatz sichtbar im Hero, DE und EN', () => {
   assert.match(index, /<p class="intro" data-i18n="landing.intro">Paint-Ball ist ein kostenloses Online-Multiplayer-Paintball-Spiel, das direkt im Browser läuft/);
   assert.ok(STRINGS.en['landing.intro'].startsWith('Paint-Ball is a free online multiplayer paintball game'));
+});
+
+test('Datenschutz: AdSense-Abschnitt mit Anbieter, Einwilligung, nicht personalisierten Anzeigen, Drittland und Widerruf', () => {
+  const privacy = web('datenschutz.html');
+  for (const s of ['Werbung mit Google AdSense', 'Google Ireland Limited', 'Einwilligung', 'nicht personalisierte Anzeigen',
+    'EU-US Data Privacy Framework', 'Datenschutzeinstellungen', 'widerrufen', '§ 25 Abs. 1 TDDDG', 'Art. 6 Abs. 1 lit. a DSGVO',
+    'Werbung wird über Google AdSense eingeblendet, sofern aktiviert'])
+    assert.ok(privacy.includes(s), `Datenschutz enthält ${s}`);
+  assert.ok(!privacy.includes('keine Werbung'), 'Aussage „keine Werbung“ korrigiert');
+  assert.ok(!web('llms.txt').includes('keine Werbung'), 'llms.txt ebenso');
 });

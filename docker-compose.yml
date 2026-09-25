@@ -15,6 +15,12 @@ services:
       TZ: Europe/Berlin
       DATABASE_URL: postgresql://paintball:${DB_PASSWORD}@host.docker.internal:5433/paintball
       PUBLIC_URL: https://paint-ball-game.omarfourati.de
+      # Google AdSense: leer = Werbung aus. Werte kommen aus der .env (Deploy: GitHub-Variables, öffentlich, keine Secrets)
+      ADSENSE_CLIENT: ${ADSENSE_CLIENT:-}
+      ADSENSE_SLOT_LANDING: ${ADSENSE_SLOT_LANDING:-}
+      ADSENSE_SLOT_LOBBY: ${ADSENSE_SLOT_LOBBY:-}
+      ADSENSE_SLOT_RESULTS: ${ADSENSE_SLOT_RESULTS:-}
+      ADSENSE_INTERSTITIAL_EVERY: ${ADSENSE_INTERSTITIAL_EVERY:-3}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:

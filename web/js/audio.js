@@ -163,6 +163,19 @@ export class AudioEngine {
     }, 260);
   }
 
+  /** Werbepause: Ton komplett anhalten, danach im alten Zustand fortsetzen. */
+  pause() {
+    this.musicWasOn = !!this.musicTimer;
+    this.stopMusic();
+    if (this.ctx?.state === 'running') this.ctx.suspend();
+  }
+
+  resume() {
+    if (this.ctx?.state === 'suspended') this.ctx.resume();
+    if (this.musicWasOn) this.startMusic();
+    this.musicWasOn = false;
+  }
+
   stopMusic() {
     clearInterval(this.musicTimer);
     this.musicTimer = null;

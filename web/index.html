@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="de">
+<html lang="de" data-default-lang="de">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -33,6 +33,7 @@
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="stylesheet" href="/css/landing.css">
   <script type="module" src="/js/landing.js"></script>
+  <script type="module" src="/js/landing-ads.js"></script>
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
@@ -262,12 +263,15 @@
         </details>
       </div>
     </section>
+
+    <aside class="ad-slot" id="ad-landing" hidden></aside>
   </main>
 
   <footer class="foot">
     <nav>
       <a href="/impressum" data-i18n="landing.imprint">Impressum</a>
       <a href="/datenschutz" data-i18n="landing.privacy">Datenschutz</a>
+      <a href="#" id="privacy-settings" hidden data-i18n="landing.privacySettings">Datenschutzeinstellungen</a>
       <a href="https://omarfourati.de" rel="noopener" data-i18n="landing.byline">Ein Projekt von Omar Fourati</a>
     </nav>
     <span class="muted" id="version"></span>

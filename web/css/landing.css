@@ -93,6 +93,9 @@ kbd {
 .faq details[open] summary { border-bottom: 3px dashed var(--panel2); }
 .faq details p { margin: 0; padding: 12px 16px 16px; color: var(--muted); }
 
+.ad-slot { margin-block: 24px; min-height: 90px; }
+.ad-slot[hidden] { display: none !important; }
+
 .foot { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; padding-block: 32px 40px; border-top: 3px dashed var(--panel2); margin-top: 16px; }
 .foot nav { display: flex; flex-wrap: wrap; gap: 8px 20px; }
 .foot a { min-height: 44px; display: inline-flex; align-items: center; }

@@ -11,6 +11,7 @@ import { t, setLang, getLang, phrases, tips } from './i18n.js';
 import { loadSettings, saveSettings, sanitize, rebind, ACTIONS, DEFAULT_KEYS, teamPalette, keyLabel } from './settings.js';
 import { installLeaveGuard, syncKeyboardLock } from './guard.js';
 import { TutorialTracker } from './tutorial.js';
+import { Ads } from './ads.js';
 import { escapeHtml as esc, formatNumber, formatPercent, formatTime, inviteUrl } from './format.js';
 import { MODES, TEAM_MODES } from './protocol.js';
 import { bootStep, loginUrl, authErrorKey, nameErrorKey, nextConnectState, closeAction, retryDelay, LEGACY_KEYS } from './auth.js';
@@ -41,6 +42,8 @@ export class App {
     this.hud = new Hud($('#hud'));
     this.input = new InputManager(this.canvas, $('#touch'));
     this.audio = new AudioEngine();
+    this.ads = new Ads();
+    this.matchesFinished = 0;
     this.maps = new Map();
     this.profile = null;
     this.lobby = null;
@@ -70,6 +73,7 @@ export class App {
 
   async boot() {
     this.renderLoading(t('loading.maps'), 0.2);
+    this.ads.init({ h5: true }).then(() => this.onAdScreen(this.screen));
     requestAnimationFrame(ts => this.loop(ts));
     addEventListener('pointerdown', () => this.audio.unlock(), { once: false });
     addEventListener('keydown', e => this.onGlobalKey(e));
@@ -242,8 +246,34 @@ export class App {
     if (!this.game.active) {
       if (['menu', 'lobby'].includes(name)) this.audio.startMusic(); else if (name !== 'loading') this.audio.startMusic();
     }
+    this.onAdScreen(name);
     const first = document.querySelector(`#screen-${name} [data-autofocus]`);
     if (first && this.input.device !== 'touch') first.focus();
+  }
+
+  /** Werbung nur in Lobby und Ergebnis und nie während eines Matches: Banner füllen, ggf. Interstitial nach jedem N-ten Match. */
+  onAdScreen(name) {
+    if (this.game.active || !['lobby', 'results'].includes(name) || !this.ads.enabled) return;
+    this.ads.fill(document.querySelector(`#screen-${name} > .ad-slot`), name);
+    this.ads.maybeBreak({
+      matchesFinished: this.matchesFinished, inMatch: this.game.active,
+      onBefore: () => this.audio.pause(), onAfter: () => this.audio.resume()
+    });
+  }
+
+  /** Inhalt eines Screens mit festem Werbeplatz darunter: Neu-Rendern ersetzt nur den Inhalt, eine geladene Anzeige bleibt. */
+  screenBody(el, slotKey) {
+    let body = el.querySelector(':scope > .screen-body');
+    if (!body) {
+      body = document.createElement('div');
+      body.className = 'screen-body';
+      const slot = document.createElement('aside');
+      slot.className = 'ad-slot';
+      slot.hidden = true;
+      slot.dataset.slot = slotKey;
+      el.replaceChildren(body, slot);
+    }
+    return body;
   }
 
   refreshScreen() {
@@ -463,7 +493,7 @@ export class App {
   renderLobby() {
     const L = this.lobby;
     const el = $('#screen-lobby');
-    if (!L) { el.innerHTML = ''; return; }
+    if (!L) { this.screenBody(el, 'lobby').innerHTML = ''; return; }
     const me = L.members.find(x => x.id === L.you);
     const isHost = L.host === L.you;
     const teamMode = TEAM_MODES.has(L.mode);
@@ -484,7 +514,7 @@ export class App {
     const ro = !isHost || L.quick || L.state !== 'lobby';
     const opt = (list, cur, key) => list.map(v => `<option value="${v}" ${v === cur ? 'selected' : ''}>${esc(t(`${key}.${v}`))}</option>`).join('');
     const inviteLink = inviteUrl(location.origin, L.code);
-    el.innerHTML = `
+    this.screenBody(el, 'lobby').innerHTML = `
       <div class="wrap">
         <div class="topbar">
           <button class="btn" id="lobby-leave">← ${esc(t('lobby.leave'))}</button>
@@ -699,6 +729,7 @@ export class App {
     this.endAt = performance.now();
     if (this.game.tutorial && !this.game.tutorial.done) { /* Tutorial-Fortschritt bleibt gespeichert */ }
     this.leaveGameView();
+    this.matchesFinished++;
     this.renderResults(m);
     this.show('results');
   }
@@ -713,7 +744,7 @@ export class App {
     const award = (key, id) => id >= 0 && m.table.some(r => r.id === id && (r.kills > 0 || r.obj > 0)) ? `<span class="chip">🏅 ${esc(t(key))}: ${esc(m.table.find(r => r.id === id)?.name ?? '?')}</span>` : '';
     const xpPct = you.xpNext ? Math.min(100, ((you.totalXp - you.xpLevel) / Math.max(1, you.xpNext - you.xpLevel)) * 100) : 0;
     const lang = getLang();
-    $('#screen-results').innerHTML = `
+    this.screenBody($('#screen-results'), 'results').innerHTML = `
       <div class="wrap">
         <div class="center"><div class="banner ${banner[0]}">${esc(banner[1])}</div></div>
         ${!m.ranked ? `<div class="card center">${esc(t('result.training'))}</div>` : !you.rewarded ? `<div class="card center">${esc(t('result.notRewarded', { reason: you.reason }))}</div>` : `
@@ -929,6 +960,7 @@ export class App {
       <div class="card">${check('crossPlay')}<span class="muted small">${esc(t('settings.crossPlayHint'))}</span></div>
       <div class="card"><button class="btn" id="export-data">⬇ ${esc(t('settings.export'))}</button>
         <button class="btn" id="reset-tutorial">🎓 ${esc(t('settings.tutorialReset'))}</button>
+        ${this.ads.enabled ? `<button class="btn" id="privacy-settings">🛡 ${esc(t('settings.privacySettings'))}</button>` : ''}
         <button class="btn danger" id="delete-account">🗑 ${esc(this.deleteArmed ? t('settings.deleteConfirm') : t('settings.delete'))}</button></div>`;
     if (tab === 'language') body = `<label class="field">${esc(t('settings.language'))}<select data-set="lang"><option value="de" ${s.lang === 'de' ? 'selected' : ''}>Deutsch</option><option value="en" ${s.lang === 'en' ? 'selected' : ''}>English</option></select></label>`;
     el.innerHTML = `
@@ -978,6 +1010,8 @@ export class App {
     if (ex) ex.onclick = () => this.exportData();
     const rtut = $('#reset-tutorial');
     if (rtut) rtut.onclick = () => { new TutorialTracker(this.storage).reset(); this.toast('✔'); };
+    const ps = $('#privacy-settings');
+    if (ps) ps.onclick = () => this.ads.showPrivacyOptions();
     const del = $('#delete-account');
     if (del) del.onclick = () => this.deleteAccount();
   }

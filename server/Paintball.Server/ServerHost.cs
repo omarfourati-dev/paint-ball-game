@@ -56,6 +56,8 @@ namespace Paintball.Server
         public string GoogleClientSecret;
         /// <summary>Überschreibbar für Tests (Task 6).</summary>
         public IGoogleOAuthClient Google;
+        /// <summary>Google AdSense; null = aus (Program.cs liest die Umgebung).</summary>
+        public AdsConfig Ads;
         /// <summary>Nur für Tests: Vorrang vor DatabaseUrl.</summary>
         public IPlayerRepository Repository;
         /// <summary>Spielstände über die Hintergrund-Warteschlange schreiben (Produktion); false = synchron (Tests).</summary>
@@ -160,6 +162,8 @@ namespace Paintball.Server
                 app.UseForwardedHeaders(forwarded);
             }
 
+            AdsConfig ads = options.Ads ?? AdsConfig.Disabled;
+            string csp = ads.ContentSecurityPolicy();
             app.Use(async (ctx, next) =>
             {
                 // HTTP → HTTPS (NFR-11); hinter dem Proxy bleibt /api/health für den Container-Healthcheck erreichbar
@@ -174,12 +178,10 @@ namespace Paintball.Server
                 IHeaderDictionary h = ctx.Response.Headers;
                 h["X-Content-Type-Options"] = "nosniff";
                 h["X-Frame-Options"] = "DENY";
-                h["Referrer-Policy"] = "no-referrer";
+                h["Referrer-Policy"] = ads.ReferrerPolicy;
                 h["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()";
                 h["Strict-Transport-Security"] = "max-age=31536000";
-                h["Content-Security-Policy"] =
-                    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; " +
-                    "connect-src 'self' wss:; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
+                h["Content-Security-Policy"] = csp; // Google-Domains nur bei aktiver Werbung
                 await next();
             });
 
@@ -207,6 +209,7 @@ namespace Paintball.Server
             });
 
             MapApi(app, game, accounts);
+            MapAds(app, ads);
             var authLimiter = new RateLimiter(limit: 20, window: TimeSpan.FromMinutes(1)); // gemeinsam für alle Auth-Routen
             AuthApi.Map(app, game, accounts, options, authLimiter);
             GoogleAuthApi.Map(app, accounts, options, authLimiter);
@@ -276,6 +279,23 @@ namespace Paintball.Server
             if (!Uri.TryCreate(origin, UriKind.Absolute, out Uri uri)) return false;
             if (string.Equals(uri.Authority, ctx.Request.Host.Value, StringComparison.OrdinalIgnoreCase)) return true;
             return options.AllowedOrigins.Any(o => string.Equals(o.TrimEnd('/'), origin.TrimEnd('/'), StringComparison.OrdinalIgnoreCase));
+        }
+
+        /// <summary>Werbe-Konfiguration für den Client und ads.txt (404, solange keine Publisher-ID gesetzt ist).</summary>
+        private static void MapAds(WebApplication app, AdsConfig ads)
+        {
+            app.MapGet("/api/ads", (HttpContext ctx) =>
+            {
+                ctx.Response.Headers.CacheControl = "no-cache";
+                if (!ads.Enabled) return Results.Json(new { enabled = false });
+                return Results.Json(new { enabled = true, client = ads.Client, slots = ads.Slots, interstitialEvery = ads.InterstitialEvery });
+            });
+            app.MapGet("/ads.txt", (HttpContext ctx) =>
+            {
+                if (!ads.Enabled) return Results.NotFound();
+                ctx.Response.Headers.CacheControl = "public, max-age=3600";
+                return Results.Text(ads.AdsTxt, "text/plain; charset=utf-8");
+            });
         }
 
         private static void MapApi(WebApplication app, GameServer game, AccountStore accounts)

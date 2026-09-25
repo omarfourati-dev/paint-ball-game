@@ -62,6 +62,9 @@ body:not(.in-game) canvas#hud { display: none; }
 }
 .screen.active { display: block; animation: pop-in .18s ease-out; }
 body.in-game .screen { background: rgba(15, 10, 31, .72); }
+/* Werbeplatz unter Lobby/Ergebnis; ohne Werbung verborgen, im Match nie sichtbar (nichts über Canvas/HUD) */
+.ad-slot { max-width: 970px; margin: 16px auto 0; min-height: 90px; }
+.ad-slot[hidden], body.in-game .ad-slot { display: none !important; }
 @keyframes pop-in { from { opacity: 0; transform: scale(.985); } to { opacity: 1; transform: none; } }
 
 .wrap { max-width: 1100px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }

@@ -1,0 +1,78 @@
+using System;
+using System.Collections.Generic;
+using System.Text.RegularExpressions;
+
+namespace Paintball.Server
+{
+    /// <summary>
+    /// Google-AdSense-Konfiguration aus der Umgebung. Aus, solange keine gültige Publisher-ID gesetzt ist:
+    /// ADSENSE_CLIENT (ca-pub-16 Ziffern), ADSENSE_SLOT_LANDING/_LOBBY/_RESULTS (nur Ziffern), ADSENSE_INTERSTITIAL_EVERY (Standard 3).
+    /// Die Werte sind öffentlich (stehen ohnehin im Seitenquelltext), daher GitHub-Variables statt Secrets.
+    /// </summary>
+    public sealed class AdsConfig
+    {
+        public const int DefaultInterstitialEvery = 3;
+
+        /// <summary>Google-Domains für Anzeigen, Consent-Nachricht (CMP) und Betrugserkennung – nur bei aktiver Werbung in der CSP.</summary>
+        public static readonly string[] CspSources =
+        {
+            "https://pagead2.googlesyndication.com", "https://*.googlesyndication.com", "https://*.doubleclick.net",
+            "https://*.google.com", "https://*.gstatic.com", "https://fundingchoicesmessages.google.com",
+            "https://adservice.google.com", "https://*.adtrafficquality.google"
+        };
+
+        private static readonly Regex ClientPattern = new("^ca-pub-[0-9]{16}$", RegexOptions.CultureInvariant);
+        private static readonly Regex SlotPattern = new("^[0-9]{1,20}$", RegexOptions.CultureInvariant);
+
+        public static readonly AdsConfig Disabled = new(null, new Dictionary<string, string>(), DefaultInterstitialEvery);
+
+        public string Client { get; }
+        /// <summary>Nur gültige Slots: landing, lobby, results → Ziffern-ID.</summary>
+        public IReadOnlyDictionary<string, string> Slots { get; }
+        public int InterstitialEvery { get; }
+        public bool Enabled => Client != null;
+        /// <summary>Publisher-ID für ads.txt: „pub-…“ ohne „ca-“.</summary>
+        public string PublisherId => Client?.Substring(3);
+
+        private AdsConfig(string client, Dictionary<string, string> slots, int every)
+        {
+            Client = client;
+            Slots = slots;
+            InterstitialEvery = every;
+        }
+
+        public static AdsConfig FromEnvironment(Func<string, string> env)
+        {
+            string client = env("ADSENSE_CLIENT")?.Trim();
+            if (string.IsNullOrEmpty(client) || !ClientPattern.IsMatch(client))
+            {
+                if (!string.IsNullOrEmpty(client)) Console.WriteLine("[Werbung] ADSENSE_CLIENT hat kein gültiges Format (ca-pub-16 Ziffern) – Werbung bleibt aus");
+                return Disabled;
+            }
+            var slots = new Dictionary<string, string>();
+            foreach (var (key, name) in new[] { ("landing", "ADSENSE_SLOT_LANDING"), ("lobby", "ADSENSE_SLOT_LOBBY"), ("results", "ADSENSE_SLOT_RESULTS") })
+            {
+                string v = env(name)?.Trim();
+                if (!string.IsNullOrEmpty(v) && SlotPattern.IsMatch(v)) slots[key] = v;
+            }
+            int every = int.TryParse(env("ADSENSE_INTERSTITIAL_EVERY")?.Trim(), out int n) && n >= 1 && n <= 100 ? n : DefaultInterstitialEvery;
+            return new AdsConfig(client, slots, every);
+        }
+
+        public string AdsTxt => $"google.com, {PublisherId}, DIRECT, f08c47fec0942fa0\n";
+
+        /// <summary>AdSense prüft die Herkunft der Seite; ohne Werbung bleibt es beim strengen no-referrer.</summary>
+        public string ReferrerPolicy => Enabled ? "strict-origin-when-cross-origin" : "no-referrer";
+
+        /// <summary>CSP der Seite: unverändert ohne Werbung, sonst um die Google-Domains erweitert.</summary>
+        public string ContentSecurityPolicy()
+        {
+            if (!Enabled)
+                return "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; " +
+                       "connect-src 'self' wss:; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
+            string g = string.Join(" ", CspSources);
+            return $"default-src 'self'; script-src 'self' {g}; style-src 'self' 'unsafe-inline'; img-src 'self' data: {g}; " +
+                   $"connect-src 'self' wss: {g}; frame-src {g}; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
+        }
+    }
+}

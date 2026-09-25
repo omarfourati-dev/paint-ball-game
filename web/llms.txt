@@ -12,7 +12,8 @@
 - Spieler: bis zu 12 pro Match je nach Karte; freie Plätze werden mit Bots gefüllt. Private Räume per Code oder Link für Spiele mit Freunden.
 - Fairness: Matchmaking nach Spielstärke (MMR), Bestenliste.
 - Barrierefreiheit: Farbenblind-Modi, UI-Skalierung, Untertitel, weniger Bewegung, frei belegbare Tasten.
-- Konto: Anmeldung mit Google-Konto; öffentlich sichtbar ist nur der selbst gewählte Spielername. Daten-Export und Kontolöschung im Spiel. Kein Tracking, keine Werbung.
+- Konto: Anmeldung mit Google-Konto; öffentlich sichtbar ist nur der selbst gewählte Spielername. Daten-Export und Kontolöschung im Spiel.
+- Werbung: wird über Google AdSense eingeblendet, sofern aktiviert – nur auf der Startseite, in Lobby und Ergebnisanzeige und gelegentlich zwischen Matches, nie während eines Matches.
 - Sprachen: Deutsch und Englisch.
 
 ## Seiten

@@ -60,12 +60,23 @@ jobs:
             echo "DB_PASSWORD=$DB_PASSWORD"
             echo "GOOGLE_CLIENT_ID=$GOOGLE_CLIENT_ID"
             echo "GOOGLE_CLIENT_SECRET=$GOOGLE_CLIENT_SECRET"
+            # AdSense (öffentliche Werte, daher GitHub-Variables): fehlen sie, bleibt die Werbung aus
+            echo "ADSENSE_CLIENT=$ADSENSE_CLIENT"
+            echo "ADSENSE_SLOT_LANDING=$ADSENSE_SLOT_LANDING"
+            echo "ADSENSE_SLOT_LOBBY=$ADSENSE_SLOT_LOBBY"
+            echo "ADSENSE_SLOT_RESULTS=$ADSENSE_SLOT_RESULTS"
+            echo "ADSENSE_INTERSTITIAL_EVERY=${ADSENSE_INTERSTITIAL_EVERY:-3}"
           } > $DEPLOY_DIR/.env
           chmod 600 $DEPLOY_DIR/.env
         env:
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
           GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
           GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          ADSENSE_CLIENT: ${{ vars.ADSENSE_CLIENT }}
+          ADSENSE_SLOT_LANDING: ${{ vars.ADSENSE_SLOT_LANDING }}
+          ADSENSE_SLOT_LOBBY: ${{ vars.ADSENSE_SLOT_LOBBY }}
+          ADSENSE_SLOT_RESULTS: ${{ vars.ADSENSE_SLOT_RESULTS }}
+          ADSENSE_INTERSTITIAL_EVERY: ${{ vars.ADSENSE_INTERSTITIAL_EVERY }}
 
       - name: Build image
         working-directory: ${{ env.DEPLOY_DIR }}
