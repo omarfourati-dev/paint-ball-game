@@ -55,14 +55,20 @@ ist; ohne die Variable werden diese Tests übersprungen.
 ## Tests (TDD)
 
 ```bash
-dotnet run --project tests/Paintball.Core.Tests   # Core-Spiellogik (81)
-dotnet run --project tests/Paintball.Net.Tests    # Server: Simulation, Bots, Lobby, Konten, Google-Login, Postgres, WSS-Integration, Seitenrouting (114)
-node --test tests/web/*.test.mjs                  # Client: Prediction-Golden, Netcode, glTF, Avatar, HDR, PWA/Service Worker, Landingpage (83)
+dotnet run --project tests/Paintball.Core.Tests   # Core-Spiellogik (82)
+dotnet run --project tests/Paintball.Net.Tests    # Server: Simulation, Bots, Lobby, Konten, Google-Login, Postgres, WSS-Integration, Seitenrouting (180)
+node --test tests/web/*.test.mjs                  # Client: Prediction-Golden, Netcode, glTF, Avatar, HDR, PWA/Service Worker, Landingpage (135)
 ```
+
+Lasttest (20 simulierte Spieler, 5 Minuten, Pizzeria): einen Server mit
+`dotnet run --project server/Paintball.Server -- --dev-login --behind-proxy --http-port 18080` starten und
+`node tests/load/load-test.mjs` ausführen (Optionen: `--players`, `--duration`, `--warmup`, `--marker standard|mixed`).
+Die Tabelle am Ende zeigt Pass/Fail gegen die Ziele: Tick im Mittel < 5 ms, maximal < 20 ms, kein Abbruch, < 60 KB/s je Client.
+Das Skript braucht keine Abhängigkeit (Node-eigenes `WebSocket`, Node 22+).
 
 Browser-End-to-End (Playwright, Server mit `--dev-login` muss laufen): `tests/e2e/e2e-a-solo.js`,
 `tests/e2e/e2e-b-multiplayer.js`, `tests/e2e/e2e-visual-closeup.js`, `tests/e2e/e2e-visual-humans.js`,
-`tests/e2e/e2e-landing-shots.js` und `tests/e2e/e2e-event-controls.js`.
+`tests/e2e/e2e-landing-shots.js`, `tests/e2e/e2e-event-controls.js` und `tests/e2e/e2e-pizzeria.js`.
 
 ## Struktur
 
