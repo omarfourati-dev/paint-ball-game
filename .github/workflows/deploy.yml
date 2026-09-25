@@ -44,8 +44,15 @@ jobs:
 
       - name: Create database if not exists
         run: |
-          docker exec zentrades-postgres psql -U zentrades -c "CREATE DATABASE paintball OWNER paintball;" 2>/dev/null \
-            || echo "Database 'paintball' already exists – skipping."
+          # Nur „already exists“ ist harmlos; jeder andere Fehler (Rolle fehlt, Container weg …) lässt den Schritt scheitern.
+          if out=$(docker exec zentrades-postgres psql -U zentrades -c "CREATE DATABASE paintball OWNER paintball;" 2>&1); then
+            echo "$out"
+          elif echo "$out" | grep -q "already exists"; then
+            echo "Database 'paintball' already exists – skipping."
+          else
+            echo "$out"
+            exit 1
+          fi
 
       - name: Write .env
         run: |
@@ -75,7 +82,8 @@ jobs:
         run: |
           echo "Waiting for paintball to become healthy..."
           for i in $(seq 1 12); do
-            if docker inspect --format='{{.State.Health.Status}}' paintball 2>/dev/null | grep -q "healthy"; then
+            # Exakter Vergleich: grep -q "healthy" träfe auch „unhealthy“.
+            if [ "$(docker inspect --format='{{.State.Health.Status}}' paintball 2>/dev/null)" = "healthy" ]; then
               echo "Paintball is healthy."
               exit 0
             fi
