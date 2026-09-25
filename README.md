@@ -55,9 +55,9 @@ ist; ohne die Variable werden diese Tests übersprungen.
 ## Tests (TDD)
 
 ```bash
-dotnet run --project tests/Paintball.Core.Tests   # Core-Spiellogik (82)
-dotnet run --project tests/Paintball.Net.Tests    # Server: Simulation, Bots, Lobby, Konten, Google-Login, Postgres, WSS-Integration, Seitenrouting (180)
-node --test tests/web/*.test.mjs                  # Client: Prediction-Golden, Netcode, glTF, Avatar, HDR, PWA/Service Worker, Landingpage (138)
+dotnet run --project tests/Paintball.Core.Tests   # Core-Spiellogik (85)
+dotnet run --project tests/Paintball.Net.Tests    # Server: Simulation, Bots, Lobby, Konten, Google-Login, Postgres, WSS-Integration, Seitenrouting (196)
+node --test tests/web/*.test.mjs                  # Client: Prediction-Golden, Netcode, glTF, Avatar, HDR, PWA/Service Worker, Landingpage (165)
 ```
 
 Lasttest (20 simulierte Spieler, 5 Minuten, Pizzeria): einen Server mit
@@ -68,7 +68,8 @@ Das Skript braucht keine Abhängigkeit (Node-eigenes `WebSocket`, Node 22+).
 
 Browser-End-to-End (Playwright, Server mit `--dev-login` muss laufen): `tests/e2e/e2e-a-solo.js`,
 `tests/e2e/e2e-b-multiplayer.js`, `tests/e2e/e2e-visual-closeup.js`, `tests/e2e/e2e-visual-humans.js`,
-`tests/e2e/e2e-landing-shots.js`, `tests/e2e/e2e-event-controls.js` und `tests/e2e/e2e-pizzeria.js`.
+`tests/e2e/e2e-landing-shots.js`, `tests/e2e/e2e-event-controls.js`, `tests/e2e/e2e-pizzeria.js` und
+`tests/e2e/e2e-weapons.js`.
 
 ## Struktur
 
