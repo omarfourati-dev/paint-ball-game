@@ -27,3 +27,9 @@ export function escapeHtml(s) {
 export function inviteUrl(origin, code) {
   return `${origin}/play?join=${encodeURIComponent(code)}`;
 }
+
+/** HUD-Zeile über der Munition: Waffenname mit Abzugsart (Einzelschuss/Automatik). */
+export function markerLabel(name, fireMode, tr) {
+  const mode = tr(fireMode === 'semi' ? 'hud.semi' : 'hud.auto');
+  return name ? `${name} · ${mode}` : mode;
+}

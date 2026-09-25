@@ -37,3 +37,43 @@ export function shouldAutoFire({ enabled, device, target, range }) {
 export function resolveFireButton({ fire, autoFire, running, uiBlocking }) {
   return !!running && !uiBlocking && (!!fire || !!autoFire);
 }
+
+// Schrot-Muster – exakter Spiegel von Core BallisticSolver.PelletPattern (Event-Paket).
+export const PELLET_RING = 0.45;
+export const PELLET_JITTER = 0.03;
+
+const norm3 = v => { const l = Math.hypot(v[0], v[1], v[2]); return [v[0] / l, v[1] / l, v[2] / l]; };
+const cross3 = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+
+function basis(f) {
+  const helper = Math.abs(f[1]) < 0.99 ? [0, 1, 0] : [1, 0, 0];
+  const right = norm3(cross3(helper, f));
+  return { right, up: cross3(f, right) };
+}
+
+function spreadDir(f, deg, rand) {
+  if (!(deg > 0)) return f;
+  const max = (deg * Math.PI) / 180;
+  const cosA = 1 - rand() * (1 - Math.cos(max));
+  const sinA = Math.sqrt(Math.max(0, 1 - cosA * cosA));
+  const phi = rand() * Math.PI * 2;
+  const { right, up } = basis(f);
+  return norm3([0, 1, 2].map(k => f[k] * cosA + (right[k] * Math.cos(phi) + up[k] * Math.sin(phi)) * sinA));
+}
+
+/** Pellet 0 mittig, die übrigen auf einem Ring bei 0,45 × Streuung (zufällig gedreht), je ±3 % Zittern. */
+export function pelletDirections(forward, pellets, spreadDeg, rand = Math.random) {
+  const f = norm3(forward);
+  const n = Math.max(1, pellets | 0);
+  if (n === 1) return [spreadDir(f, spreadDeg, rand)];
+  const { right, up } = basis(f);
+  const ring = (spreadDeg * PELLET_RING * Math.PI) / 180, jitter = spreadDeg * PELLET_JITTER;
+  const phase = rand() * Math.PI * 2;
+  const out = [spreadDir(f, jitter, rand)];
+  for (let i = 1; i < n; i++) {
+    const phi = phase + ((i - 1) * 2 * Math.PI) / (n - 1);
+    const d = [0, 1, 2].map(k => f[k] * Math.cos(ring) + (right[k] * Math.cos(phi) + up[k] * Math.sin(phi)) * Math.sin(ring));
+    out.push(spreadDir(norm3(d), jitter, rand));
+  }
+  return out;
+}

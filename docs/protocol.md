@@ -31,14 +31,16 @@ Fremde Origins werden beim WebSocket-Handshake abgewiesen (CSWSH-Schutz).
 
 | `t` | Inhalt |
 |-----|--------|
-| `welcome` | `account`, `token`, `name`, `isNew`, `profile` |
+| `welcome` | `account`, `token`, `name`, `isNew`, `profile` (`profile.markers[]` mit `fireMode` (`auto`/`semi`) und `pellets`) |
 | `lobby` | `code`, `mode`, `map`, `private`, `quick`, `host`, `you`, `state` (`lobby`/`countdown`/`match`/`results`), `rules`, `maxPlayers` (Quick-Lobby: 20, sonst Plätze der Karte, höchstens 20), `members[]` |
 | `queue` | `waited`, `startsIn`, `humans`, `max` (NFR-24) |
 | `start` | `you` (Spieler-ID im Match), `team`, `mode`, `map`, `ranked`, `rules`, `players[]`, `pickups[]`, `flags[]`, `zone` |
 | `s` (Snapshot) | `k` Tick, `tm` Matchzeit, `ack` letzte verarbeitete Eingabe, `ph` Phase, `tr` Restzeit, `cd` Countdown, `sc`/`ps` Punkte, `pl` Spieler, `me` eigene Werte, `pk` verfügbare Power-Ups, `fl` Flaggen, `zn` Zone, alle 30 Ticks `sb` Scoreboard |
-| `ev` | Ereignisse: `shot`, `imp` (Farbklecks), `hit`, `elim`, `spawn`, `pick`, `flag`, `round`, `phase`, `end` |
+| `ev` | Ereignisse: `shot` (Schrot: je Pellet ein `shot` mit `pi` = Pellet-Index 0..n−1; ohne `pi` = Einzelschuss), `imp` (Farbklecks), `hit`, `elim`, `spawn`, `pick`, `flag`, `round`, `phase`, `end` |
 | `end` | `winner`, `you` (XP, MMR-Änderung, Münzen, Level, Errungenschaften, `rewarded`), `table[]`, `awards` |
 | `roster`, `chat`, `emote`, `mark`, `notice`, `kicked`, `left`, `reported`, `profile`, `leaderboard`, `pong`, `error` | siehe `server/Paintball.Net/Rooms/GameServer.cs` |
+
+Protokoll-Version bleibt 1: alle Event-Paket-Felder sind additiv.
 
 **Spielerzeile `pl`:** `[id, x, y, z, yaw, pitch, hp, flags, vy]` – Flags: 1 lebt, 2 geduckt, 4 Spawn-Schutz,
 8 Flaggenträger, 16 Schild, 32 Speed, 64 Schnellfeuer, 128 Bot, 256 getrennt, 512 lädt nach, 1024 Dash, 2048 am Boden.

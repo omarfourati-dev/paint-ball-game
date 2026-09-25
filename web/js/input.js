@@ -1,6 +1,7 @@
 // Eingabe-Abstraktion (AR-05): Tastatur/Maus, Touch (virtueller Stick), Gamepad.
 // Automatische Erkennung des aktiven Geräts (PA-01, UX-11), frei belegbare Tasten (UX-09/UX-23).
 import { TouchState } from './touch.js';
+import { FireLatch } from './trigger.js';
 const DEADZONE = 0.15;
 
 export class InputManager {
@@ -13,6 +14,8 @@ export class InputManager {
     this.lookDx = 0;
     this.lookDy = 0;
     this.mouseFire = false;
+    this.padFire = false;
+    this.fireLatch = new FireLatch();   // Druck-Flanke: kurze Klicks/Tipps erreichen mindestens einen Tick
     this.device = matchMedia('(pointer: coarse)').matches ? 'touch' : 'kbm';
     this.onDeviceChange = () => {};
     this.onPointerLockChange = () => {};
@@ -57,7 +60,7 @@ export class InputManager {
       const action = this.#actionFor(e.code);
       if (action) this.down.delete(action);
     });
-    addEventListener('blur', () => { this.down.clear(); this.mouseFire = false; });
+    addEventListener('blur', () => { this.down.clear(); this.mouseFire = false; this.#fireLevel(); });
   }
 
   #bindMouse() {
@@ -65,10 +68,10 @@ export class InputManager {
     c.addEventListener('mousedown', e => {
       this.#setDevice('kbm');
       if (!this.locked) return;
-      if (e.button === 0) this.mouseFire = true;
+      if (e.button === 0) { this.mouseFire = true; this.#fireLevel(); }
       if (e.button === 1) { this.pressed.add('mark'); e.preventDefault(); }
     });
-    addEventListener('mouseup', e => { if (e.button === 0) this.mouseFire = false; });
+    addEventListener('mouseup', e => { if (e.button === 0) { this.mouseFire = false; this.#fireLevel(); } });
     c.addEventListener('contextmenu', e => e.preventDefault());
     addEventListener('mousemove', e => {
       if (!this.locked) return;
@@ -77,8 +80,23 @@ export class InputManager {
     });
     document.addEventListener('pointerlockchange', () => {
       this.onPointerLockChange(this.locked);
-      if (!this.locked) this.mouseFire = false;
+      if (!this.locked) { this.mouseFire = false; this.#fireLevel(); }
     });
+  }
+
+  /** Gesamtpegel des Feuers an die Flanken-Erkennung melden (nach jedem Maus-/Touch-Ereignis und Gamepad-Abfrage). */
+  #fireLevel() { this.fireLatch.set(this.mouseFire || this.touch.fire || this.padFire); }
+
+  /** Einmal pro Tick: Feuer-Bit mit gespeicherter Druck-Flanke. */
+  takeFire() {
+    this.#fireLevel();   // auch direkt gesetztes mouseFire (E2E) wird erkannt
+    return this.fireLatch.take();
+  }
+
+  /** Blockierende UI: gespeicherte Flanken verwerfen. */
+  drainFire() {
+    this.#fireLevel();
+    this.fireLatch.drain();
   }
 
   get locked() { return document.pointerLockElement === this.canvas; }
@@ -106,6 +124,7 @@ export class InputManager {
         const r = t.start(touch.identifier, touch.clientX, touch.clientY, el?.dataset.btn ?? null, touch.clientX < innerWidth * 0.45);
         if (el) el.classList.add('active');
         if (r.pressed) this.pressed.add(r.pressed);
+        this.#fireLevel();
         if (r.stick) {
           stick.style.left = `${touch.clientX - 70}px`;
           stick.style.top = `${touch.clientY - 70}px`;
@@ -134,6 +153,7 @@ export class InputManager {
         }
         touch.target.closest?.('[data-btn]')?.classList.remove('active');
       }
+      this.#fireLevel();
     };
     root.addEventListener('touchend', end);
     root.addEventListener('touchcancel', end);
@@ -142,7 +162,10 @@ export class InputManager {
   #pollPad() {
     const pads = navigator.getGamepads ? navigator.getGamepads() : [];
     const pad = [...pads].find(p => p && p.connected);
-    if (!pad) return null;
+    if (!pad) {
+      if (this.padFire) { this.padFire = false; this.#fireLevel(); }
+      return null;
+    }
     const axis = i => { const v = pad.axes[i] || 0; return Math.abs(v) < DEADZONE ? 0 : (v - Math.sign(v) * DEADZONE) / (1 - DEADZONE); };
     const btn = i => !!pad.buttons[i]?.pressed;
     const state = { mx: axis(0), mz: -axis(1), lx: axis(2), ly: axis(3), buttons: pad.buttons.map(b => b.pressed) };
@@ -151,6 +174,8 @@ export class InputManager {
     edge(0, 'jump'); edge(2, 'reload'); edge(3, 'use'); edge(4, 'dash'); edge(5, 'mark'); edge(9, 'pause'); edge(12, 'chat'); edge(13, 'emote'); edge(1, 'crouchToggle');
     this.padPrev = state.buttons;
     state.fire = btn(7) || (pad.buttons[7]?.value ?? 0) > 0.3;
+    this.padFire = state.fire;
+    this.#fireLevel();
     state.sprint = btn(10);
     state.scoreboard = btn(8);
     this.pad = pad;

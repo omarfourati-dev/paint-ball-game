@@ -1,6 +1,6 @@
 // In-Game-HUD auf 2D-Canvas (UI-05, UX-17, UX-19, UX-21, FR-29).
 import { t } from './i18n.js';
-import { formatTime, connectionQuality } from './format.js';
+import { formatTime, connectionQuality, markerLabel } from './format.js';
 import { STEPS, stepTextKey } from './tutorial.js';
 
 const FONT = '"Baloo 2", "Trebuchet MS", system-ui, sans-serif';
@@ -324,7 +324,7 @@ export class Hud {
     const low = am <= Math.ceil(mag * 0.25);
     this.text(String(am), bx + boxW - 58 * s, by + boxH / 2, 36 * s, low ? '#f87171' : '#fff', 'right');
     this.text(`/ ${me.rs}`, bx + boxW - 52 * s, by + boxH / 2 + 6 * s, 16 * s, '#cbbfe6', 'left');
-    this.text(g.markerName ?? '', this.w - pad, by - 12 * s, 12 * s, '#fdf8ff', 'right', 700);
+    this.text(markerLabel(g.markerName ?? '', g.marker?.fireMode, t), this.w - pad, by - 12 * s, 12 * s, '#fdf8ff', 'right', 700);
     if (me.st === 'Reloading') this.text(t('hud.reloading'), this.w / 2, this.h / 2 + 44 * s, 16 * s, '#fff');
     else if (me.am === 0 && me.rs === 0) this.text(t('hud.noAmmo'), this.w / 2, this.h / 2 + 44 * s, 16 * s, '#f87171');
     else if (me.am === 0) this.text(t('hud.pressReload'), this.w / 2, this.h / 2 + 44 * s, 16 * s, '#facc15');

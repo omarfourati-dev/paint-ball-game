@@ -234,8 +234,8 @@ export class App {
 
   markerInfo(id) {
     const m = this.profile?.markers?.find(x => x.id === id);
-    return m ? { id: m.id, name: m.name, rps: m.rps, velocity: m.velocity ?? 90, gravity: m.gravity ?? 1, spread: m.spread, range: m.range ?? 120 }
-      : { id, name: id, rps: 8, velocity: 90, gravity: 1, spread: 1.2, range: 120 };
+    return m ? { id: m.id, name: m.name, rps: m.rps, velocity: m.velocity ?? 90, gravity: m.gravity ?? 1, spread: m.spread, range: m.range ?? 120, mag: m.mag, fireMode: m.fireMode ?? 'auto', pellets: m.pellets ?? 1 }
+      : { id, name: id, rps: 8, velocity: 90, gravity: 1, spread: 1.2, range: 120, fireMode: 'auto', pellets: 1 };
   }
 
   // ---------------- Screens ----------------
@@ -809,6 +809,7 @@ export class App {
     const markers = p.markers.map(m => `
       <div class="card ${m.id === p.marker ? 'selected' : ''} ${m.unlocked ? 'clickable' : ''}" data-marker="${m.id}" tabindex="0">
         <h3>${esc(m.name)} ${m.id === p.marker ? `<span class="chip ok">${esc(t('customize.equipped'))}</span>` : ''}${!m.unlocked ? `<span class="chip">🔒 ${esc(t('customize.locked', { n: m.unlock }))}</span>` : ''}</h3>
+        <div class="chips"><span class="chip">${esc(t(m.fireMode === 'semi' ? 'hud.semi' : 'hud.auto'))}</span>${m.pellets > 1 ? `<span class="chip">${esc(t('customize.pellets', { n: m.pellets }))}</span>` : ''}</div>
         ${stat(t('stat.rps'), m.rps, maxOf('rps'), '/s')}
         ${stat(t('stat.damage'), m.damage, maxOf('damage'))}
         ${stat(t('stat.mag'), m.mag, maxOf('mag'))}

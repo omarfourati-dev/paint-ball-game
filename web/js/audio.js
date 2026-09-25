@@ -93,6 +93,14 @@ export class AudioEngine {
     this.#tone(o, 180, 0.08, 'triangle', 70, 0.5);
   }
 
+  /** Schrot: tieferer, längerer Knall – Variante des Standardschusses. */
+  shotgun(pan = 0, gain = 1) {
+    if (!this.ctx) return;
+    const o = this.#out(pan, gain * 0.6);
+    this.#noiseBurst(o, 0.12, 900 + Math.random() * 200, 0.7);
+    this.#tone(o, 120, 0.14, 'triangle', 45, 0.6);
+  }
+
   splat(pan = 0, gain = 1) {
     if (!this.ctx) return;
     const o = this.#out(pan, gain * 0.6);

@@ -4,7 +4,8 @@ import { Predictor } from './prediction.js';
 import { SnapshotBuffer, ServerClock } from './interpolation.js';
 import { BTN, decodePlayers, encodeInput, TEAM_MODES } from './protocol.js';
 import * as M from './movement.js';
-import { aimAngles, aimAssistFactor, angleBetween, shouldAutoFire, resolveFireButton } from './aim.js';
+import { aimAngles, aimAssistFactor, angleBetween, shouldAutoFire, pelletDirections } from './aim.js';
+import { TriggerGate, tickFire, localFireStatus } from './trigger.js';
 import { hexToRgb } from './renderer.js';
 import * as S from './scene.js';
 import { t, phrases, getLang } from './i18n.js';
@@ -76,6 +77,9 @@ export class ClientGame {
     this.localShots = [];
     this.lastLocalShot = 0;
     this.autoTarget = null;
+    this.trigger = new TriggerGate();
+    this.autoPulse = false;
+    this.lastHitSound = -1;
     this.localDashUntil = 0;
     this.localDashReady = 0;
     this.projectiles = [];
@@ -211,8 +215,9 @@ export class ClientGame {
           this.#avatar(e.by).lastShot = nowS;
           if (e.by === this.me) break;
           this.projectiles.push({ id: e.id, o: e.o, v: e.v, g: e.g, t0: nowS, rgb: this.#paintRgb(e.by, e.tm) });
+          if (e.pi > 0) break; // weitere Schrot-Pellets: ein Knall pro Schuss (E14)
           const sp = this.audio.spatial(listener, this.yaw, e.o);
-          this.audio.shot(sp.pan, sp.gain * 0.8);
+          if (e.pi === 0) this.audio.shotgun(sp.pan, sp.gain * 0.8); else this.audio.shot(sp.pan, sp.gain * 0.8);
           if (sp.gain > 0.35) this.#caption(t('caption.shot'), 1.5);
           break;
         }
@@ -230,7 +235,7 @@ export class ClientGame {
         case 'elim': this.#onElim(e, nowS); break;
         case 'spawn':
           this.playerSplats.delete(e.id);
-          if (e.id === this.me) this.needsReset = true;
+          if (e.id === this.me) { this.needsReset = true; this.trigger.reset(); }
           break;
         case 'pick':
           if (e.by === this.me) {
@@ -259,7 +264,7 @@ export class ClientGame {
     if (e.by === this.me) {
       if (e.o === 'EnemyHit' || heavy) {
         this.hitMarkers.push({ t: nowS, kill: heavy, head: e.z === 'head' });
-        this.audio.hitConfirm(e.z === 'head');
+        if (heavy || nowS - this.lastHitSound > 0.05) { this.audio.hitConfirm(e.z === 'head'); this.lastHitSound = nowS; }
         this.tutorial?.report('hit', 1);
         if (e.z === 'head') this.#notice(t('hud.headshot'), '#ffd166');
       } else if (e.o === 'AllyHitBlocked') this.#notice(t('hud.teamHit'), '#93c5fd');
@@ -488,15 +493,25 @@ export class ClientGame {
     const nowS = performance.now() / 1000;
     const running = this.phase === 'running' && this.myAlive;
 
+    // Feuer: gespeicherte Druck-Flanke (kurze Klicks/Tipps), Auto-Feuer drückt bei Semi im Wechsel (E9),
+    // blockierende UI und Runden außerhalb von „running“ unterdrücken alles.
+    const held = this.uiBlocking ? (this.input.drainFire(), false) : this.input.takeFire();
     const autoFire = shouldAutoFire({ enabled: this.settings.autoFire, device: this.input.device, target: this.autoTarget, range: this.marker?.range ?? 0 });
+    const semi = this.marker?.fireMode === 'semi';
+    const fire = tickFire({ held, auto: autoFire, semi, pulse: this.autoPulse, running, uiBlocking: this.uiBlocking });
+    this.autoPulse = fire.pulse;
     let buttons = 0;
-    if (resolveFireButton({ fire: inp.fire, autoFire, running, uiBlocking: this.uiBlocking })) buttons |= BTN.FIRE;
+    if (fire.down) buttons |= BTN.FIRE;
     if (inp.jump) buttons |= BTN.JUMP;
     if (inp.crouch) buttons |= BTN.CROUCH;
     if (inp.sprint) buttons |= BTN.SPRINT;
     if (pressed.has('reload')) buttons |= BTN.RELOAD;
     if (pressed.has('dash')) buttons |= BTN.DASH;
     if (pressed.has('use')) buttons |= BTN.USE;
+    const me = this.meState;
+    // Spiegel von GameMatch.ProcessInput: Nachladen (laufend oder in diesem Frame gestartet) verwirft den Semi-Puffer.
+    const reloadStarts = (buttons & BTN.RELOAD) !== 0 && me && me.rs > 0 && (this.displayAmmo ?? me.am) < (this.marker?.mag ?? Infinity);
+    const mayShoot = this.trigger.pull((buttons & BTN.FIRE) !== 0, semi, nowS, me?.st === 'Reloading' || !!reloadStarts);
 
     const lp = this.predictor.state;
     const view = this.#camera({ ...lp });
@@ -527,27 +542,40 @@ export class ClientGame {
       if (buttons & BTN.RELOAD) this.tutorial.report('reloaded', 1);
     }
     if (buttons & BTN.RELOAD) this.audio.reload();
-    if (buttons & BTN.FIRE) this.#localShot(view, aim, frame.seq, nowS);
+    if (!mayShoot) return;
+    const status = this.#localShot(view, aim, frame, nowS);
+    if (status === 'fired') this.trigger.fired(semi);
+    else if (status === 'cooldown') this.trigger.cooldown(semi, nowS);
   }
 
-  #localShot(view, aim, seq, nowS) {
+  /** Lokaler Schussversuch (Vorhersage) – liefert den Status wie MarkerStateMachine.TryFire. */
+  #localShot(view, aim, frame, nowS) {
     const me = this.meState;
-    if (!me || !this.marker) return;
-    const rps = this.marker.rps * (this.myInfo?.rapid ? 1.5 : 1);
-    if (nowS - this.lastLocalShot < 1 / rps - 0.004) return;
-    if ((this.displayAmmo ?? me.am) <= 0) return;
-    if (me.st === 'Reloading' && this.marker.id === 'precision') return;
+    if (!me || !this.marker) return 'none';
+    const status = localFireStatus({
+      now: nowS, last: this.lastLocalShot, rps: this.marker.rps * (this.myInfo?.rapid ? 1.5 : 1),
+      ammo: this.displayAmmo ?? me.am, reloading: me.st === 'Reloading', interruptible: this.marker.id !== 'precision'
+    });
+    if (status !== 'fired') return status;
+    const seq = frame.seq;
     this.lastLocalShot = nowS;
     this.#avatar(this.me).lastShot = nowS;
     this.localShots.push(seq);
     this.displayAmmo = Math.max(0, (this.displayAmmo ?? me.am) - 1);
     const dir = M.aimDirection(aim.yaw, aim.pitch);
-    const o = [view.eye[0] + dir[0] * 0.5, view.eye[1] + dir[1] * 0.5, view.eye[2] + dir[2] * 0.5];
-    const v = dir.map(c => c * this.marker.velocity);
-    this.projectiles.push({ id: -seq, o, v, g: this.marker.gravity, t0: nowS, rgb: this.#paintRgb(this.me, this.myTeam), mine: true });
-    this.audio.shot(0, 1);
+    const pellets = this.marker.pellets ?? 1;
+    // Streuung wie auf dem Server: Bewegung ×1,4, Ducken ×0,6 (nur für das Muster der Schrot-Kugeln)
+    const spread = (this.marker.spread ?? 0) * (frame.mx || frame.mz ? 1.4 : 1) * (this.predictor.state.crouched ? 0.6 : 1);
+    const dirs = pellets > 1 ? pelletDirections(dir, pellets, spread) : [dir];
+    const rgb = this.#paintRgb(this.me, this.myTeam);
+    for (const d of dirs) {
+      const o = [view.eye[0] + d[0] * 0.5, view.eye[1] + d[1] * 0.5, view.eye[2] + d[2] * 0.5];
+      this.projectiles.push({ id: -seq, o, v: d.map(c => c * this.marker.velocity), g: this.marker.gravity, t0: nowS, rgb, mine: true });
+    }
+    if (pellets > 1) this.audio.shotgun(0, 1); else this.audio.shot(0, 1);
     this.tutorial?.report('shot', 1);
-    if (!this.settings.reducedMotion) this.shake = Math.min(0.2, this.shake + 0.02);
+    if (!this.settings.reducedMotion) this.shake = Math.min(0.2, this.shake + (pellets > 1 ? 0.06 : 0.02));
+    return 'fired';
   }
 
   // ---------------- Rendering ----------------
