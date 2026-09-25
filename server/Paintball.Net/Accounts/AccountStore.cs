@@ -187,6 +187,9 @@ namespace Paintball.Net.Accounts
 
         public int Count => _repo.Count();
 
+        /// <summary>Anzahl der aktuell im Cache gehaltenen Konten (Task 6: Speicherbereinigung inaktiver Spieler).</summary>
+        public int CachedCount { get { lock (_lock) return _records.Count; } }
+
         // ---------------- Anmeldung, Name, Sessions ----------------
 
         /// <exception cref="AccountDeletedException">Das Konto wurde während der Anmeldung gelöscht.</exception>
@@ -534,6 +537,32 @@ namespace Paintball.Net.Accounts
             return deleted;
         }
 
+        // ---------------- Speicherbereinigung (Task 6) ----------------
+
+        /// <summary>
+        /// Entfernt aus dem Cache, wer seit <paramref name="idle"/> nicht mehr zugegriffen wurde (<see cref="_lastAccess"/>)
+        /// – außer online (<paramref name="isOnline"/>) oder mit noch offenen Schreibaufträgen
+        /// (<see cref="PersistenceQueue.HasPending"/>): beides würde ein gleichzeitig laufender Tick noch verwenden.
+        /// Läuft komplett unter <see cref="_lock"/>, damit Prüfung und Entfernen atomar bleiben. Entfernte Konten werden
+        /// beim nächsten Zugriff normal über <see cref="EnsureLoaded"/> aus dem Repository nachgeladen. Räumt nebenbei
+        /// abgelaufene Grabsteine auf (<see cref="TombstoneCount"/>). Gibt die Anzahl entfernter Cache-Einträge zurück.
+        /// </summary>
+        public int Evict(Func<string, bool> isOnline, TimeSpan idle)
+        {
+            if (isOnline == null) throw new ArgumentNullException(nameof(isOnline));
+            lock (_lock)
+            {
+                DateTime now = _clock();
+                PruneTombstonesLocked(now);
+                List<string> stale = _lastAccess
+                    .Where(kv => now - kv.Value > idle && !isOnline(kv.Key) && !_queue.HasPending(kv.Key))
+                    .Select(kv => kv.Key)
+                    .ToList();
+                foreach (string id in stale) RemoveCachedLocked(id);
+                return stale.Count;
+            }
+        }
+
         // ---------------- Laden und Persistenz ----------------
 
         /// <summary>
@@ -673,6 +702,9 @@ namespace Paintball.Net.Accounts
 
         /// <summary>Hält der aufrufende Thread gerade die Store-Sperre? (Tests prüfen damit „kein I/O unter der Sperre“.)</summary>
         internal bool LockHeldByCurrentThread => Monitor.IsEntered(_lock);
+
+        /// <summary>Anzahl offener Grabsteine (Task 6: Tests prüfen, dass <see cref="Evict"/> abgelaufene entfernt).</summary>
+        internal int TombstoneCount { get { lock (_lock) return _deleted.Count; } }
 
         /// <summary>LastLoginAt des gecachten Datensatzes oder null.</summary>
         internal DateTime? CachedLastLoginAt(string id)

@@ -60,6 +60,8 @@ namespace Paintball.Server
         public IPlayerRepository Repository;
         /// <summary>Spielstände über die Hintergrund-Warteschlange schreiben (Produktion); false = synchron (Tests).</summary>
         public bool BackgroundPersistence;
+        /// <summary>Nur für Tests: eigene Wiederholungs-Wartezeiten der Hintergrund-Warteschlange (Standard: 500/2000/5000 ms).</summary>
+        internal int[] RetryDelaysMs;
     }
 
     /// <summary>
@@ -70,10 +72,11 @@ namespace Paintball.Server
         public const string Version = "1.0.0-mvp";
         public const int ProtocolVersion = 1;
         /// <summary>
-        /// Stopp-Budget des Hosts. Passt samt Leeren der Warteschlange (10 s) in die 45 s von <c>docker stop -t 45</c>
-        /// bzw. <c>stop_grace_period</c>; offene WebSockets werden beim Stoppen sofort geschlossen und blockieren es nicht.
+        /// Stopp-Budget des Hosts. Schlimmster Fall 25 s Host + 5 s Warten auf die Takt-Schleife (<see cref="GameLoopService.LoopExitWait"/>)
+        /// + 10 s Leeren der Warteschlange (<see cref="PersistenceQueue.DisposeFlushTimeout"/>) = 40 s, passt unter die 45 s von
+        /// <c>docker stop -t 45</c> bzw. <c>stop_grace_period</c>; offene WebSockets werden beim Stoppen sofort geschlossen und blockieren es nicht.
         /// </summary>
-        public static readonly TimeSpan ShutdownTimeout = TimeSpan.FromSeconds(30);
+        public static readonly TimeSpan ShutdownTimeout = TimeSpan.FromSeconds(25);
         /// <summary>So lange darf ein Client nach dem 1001-Close noch antworten, dann wird die Verbindung abgebrochen.</summary>
         public static readonly TimeSpan RestartCloseGrace = TimeSpan.FromSeconds(3);
 
@@ -129,7 +132,9 @@ namespace Paintball.Server
                 pg.EnsureSchema();
                 repo = pg;
             }
-            PersistenceQueue queue = options.BackgroundPersistence ? PersistenceQueue.Background(repo) : PersistenceQueue.Inline(repo);
+            PersistenceQueue queue = options.BackgroundPersistence
+                ? (options.RetryDelaysMs != null ? PersistenceQueue.Background(repo, options.RetryDelaysMs) : PersistenceQueue.Background(repo))
+                : PersistenceQueue.Inline(repo);
             var accounts = new AccountStore(repo, null, queue);
             var game = new GameServer(options.Game, accounts);
             builder.Services.AddSingleton(game);
@@ -139,7 +144,7 @@ namespace Paintball.Server
             if (options.RunGameLoop)
             {
                 builder.Services.AddHostedService(_ => new GameLoopService(game));
-                builder.Services.AddHostedService(_ => new SessionCleanupService(accounts));
+                builder.Services.AddHostedService(_ => new MaintenanceService(accounts, game));
             }
 
             WebApplication app = builder.Build();
@@ -277,9 +282,13 @@ namespace Paintball.Server
                 try
                 {
                     int count = accounts.Count; // fragt die Datenbank ab, wirft bei DB-Fehler
+                    int pending = accounts.Queue.Pending;
+                    long failures = accounts.Queue.Failures;
+                    bool recentError = accounts.Queue.LastErrorAt is DateTime t && DateTime.UtcNow - t < TimeSpan.FromSeconds(60);
+                    string status = pending > 1000 || recentError ? "degraded" : "ok";
                     return Results.Json(new
                     {
-                        status = "ok",
+                        status,
                         version = Version,
                         protocol = ProtocolVersion,
                         uptimeSeconds = (int)(DateTime.UtcNow - startedAt).TotalSeconds,
@@ -295,7 +304,10 @@ namespace Paintball.Server
                             game.Metrics.MessagesIn, game.Metrics.MessagesRejected, game.Metrics.Logins,
                             game.Metrics.MatchesStarted, game.Metrics.MatchesFinished, game.Metrics.Reconnects,
                             game.Metrics.AfkKicks, game.Metrics.FloodKicks
-                        }
+                        },
+                        // Der Container-Healthcheck (wget auf /api/health) bleibt bei degraded grün, weil HTTP 200 zurückkommt – gewollt:
+                        // ein Neustart würde nichts an einer überlasteten/fehlerhaften Datenbank ändern, nur Verbindungen kappen.
+                        persistence = new { pending, failures }
                     });
                 }
                 catch (Exception ex)
@@ -452,20 +464,37 @@ namespace Paintball.Server
         }
     }
 
-    /// <summary>Räumt abgelaufene Sessions auf: beim Start und danach stündlich.</summary>
-    internal sealed class SessionCleanupService : BackgroundService
+    /// <summary>
+    /// Wartungsdienst (Task 6): räumt abgelaufene Sessions auf (beim Start und danach stündlich) und verdrängt inaktive
+    /// Konten aus dem <see cref="AccountStore"/>-Cache (alle 5 Minuten, <see cref="EvictIdle"/> ohne Zugriff, online und
+    /// offene Schreibaufträge ausgenommen – siehe <see cref="AccountStore.Evict"/>).
+    /// </summary>
+    internal sealed class MaintenanceService : BackgroundService
     {
+        private static readonly TimeSpan Interval = TimeSpan.FromMinutes(5);
+        private static readonly TimeSpan SessionCleanupInterval = TimeSpan.FromHours(1);
+        private static readonly TimeSpan EvictIdle = TimeSpan.FromMinutes(30);
+
         private readonly AccountStore _accounts;
-        public SessionCleanupService(AccountStore accounts) { _accounts = accounts; }
+        private readonly GameServer _game;
+        public MaintenanceService(AccountStore accounts, GameServer game) { _accounts = accounts; _game = game; }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
             await Task.Yield(); // Start des Hosts nicht durch den ersten DB-Zugriff blockieren
-            using var timer = new PeriodicTimer(TimeSpan.FromHours(1));
+            using var timer = new PeriodicTimer(Interval);
+            DateTime nextSessionCleanup = DateTime.UtcNow;
             do
             {
-                try { _accounts.CleanupSessions(); }
-                catch (Exception ex) { Console.Error.WriteLine("[Sessions] Aufräumen fehlgeschlagen: " + ex.GetType().Name); }
+                try { _accounts.Evict(_game.IsOnline, EvictIdle); }
+                catch (Exception ex) { Console.Error.WriteLine("[Wartung] Speicherbereinigung fehlgeschlagen: " + ex.GetType().Name); }
+
+                if (DateTime.UtcNow >= nextSessionCleanup)
+                {
+                    try { _accounts.CleanupSessions(); }
+                    catch (Exception ex) { Console.Error.WriteLine("[Sessions] Aufräumen fehlgeschlagen: " + ex.GetType().Name); }
+                    nextSessionCleanup = DateTime.UtcNow + SessionCleanupInterval;
+                }
             }
             while (await WaitAsync(timer, stoppingToken));
         }

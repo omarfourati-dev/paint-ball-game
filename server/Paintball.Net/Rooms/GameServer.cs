@@ -49,6 +49,11 @@ namespace Paintball.Net.Rooms
         private readonly MapCatalog _maps = new();
         private int _nextSessionId = 1;
         private int _mapRotation;
+        /// <summary>
+        /// Schnappschuss der Konten mit authentifizierter Sitzung (ob in einem Raum oder nicht), im Tick neu gebaut und
+        /// nie in-place verändert – nur als Ganzes ersetzt (Task 6: <see cref="IsOnline"/> ist so threadsicher lesbar).
+        /// </summary>
+        private volatile HashSet<string> _onlineSnapshot = new();
 
         public ServerOptions Options { get; }
         public AccountStore Accounts { get; }
@@ -58,6 +63,12 @@ namespace Paintball.Net.Rooms
         public IReadOnlyCollection<Room> Rooms => _rooms.Values;
         public int SessionCount => _sessions.Count;
         public static IReadOnlyList<string> QuickChatPhrases => Phrases;
+
+        /// <summary>
+        /// Ist gerade eine authentifizierte Sitzung dieses Kontos verbunden – unabhängig davon, ob es in einem Raum ist?
+        /// Threadsicher: liest einen im Tick ersetzten, unveränderlichen Schnappschuss (Task 6: Speicherbereinigung).
+        /// </summary>
+        public bool IsOnline(string playerId) => playerId != null && _onlineSnapshot.Contains(playerId);
 
         public GameServer(ServerOptions options, AccountStore accounts)
         {
@@ -138,6 +149,12 @@ namespace Paintball.Net.Rooms
                 try { action(); }
                 catch (Exception ex) { Console.Error.WriteLine("[GameServer] Nachricht fehlgeschlagen: " + ex.Message); }
             }
+
+            // Schnappschuss neu bauen statt in-place zu ändern: andere Threads (Wartungsdienst) lesen ihn gefahrlos mit.
+            var online = new HashSet<string>();
+            foreach (Session s in _sessions.Values)
+                if (s.Authenticated && s.AccountId != null) online.Add(s.AccountId);
+            _onlineSnapshot = online;
 
             foreach (Session s in _sessions.Values.ToList())
             {

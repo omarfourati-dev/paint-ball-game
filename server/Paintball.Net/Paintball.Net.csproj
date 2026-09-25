@@ -22,6 +22,8 @@
   <ItemGroup>
     <!-- Testschalter wie die Wartezeiten der PersistenceQueue bleiben intern. -->
     <InternalsVisibleTo Include="Paintball.Net.Tests" />
+    <!-- ServerHost setzt die Wiederholungs-Wartezeiten der Hintergrund-Warteschlange über eine interne Test-Option. -->
+    <InternalsVisibleTo Include="Paintball.Server" />
   </ItemGroup>
 
   <ItemGroup>

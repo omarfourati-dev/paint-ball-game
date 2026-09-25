@@ -25,6 +25,7 @@ namespace Paintball.Net.Tests
             r.RunAsync("WSS: Login, Training starten, Snapshots empfangen über wss:// (FR-25/NFR-11)", WssEndToEnd);
             r.RunAsync("HTTPS: Health-Endpoint und Security-Header (NFR-06/NFR-11)", HealthAndHeaders);
             r.RunAsync("Health: Datenbank nicht erreichbar → 503 mit db=error", HealthDatabaseUnavailable);
+            r.RunAsync("Health: persistence-Kennzahlen und degraded", HealthPersistenceMetricsAndDegraded);
             r.RunAsync("HTTPS: Kartendaten aus Core-MapCatalog für den Client (FR-53)", MapsApi);
             r.RunAsync("WSS: Fremde Origin wird abgewiesen (CSWSH-Schutz)", ForeignOriginRejected);
             r.RunAsync("HTTP: Weiterleitung auf HTTPS (NFR-11)", HttpRedirectsToHttps);
@@ -312,7 +313,7 @@ namespace Paintball.Net.Tests
             public int HttpPort;
             public HttpClient Http;
 
-            public static async Task<Harness> StartAsync(bool devLogin = true, IGoogleOAuthClient google = null, bool googleConfigured = true, Paintball.Net.Accounts.IPlayerRepository repository = null, bool backgroundPersistence = false)
+            public static async Task<Harness> StartAsync(bool devLogin = true, IGoogleOAuthClient google = null, bool googleConfigured = true, Paintball.Net.Accounts.IPlayerRepository repository = null, bool backgroundPersistence = false, int[] retryDelaysMs = null)
             {
                 string web = AccountTests.TempDir();
                 HarnessWebRoot = web;
@@ -333,6 +334,7 @@ namespace Paintball.Net.Tests
                     PublicUrl = null,
                     Repository = repository,
                     BackgroundPersistence = backgroundPersistence,
+                    RetryDelaysMs = retryDelaysMs,
                     Game = new Paintball.Net.Rooms.ServerOptions { LobbyCountdownSeconds = 0.5f }
                 };
                 WebApplication app = ServerHost.Build(Array.Empty<string>(), options);
@@ -453,6 +455,33 @@ namespace Paintball.Net.Tests
             Assert.AreEqual("degraded", body.GetProperty("status").GetString(), "Status degraded");
             Assert.AreEqual("error", body.GetProperty("db").GetString(), "db=error");
             Assert.IsFalse(bodyText.Contains("db down"), "Fehlermeldung nicht nach außen");
+        }
+
+        private static async Task HealthPersistenceMetricsAndDegraded()
+        {
+            await using (Harness ok = await Harness.StartAsync())
+            {
+                HttpResponseMessage res = await ok.Http.GetAsync("/api/health");
+                Assert.AreEqual(HttpStatusCode.OK, res.StatusCode, "Health 200");
+                JsonElement body = JsonDocument.Parse(await res.Content.ReadAsStringAsync()).RootElement;
+                Assert.AreEqual("ok", body.GetProperty("status").GetString(), "Status ok ohne Fehler");
+                Assert.AreEqual(0, body.GetProperty("persistence").GetProperty("pending").GetInt32(), "nichts offen");
+            }
+
+            var repo = new RecordingRepository { FailTimes = int.MaxValue };   // SaveProgress/AddMatch werfen immer
+            await using Harness degraded = await Harness.StartAsync(repository: repo, backgroundPersistence: true, retryDelaysMs: new[] { 1, 1, 1 });
+            string cookie = await degraded.LoginAsync("Persistenz");
+            Paintball.Net.Accounts.AccountStore accounts = degraded.App.Services.GetRequiredService<Paintball.Net.Rooms.GameServer>().Accounts;
+            string id = accounts.PlayerIdForSession(cookie.Substring(cookie.IndexOf('=') + 1));
+            Assert.IsTrue(id != null, "Spieler per Dev-Login angelegt");
+            accounts.ApplyMatch(id, new Paintball.Net.Accounts.MatchSummary { Mode = "tdm", Map = "arena", XpGained = 100 });
+            await accounts.FlushAsync(TimeSpan.FromSeconds(10));
+
+            HttpResponseMessage degradedRes = await degraded.Http.GetAsync("/api/health");
+            Assert.AreEqual(HttpStatusCode.OK, degradedRes.StatusCode, "Health bleibt 200 bei degraded (Container-Healthcheck grün)");
+            JsonElement degradedBody = JsonDocument.Parse(await degradedRes.Content.ReadAsStringAsync()).RootElement;
+            Assert.AreEqual("degraded", degradedBody.GetProperty("status").GetString(), "Status degraded");
+            Assert.IsTrue(degradedBody.GetProperty("persistence").GetProperty("failures").GetInt64() >= 1, "persistence.failures >= 1");
         }
 
         private static async Task ServesModels()

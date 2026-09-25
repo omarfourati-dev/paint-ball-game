@@ -112,6 +112,7 @@ namespace Paintball.Net.Tests
             r.Run("Ping: pong mit Serverzeit für RTT/Uhrensync (FR-29)", PingPong);
             r.Run("Konto gelöscht während Match: Verbindung getrennt, Matchende speichert nichts", DeletedDuringMatch);
             r.Run("Matchende: Speicherfehler bei einem Spieler, Ergebnis erreicht trotzdem alle", MatchEndSurvivesSaveFailure);
+            r.Run("Server: IsOnline", ServerIsOnline);
         }
 
         internal static GameServer NewServer(Action<ServerOptions> configure = null, IPlayerRepository repo = null)
@@ -623,6 +624,16 @@ namespace Paintball.Net.Tests
             Assert.IsTrue(guest.Sink.Closed, "Gast getrennt");
             TickUntil(server, () => { host.Move(0, 0); return host.Sink.Last("end") != null; }, 40f);
             Assert.AreEqual(null, server.Accounts.GetAccount(guest.AccountId), "kein Wiederauferstehen nach Matchende");
+        }
+
+        private static void ServerIsOnline()
+        {
+            GameServer server = NewServer();
+            var client = new TestClient(server, "Omar");
+            Assert.IsTrue(server.IsOnline(client.AccountId), "verbunden und authentifiziert");
+            server.Disconnect(client.Session);
+            server.Tick();
+            Assert.IsFalse(server.IsOnline(client.AccountId), "nach Disconnect und Tick nicht mehr online");
         }
     }
 }

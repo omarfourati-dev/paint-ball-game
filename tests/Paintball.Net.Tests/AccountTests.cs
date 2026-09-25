@@ -37,6 +37,8 @@ namespace Paintball.Net.Tests
             r.Run("Konto: SignIn schreibt und cached denselben Login-Zeitpunkt", SignInUsesOneTimestamp);
             r.Run("Konto: SignIn gleichzeitig mit Delete liefert keine tote Id (AccountDeletedException)", SignInRacingDeleteThrows);
             r.RunAsync("Konto: Export nach Flush-Zeitüberschreitung loggt und liefert trotzdem Daten", ExportFlushTimeoutLogged);
+            r.RunAsync("Cache: Einträge ohne Zugriff werden nach idle entfernt, Online-Spieler und offene Schreibaufträge nicht", EvictSkipsOnlineAndPending);
+            r.Run("Cache: abgelaufene Grabsteine werden entfernt", EvictRemovesExpiredTombstones);
         }
 
         internal static string TempDir()
@@ -440,6 +442,48 @@ namespace Paintball.Net.Tests
                 repo.Release();
                 await queue.DisposeAsync();
             }
+        }
+
+        private static async Task EvictSkipsOnlineAndPending()
+        {
+            var repo = new RecordingRepository { DelayMs = 2000 };   // hält den Schreibauftrag von C offen
+            DateTime now = new DateTime(2026, 9, 25, 12, 0, 0, DateTimeKind.Utc);
+            var store = new AccountStore(repo, () => now, PersistenceQueue.Background(repo, new[] { 1, 1, 1 }));
+            try
+            {
+                string a = NewPlayer(store, "Alpha");     // offline und (gleich) alt
+                string b = NewPlayer(store, "Bravo");     // online
+                string c = NewPlayer(store, "Charlie");   // offener Schreibauftrag
+                Assert.AreEqual(3, store.CachedCount, "alle drei geladen");
+
+                store.ApplyMatch(c, new MatchSummary { XpGained = 10 });   // löst einen (langsamen) Hintergrund-Save aus
+                Assert.IsTrue(store.Queue.HasPending(c), "Schreibauftrag von C noch offen");
+
+                now = now.AddMinutes(31);
+                int removed = store.Evict(id => id == b, TimeSpan.FromMinutes(30));
+
+                Assert.AreEqual(1, removed, "nur A entfernt (B online, C mit offenem Schreibauftrag)");
+                Assert.AreEqual(2, store.CachedCount, "CachedCount sinkt um genau 1");
+
+                PlayerAccount reloaded = store.GetAccount(a);
+                Assert.IsTrue(reloaded != null, "A lädt nach der Verdrängung wieder");
+                Assert.AreEqual("Alpha", reloaded.DisplayName, "korrekt aus dem Repository nachgeladen");
+            }
+            finally { await store.Queue.DisposeAsync(); }
+        }
+
+        private static void EvictRemovesExpiredTombstones()
+        {
+            DateTime now = new DateTime(2026, 9, 25, 12, 0, 0, DateTimeKind.Utc);
+            var store = new AccountStore(new InMemoryPlayerRepository(), () => now);
+            string id = NewPlayer(store, "Omar");
+            Assert.IsTrue(store.Delete(id), "gelöscht");
+            Assert.AreEqual(1, store.TombstoneCount, "Grabstein gesetzt");
+
+            now = now.AddMinutes(61);
+            store.Evict(_ => false, TimeSpan.FromMinutes(30));
+
+            Assert.AreEqual(0, store.TombstoneCount, "abgelaufener Grabstein nach Evict entfernt");
         }
     }
 }
