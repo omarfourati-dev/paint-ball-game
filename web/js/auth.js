@@ -24,3 +24,16 @@ export function nameErrorKey(status, body) {
   if (status === 400) return 'name.error.invalid';
   return 'name.error.generic';
 }
+
+/**
+ * Entscheidet nach einem WS-close, ob die Sitzung als verloren gilt (Fallback auf /api/me + Login).
+ * War die zuletzt geschlossene Verbindung erfolgreich begrüßt (welcome), zählt ein neuer Abbruch bei
+ * null; sonst zählt der Zähler hoch und ab 3 erfolglosen Versuchen in Folge wird der Fallback ausgelöst.
+ * @param {{wasWelcomed: boolean, attempts: number}} state
+ * @returns {{attempts: number, fallback: boolean}}
+ */
+export function nextConnectState({ wasWelcomed, attempts }) {
+  if (wasWelcomed) return { attempts: 0, fallback: false };
+  const next = attempts + 1;
+  return next >= 3 ? { attempts: 0, fallback: true } : { attempts: next, fallback: false };
+}

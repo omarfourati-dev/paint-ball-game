@@ -456,7 +456,7 @@ export class ClientGame {
     if (pressed.has('pause')) this.ui.pause();
     if (pressed.has('mark') && this.lastAim) {
       const p = this.lastAim.target;
-      this.net.send({ t: 'mark', x: p[0], y: Math.max(0, p[1]), z: p[2] });
+      this.net?.send({ t: 'mark', x: p[0], y: Math.max(0, p[1]), z: p[2] });
     }
   }
 
@@ -487,7 +487,7 @@ export class ClientGame {
       aimYaw: aim.yaw, aimPitch: aim.pitch, buttons,
       time: this.clock.serverTime(performance.now())
     };
-    this.net.send(encodeInput(frame));
+    this.net?.send(encodeInput(frame));
 
     if (!running) return;
     if ((buttons & BTN.DASH) && nowS >= this.localDashReady && (this.meState?.dash ?? 0) <= 0.05) {

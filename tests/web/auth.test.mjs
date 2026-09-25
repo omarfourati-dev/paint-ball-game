@@ -1,7 +1,7 @@
 // Startablauf und Hilfsfunktionen des Google-Logins im Client.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { bootStep, loginUrl, authErrorKey, nameErrorKey, LEGACY_KEYS } from '../../web/js/auth.js';
+import { bootStep, loginUrl, authErrorKey, nameErrorKey, nextConnectState, LEGACY_KEYS } from '../../web/js/auth.js';
 import { STRINGS } from '../../web/js/i18n.js';
 
 test('Start: 401 → Anmeldung, needsName → Namenswahl, sonst Spiel', () => {
@@ -40,4 +40,15 @@ test('Anmelde-Texte in DE und EN', () => {
     assert.ok(STRINGS.de[k], `DE fehlt: ${k}`);
     assert.ok(STRINGS.en[k], `EN fehlt: ${k}`);
   }
+});
+
+test('nextConnectState: nach welcome zählt ein neuer Abbruch bei 0, sonst hoch bis zum Fallback bei 3', () => {
+  // War die Verbindung begrüßt worden (welcome), reagiert ein späterer Abbruch (Netzwerk-Wackler bei
+  // weiter gültiger Sitzung) nicht mit dem Login-Fallback, sondern startet die Zählung wieder bei 0.
+  assert.deepEqual(nextConnectState({ wasWelcomed: true, attempts: 0 }), { attempts: 0, fallback: false });
+  assert.deepEqual(nextConnectState({ wasWelcomed: true, attempts: 2 }), { attempts: 0, fallback: false });
+  // Ohne welcome zählt jeder Abbruch hoch, bis beim dritten in Folge der Fallback ausgelöst wird.
+  assert.deepEqual(nextConnectState({ wasWelcomed: false, attempts: 0 }), { attempts: 1, fallback: false });
+  assert.deepEqual(nextConnectState({ wasWelcomed: false, attempts: 1 }), { attempts: 2, fallback: false });
+  assert.deepEqual(nextConnectState({ wasWelcomed: false, attempts: 2 }), { attempts: 0, fallback: true });
 });

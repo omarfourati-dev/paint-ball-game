@@ -12,7 +12,7 @@ import { loadSettings, saveSettings, sanitize, rebind, ACTIONS, DEFAULT_KEYS, te
 import { TutorialTracker } from './tutorial.js';
 import { escapeHtml as esc, formatNumber, formatPercent, formatTime, inviteUrl } from './format.js';
 import { MODES, TEAM_MODES } from './protocol.js';
-import { bootStep, loginUrl, authErrorKey, nameErrorKey, LEGACY_KEYS } from './auth.js';
+import { bootStep, loginUrl, authErrorKey, nameErrorKey, nextConnectState, LEGACY_KEYS } from './auth.js';
 
 const MODE_ICON = { tdm: '⚔️', ffa: '💥', ctf: '🚩', elim: '☠️', koth: '👑', training: '🎯' };
 const MAP_IDS = ['speedball', 'warehouse', 'forest', 'arena'];
@@ -120,28 +120,28 @@ export class App {
     n.on('close', ev => {
       this.updateConnChip();
       if (ev.code === 1008 || ev.reason === 'deleted' || ev.reason === 'logout') {
+        this.leaveGameView();
         this.net?.close();
         this.net = null;
         this.game.net = null;
         location.href = '/';
         return;
       }
-      if (!this.welcomedThisConnection) {
-        this.connectAttempts++;
-        if (this.connectAttempts >= 3) {
-          this.connectAttempts = 0;
-          fetch('/api/me', { cache: 'no-store', credentials: 'same-origin' }).then(res => {
-            if (res.status === 401) {
-              this.net?.close();
-              this.net = null;
-              this.game.net = null;
-              this.renderLogin();
-              this.show('login');
-            }
-          }).catch(() => {});
-        }
-      } else {
-        this.connectAttempts = 0;
+      const wasWelcomed = this.welcomedThisConnection;
+      this.welcomedThisConnection = false;
+      const { attempts, fallback } = nextConnectState({ wasWelcomed, attempts: this.connectAttempts });
+      this.connectAttempts = attempts;
+      if (fallback) {
+        fetch('/api/me', { cache: 'no-store', credentials: 'same-origin' }).then(res => {
+          if (res.status === 401) {
+            this.leaveGameView();
+            this.net?.close();
+            this.net = null;
+            this.game.net = null;
+            this.renderLogin();
+            this.show('login');
+          }
+        }).catch(() => {});
       }
       if (ev.reason === 'replaced') this.toast(t('hud.disconnected'), true);
       else if (this.game.active) this.toast(t('hud.disconnected'), true);
