@@ -404,7 +404,22 @@ export const STRINGS = {
     'landing.privacy': 'Datenschutz',
     'landing.byline': 'Ein Projekt von Omar Fourati',
     'landing.version': 'Version {v}',
-    'landing.lang': 'English'
+    'landing.lang': 'English',
+    'auth.title': 'Willkommen bei Paint-Ball',
+    'auth.text': 'Melde dich an, um zu spielen. Dein Fortschritt wird in deinem Konto gespeichert.',
+    'auth.google': 'Mit Google anmelden',
+    'auth.error.not_configured': 'Die Anmeldung ist gerade nicht verfügbar. Bitte versuche es später noch einmal.',
+    'auth.error.invalid_state': 'Die Anmeldung ist abgelaufen. Bitte versuche es noch einmal.',
+    'auth.error.oauth_failed': 'Die Anmeldung bei Google hat nicht geklappt. Bitte versuche es noch einmal.',
+    'name.title': 'Wähle deinen Spielernamen',
+    'name.label': 'Spielername',
+    'name.go': 'Los geht’s',
+    'name.hint': '3–16 Zeichen: Buchstaben, Ziffern, Leerzeichen, _ - . – jeder Name existiert nur einmal.',
+    'name.error.taken': 'Dieser Name ist schon vergeben.',
+    'name.error.invalid': 'Ungültiger Name: 3–16 Zeichen, nur Buchstaben, Ziffern, Leerzeichen, _ - .',
+    'name.error.generic': 'Der Name konnte nicht gespeichert werden. Bitte versuche es noch einmal.',
+    'settings.logout': 'Abmelden',
+    'settings.rename': 'Namen ändern'
   },
   en: {
     'app.subtitle': 'Fast paint battles in your browser',
@@ -772,7 +787,22 @@ export const STRINGS = {
     'landing.privacy': 'Privacy',
     'landing.byline': 'A project by Omar Fourati',
     'landing.version': 'Version {v}',
-    'landing.lang': 'Deutsch'
+    'landing.lang': 'Deutsch',
+    'auth.title': 'Welcome to Paint-Ball',
+    'auth.text': 'Sign in to play. Your progress is saved to your account.',
+    'auth.google': 'Sign in with Google',
+    'auth.error.not_configured': 'Sign-in is currently unavailable. Please try again later.',
+    'auth.error.invalid_state': 'Your sign-in expired. Please try again.',
+    'auth.error.oauth_failed': 'Signing in with Google didn’t work. Please try again.',
+    'name.title': 'Choose your player name',
+    'name.label': 'Player name',
+    'name.go': 'Let’s go',
+    'name.hint': '3–16 characters: letters, digits, spaces, _ - . – every name exists only once.',
+    'name.error.taken': 'This name is already taken.',
+    'name.error.invalid': 'Invalid name: 3–16 characters, only letters, digits, spaces, _ - .',
+    'name.error.generic': 'The name could not be saved. Please try again.',
+    'settings.logout': 'Sign out',
+    'settings.rename': 'Change name'
   }
 };
 

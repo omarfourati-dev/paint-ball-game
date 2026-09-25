@@ -12,6 +12,7 @@ import { loadSettings, saveSettings, sanitize, rebind, ACTIONS, DEFAULT_KEYS, te
 import { TutorialTracker } from './tutorial.js';
 import { escapeHtml as esc, formatNumber, formatPercent, formatTime, inviteUrl } from './format.js';
 import { MODES, TEAM_MODES } from './protocol.js';
+import { bootStep, loginUrl, authErrorKey, nameErrorKey, LEGACY_KEYS } from './auth.js';
 
 const MODE_ICON = { tdm: '⚔️', ffa: '💥', ctf: '🚩', elim: '☠️', koth: '👑', training: '🎯' };
 const MAP_IDS = ['speedball', 'warehouse', 'forest', 'arena'];
@@ -47,6 +48,8 @@ export class App {
     this.selectedMode = this.storage.getItem('pb.mode') || 'tdm';
     this.blocked = new Set(JSON.parse(this.storage.getItem('pb.blocked') || '[]'));
     this.pendingJoin = new URLSearchParams(location.search).get('join');
+    for (const k of LEGACY_KEYS) this.storage.removeItem(k);
+    this.authError = new URLSearchParams(location.search).get('auth_error');
     this.lastFrame = performance.now();
     this.previewYaw = 0.6;
     this.game = new ClientGame({
@@ -89,6 +92,20 @@ export class App {
     this.backdrop = { map: this.maps.get('speedball') ?? this.maps.get(MAP_IDS[1]) };
     this.backdrop.world = World.fromMap(this.backdrop.map, 0);
     this.renderLoading(t('loading.connecting'), 0.6);
+    let status = 0, me = null;
+    try {
+      const res = await fetch('/api/me', { cache: 'no-store', credentials: 'same-origin' });
+      status = res.status;
+      if (res.ok) me = await res.json();
+    } catch { status = 0; }
+    const step = bootStep(status, me);
+    if (step === 'login') { this.renderLogin(); this.show('login'); return; }
+    if (step === 'name') { this.renderChooseName(me.suggestedName || ''); this.show('name'); return; }
+    this.connect();
+  }
+
+  connect() {
+    if (this.net) return;
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     this.net = new Net(`${proto}://${location.host}/ws`);
     this.game.net = this.net;
@@ -98,9 +115,22 @@ export class App {
 
   bindNet() {
     const n = this.net;
-    n.on('open', () => this.hello());
+    this.connectAttempts = 0;
+    n.on('open', () => { this.welcomedThisConnection = false; this.hello(); });
     n.on('close', ev => {
       this.updateConnChip();
+      if (ev.code === 1008 || ev.reason === 'deleted' || ev.reason === 'logout') { location.href = '/'; return; }
+      if (!this.welcomedThisConnection) {
+        this.connectAttempts++;
+        if (this.connectAttempts >= 3) {
+          this.connectAttempts = 0;
+          fetch('/api/me', { cache: 'no-store', credentials: 'same-origin' }).then(res => {
+            if (res.status === 401) { this.renderLogin(); this.show('login'); }
+          }).catch(() => {});
+        }
+      } else {
+        this.connectAttempts = 0;
+      }
       if (ev.reason === 'replaced') this.toast(t('hud.disconnected'), true);
       else if (this.game.active) this.toast(t('hud.disconnected'), true);
     });
@@ -124,12 +154,8 @@ export class App {
     n.on('leaderboard', m => { this.leaderboard = m.rows; if (this.screen === 'leaderboard') this.renderLeaderboard(); });
   }
 
-  hello(name) {
-    const stored = this.storage.getItem('pb.name') || '';
-    this.net.send({
-      t: 'hello', name: name ?? stored, token: this.storage.getItem('pb.token') || undefined,
-      input: this.input.device, crossPlay: this.settings.crossPlay, platform: this.platform(), lang: getLang()
-    });
+  hello() {
+    this.net.send({ t: 'hello', input: this.input.device, crossPlay: this.settings.crossPlay, platform: this.platform(), lang: getLang() });
   }
 
   platform() {
@@ -140,15 +166,13 @@ export class App {
   }
 
   onWelcome(m) {
-    this.storage.setItem('pb.token', m.token);
-    this.storage.setItem('pb.name', m.name);
+    this.welcomedThisConnection = true;
     this.account = m.account;
     this.profile = { t: 'profile', ...m.profile };
     this.updateConnChip();
     if (this.game.active || this.screen === 'lobby' || this.screen === 'results') return;
-    if (m.isNew && !this.storage.getItem('pb.welcomed')) { this.renderWelcome(); this.show('welcome'); return; }
     if (this.pendingJoin) { this.net.send({ t: 'join', code: this.pendingJoin }); this.pendingJoin = null; }
-    if (this.screen === 'loading' || this.screen === 'welcome') this.show('menu');
+    if (this.screen === 'loading' || this.screen === 'login' || this.screen === 'name') this.show('menu');
     else this.refreshScreen();
   }
 
@@ -206,7 +230,8 @@ export class App {
       case 'profile': this.renderProfile(); break;
       case 'leaderboard': this.renderLeaderboard(); break;
       case 'settings': this.renderSettings(); break;
-      case 'welcome': this.renderWelcome(); break;
+      case 'login': this.renderLogin(); break;
+      case 'name': this.renderChooseName(); break;
     }
   }
 
@@ -223,29 +248,57 @@ export class App {
       </div>`;
   }
 
-  renderWelcome() {
-    const name = this.profile?.name ?? '';
-    $('#screen-welcome').innerHTML = `
+  renderLogin() {
+    const err = authErrorKey(this.authError);
+    $('#screen-login').innerHTML = `
       <div class="wrap center" style="min-height:90vh;justify-content:center;align-items:center">
         <div class="logo">Paint-Ball<small>${esc(t('app.subtitle'))}</small></div>
-        <form class="card" id="welcome-form" style="width:min(460px,92vw)">
-          <h2>${esc(t('welcome.title'))}</h2>
-          <label class="field">${esc(t('welcome.name'))}
-            <input type="text" id="welcome-name" maxlength="16" value="${esc(name)}" data-autofocus autocomplete="nickname">
+        <div class="card" style="width:min(460px,92vw)">
+          <h2>${esc(t('auth.title'))}</h2>
+          <p>${esc(t('auth.text'))}</p>
+          ${err ? `<p class="error" role="alert">${esc(t(err))}</p>` : ''}
+          <a class="btn google big" id="btn-google" href="${esc(loginUrl(this.pendingJoin))}">
+            <span class="g-logo" aria-hidden="true">G</span> ${esc(t('auth.google'))}
+          </a>
+          <span class="muted small"><a href="/datenschutz">${esc(t('landing.privacy'))}</a> · <a href="/impressum">${esc(t('landing.imprint'))}</a></span>
+        </div>
+      </div>`;
+  }
+
+  renderChooseName(suggested = '') {
+    $('#screen-name').innerHTML = `
+      <div class="wrap center" style="min-height:90vh;justify-content:center;align-items:center">
+        <div class="logo">Paint-Ball<small>${esc(t('app.subtitle'))}</small></div>
+        <form class="card" id="name-form" style="width:min(460px,92vw)" novalidate>
+          <h2>${esc(t('name.title'))}</h2>
+          <label class="field">${esc(t('name.label'))}
+            <input type="text" id="name-input" minlength="3" maxlength="16" value="${esc(suggested)}" data-autofocus autocomplete="nickname" required>
           </label>
-          <button class="btn primary big" type="submit">${esc(t('welcome.go'))} 🎨</button>
-          <span class="muted small">${esc(t('welcome.privacy'))}</span>
+          <span class="muted small">${esc(t('name.hint'))}</span>
+          <p class="error" id="name-error" role="alert" hidden></p>
+          <button class="btn primary big" type="submit">${esc(t('name.go'))} 🎨</button>
         </form>
       </div>`;
-    $('#welcome-form').onsubmit = e => {
+    $('#name-form').onsubmit = async e => {
       e.preventDefault();
       this.audio.unlock();
-      this.storage.setItem('pb.welcomed', '1');
-      const n = $('#welcome-name').value.trim();
-      if (n) this.hello(n);
-      this.show('menu');
-      if (this.pendingJoin) { this.net.send({ t: 'join', code: this.pendingJoin }); this.pendingJoin = null; }
+      const ok = await this.submitName($('#name-input').value, $('#name-error'));
+      if (ok) this.connect();
     };
+  }
+
+  /** Sendet den Namen an den Server; zeigt Fehler im übergebenen Element. */
+  async submitName(name, errorEl) {
+    let res, body = null;
+    try {
+      res = await fetch('/api/me/name', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
+      try { body = await res.json(); } catch { body = null; }
+    } catch { res = { status: 0 }; }
+    if (res.status === 200) { if (errorEl) errorEl.hidden = true; return true; }
+    if (res.status === 401) { location.reload(); return false; }
+    if (errorEl) { errorEl.textContent = t(nameErrorKey(res.status, body)); errorEl.hidden = false; }
+    else this.toast(t(nameErrorKey(res.status, body)), true);
+    return false;
   }
 
   topbar(back = false) {
@@ -810,7 +863,8 @@ export class App {
       <label class="field">${esc(t('settings.crosshair'))}<input type="color" data-set="crosshair" value="${s.crosshair}" style="min-height:48px;width:100%"></label>`;
     if (tab === 'account') body = `
       <div class="card"><label class="field">${esc(t('settings.name'))}<input type="text" id="set-name" maxlength="16" value="${esc(this.profile?.name ?? '')}"></label>
-        <button class="btn" id="save-name">${esc(t('settings.saveName'))}</button></div>
+        <button class="btn" id="save-name">${esc(t('settings.rename'))}</button>
+        <button class="btn" id="logout">${esc(t('settings.logout'))}</button></div>
       <div class="card">${check('crossPlay')}<span class="muted small">${esc(t('settings.crossPlayHint'))}</span></div>
       <div class="card"><button class="btn" id="export-data">⬇ ${esc(t('settings.export'))}</button>
         <button class="btn" id="reset-tutorial">🎓 ${esc(t('settings.tutorialReset'))}</button>
@@ -853,7 +907,12 @@ export class App {
     const rk = $('#reset-keys');
     if (rk) rk.onclick = () => { this.updateSettings({ keybinds: { ...DEFAULT_KEYS } }); this.renderSettings(); };
     const sn = $('#save-name');
-    if (sn) sn.onclick = () => { const n = $('#set-name').value.trim(); if (n) this.hello(n); };
+    if (sn) sn.onclick = async () => { if (await this.submitName($('#set-name').value, null)) this.toast('✔'); };
+    const lo = $('#logout');
+    if (lo) lo.onclick = async () => {
+      await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }).catch(() => {});
+      location.href = '/';
+    };
     const ex = $('#export-data');
     if (ex) ex.onclick = () => this.exportData();
     const rtut = $('#reset-tutorial');
@@ -863,7 +922,7 @@ export class App {
   }
 
   async exportData() {
-    const res = await fetch('/api/me/export', { headers: { Authorization: `Bearer ${this.storage.getItem('pb.token')}` } });
+    const res = await fetch('/api/me/export', { credentials: 'same-origin' });
     if (!res.ok) { this.toast(t('error.generic', { code: res.status }), true); return; }
     const blob = new Blob([await res.text()], { type: 'application/json' });
     const a = document.createElement('a');
@@ -875,10 +934,10 @@ export class App {
 
   async deleteAccount() {
     if (!this.deleteArmed) { this.deleteArmed = true; this.renderSettings(); return; }
-    await fetch('/api/me', { method: 'DELETE', headers: { Authorization: `Bearer ${this.storage.getItem('pb.token')}` } });
-    for (const k of ['pb.token', 'pb.name', 'pb.welcomed', 'pb.tutorial', 'pb.blocked', 'pb.settings', 'pb.mode']) this.storage.removeItem(k);
+    await fetch('/api/me', { method: 'DELETE', credentials: 'same-origin' });
+    for (const k of ['pb.tutorial', 'pb.blocked', 'pb.settings', 'pb.mode', ...LEGACY_KEYS]) this.storage.removeItem(k);
     this.toast(t('settings.deleted'));
-    setTimeout(() => location.reload(), 800);
+    setTimeout(() => { location.href = '/'; }, 800);
   }
 
   toast(text, error = false) {
