@@ -123,9 +123,10 @@ namespace Paintball.Net.Tests
         {
             await using Harness h = await Harness.StartAsync();
             using ClientWebSocket ws = await h.ConnectAsync($"https://localhost:{h.HttpsPort}");
+            // ÜBERGANG bis Task 5: hello meldet keinen eigenen Namen mehr an, das Konto kommt aus dem WsConnection-Übergang.
             await SendAsync(ws, new { t = "hello", name = "Integration", input = "kbm", crossPlay = true });
             JsonElement welcome = await ReceiveUntil(ws, "welcome");
-            Assert.IsTrue(welcome.GetProperty("token").GetString().Length >= 32, "Token über WSS erhalten");
+            Assert.IsFalse(string.IsNullOrEmpty(welcome.GetProperty("account").GetString()), "Konto über WSS erhalten (Google-Login)");
 
             await SendAsync(ws, new { t = "create", mode = "training", map = "arena", bots = 3 });
             JsonElement start = await ReceiveUntil(ws, "start");
@@ -350,7 +351,7 @@ namespace Paintball.Net.Tests
                 ws.Options.SetRequestHeader("X-Forwarded-Proto", "https");
                 await ws.ConnectAsync(new Uri($"ws://localhost:{port}/ws"), CancellationToken.None);
                 await SendAsync(ws, new { t = "hello", name = "Proxy" });
-                Assert.IsTrue((await ReceiveUntil(ws, "welcome")).GetProperty("token").GetString().Length >= 32, "Login über den Proxy");
+                Assert.IsFalse(string.IsNullOrEmpty((await ReceiveUntil(ws, "welcome")).GetProperty("account").GetString()), "Login über den Proxy");
                 await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "bye", CancellationToken.None);
             }
             finally { await app.StopAsync(); await app.DisposeAsync(); }

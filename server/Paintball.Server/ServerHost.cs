@@ -381,7 +381,12 @@ namespace Paintball.Server
 
         public async Task RunAsync(GameServer game, string remote, CancellationToken ct)
         {
-            Session session = game.Connect(this, remote);
+            // ÜBERGANG (Task 5 ersetzt das durch das Session-Cookie)
+            SignInResult signIn = game.Accounts.SignIn("ws-temp:" + Guid.NewGuid().ToString("N"), "");
+            string name = "Spieler-" + Random.Shared.Next(1000, 10000);
+            if (game.Accounts.SetName(signIn.PlayerId, name) == NameResult.Taken)
+                game.Accounts.SetName(signIn.PlayerId, "Spieler-" + Random.Shared.Next(1000, 10000));
+            Session session = game.Connect(this, remote, signIn.PlayerId);
             Task writer = WriteLoop(ct);
             var buffer = new byte[4096];
             var message = new MemoryStream();

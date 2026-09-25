@@ -48,18 +48,17 @@ namespace Paintball.Net.Tests
         private readonly GameServer _server;
         private int _seq;
 
-        public string Token;
         public string AccountId;
 
-        public TestClient(GameServer server, string name, string token = null, bool hello = true, string input = "kbm", bool crossPlay = true)
+        public TestClient(GameServer server, string name, string playerId = null, bool hello = true, string input = "kbm", bool crossPlay = true)
         {
             _server = server;
-            Session = server.Connect(Sink, "127.0.0.1");
+            AccountId = playerId ?? AccountTests.NewPlayer(server.Accounts, name);
+            Session = server.Connect(Sink, "127.0.0.1", AccountId);
             if (!hello) return;
-            Send(new { t = "hello", name, token, input, crossPlay, platform = "web" });
+            Send(new { t = "hello", input, crossPlay, platform = "web" });
             server.Tick();
             JsonElement welcome = Sink.Last("welcome").Value;
-            Token = welcome.GetProperty("token").GetString();
             AccountId = welcome.GetProperty("account").GetString();
         }
 
@@ -87,7 +86,8 @@ namespace Paintball.Net.Tests
     {
         public static void Register(TestRunner r)
         {
-            r.Run("Server: hello → welcome mit Token, Nachrichten vor Login abgelehnt (FR-48)", HelloWelcome);
+            r.Run("Server: hello nur mit angemeldetem Spieler, welcome ohne Token (Google-Login)", HelloWelcome);
+            r.Run("Server: hello legt kein Konto an, Name aus dem Konto", HelloCreatesNoAccount);
             r.Run("Server: Kaputte/zu große/unbekannte Nachrichten crashen nicht (NFR-10)", MalformedMessages);
             r.Run("Server: Flood-Schutz trennt Spammer (NFR-13)", RateLimit);
             r.Run("Lobby: Privater Raum mit Einladungscode, Beitritt, Fehler bei falschem Code (FR-20/FR-24)", PrivateRoomInvite);
@@ -110,6 +110,7 @@ namespace Paintball.Net.Tests
             r.Run("Sozial: Melden mit Repeat-Schutz, Blockieren (FR-52)", ReportPlayer);
             r.Run("Loadout: Marker/Kosmetik nur wenn freigeschaltet (FR-35/FR-41)", LoadoutValidated);
             r.Run("Ping: pong mit Serverzeit für RTT/Uhrensync (FR-29)", PingPong);
+            r.Run("Konto gelöscht während Match: Verbindung getrennt, Matchende speichert nichts", DeletedDuringMatch);
         }
 
         internal static GameServer NewServer(Action<ServerOptions> configure = null)
@@ -161,19 +162,31 @@ namespace Paintball.Net.Tests
         private static void HelloWelcome()
         {
             GameServer server = NewServer();
-            var anon = new TestClient(server, "x", hello: false);
-            anon.Send(new { t = "quick", mode = "tdm" });
-            server.Tick();
-            Assert.AreEqual("not_authenticated", anon.Sink.Last("error").Value.GetProperty("code").GetString(), "Erst anmelden");
-
             var c = new TestClient(server, "Omar");
             JsonElement welcome = c.Sink.Last("welcome").Value;
-            Assert.AreEqual("Omar", welcome.GetProperty("name").GetString(), "Name");
-            Assert.IsTrue(welcome.GetProperty("profile").GetProperty("level").GetInt32() >= 1, "Profil mitgeliefert");
+            Assert.AreEqual(c.AccountId, welcome.GetProperty("account").GetString(), "Konto");
+            Assert.IsFalse(welcome.TryGetProperty("token", out _), "kein Token mehr");
+            Assert.AreEqual("Omar", welcome.GetProperty("name").GetString(), "Name aus Konto");
 
-            var again = new TestClient(server, "Omar", c.Token);
-            Assert.AreEqual(c.AccountId, again.AccountId, "Gleiches Konto per Token (FR-49)");
-            Assert.IsTrue(c.Sink.Closed, "Alte Sitzung desselben Kontos wird ersetzt");
+            var anon = new FakeSink();
+            Session s = server.Connect(anon, "127.0.0.1", null);
+            server.Tick();
+            server.Receive(s, "{\"t\":\"hello\",\"name\":\"Hacker\"}");
+            server.Tick();
+            Assert.IsTrue(anon.Closed, "ohne Konto getrennt");
+            Assert.IsTrue(anon.Last("welcome") == null, "kein welcome");
+        }
+
+        private static void HelloCreatesNoAccount()
+        {
+            GameServer server = NewServer();
+            int before = server.Accounts.Count;
+            var c = new TestClient(server, "Bea");
+            Assert.AreEqual(before + 1, server.Accounts.Count, "nur der Test-Helfer legt an");
+            c.Send(new { t = "hello", name = "AndererName", token = "egal" });
+            server.Tick();
+            Assert.AreEqual(before + 1, server.Accounts.Count, "hello legt nichts an");
+            Assert.AreEqual("Bea", c.Sink.Last("welcome").Value.GetProperty("name").GetString(), "Name bleibt");
         }
 
         private static void MalformedMessages()
@@ -440,7 +453,7 @@ namespace Paintball.Net.Tests
             Assert.IsFalse(sim.Connected, "Als getrennt markiert");
             Assert.IsTrue(room.FindMemberBySim(guestSim).Connected == false, "Slot bleibt reserviert");
 
-            var back = new TestClient(server, "Gast", guest.Token);
+            var back = new TestClient(server, "Gast", guest.AccountId);
             server.Tick();
             Assert.AreEqual(guestSim, back.SimId, "Gleicher Spieler nach Reconnect");
             Assert.IsTrue(sim.Connected, "Wieder verbunden");
@@ -463,7 +476,7 @@ namespace Paintball.Net.Tests
             TickFor(server, 3f);
             Room room = server.FindRoom(host.RoomCode);
             Assert.IsTrue(room.Match.Find(guestSim).IsBot, "Bot ersetzt Leaver (Ersatzsuche)");
-            var back = new TestClient(server, "Gast", guest.Token);
+            var back = new TestClient(server, "Gast", guest.AccountId);
             server.Tick();
             Assert.IsTrue(back.Sink.Last("start") == null, "Kein Rückweg nach Fristablauf");
             int xpBefore = server.Accounts.GetAccount(guest.AccountId).TotalXp;
@@ -568,6 +581,24 @@ namespace Paintball.Net.Tests
             JsonElement pong = c.Sink.Last("pong").Value;
             Assert.AreEqual(1234.5, pong.GetProperty("c").GetDouble(), "Client-Zeit gespiegelt");
             Assert.IsTrue(pong.TryGetProperty("st", out _), "Serverzeit");
+        }
+
+        private static void DeletedDuringMatch()
+        {
+            GameServer server = NewServer();
+            var host = new TestClient(server, "Host");
+            host.Send(new { t = "create", mode = "tdm", map = "arena", @private = true, timeLimit = 30 });
+            server.Tick();
+            var guest = new TestClient(server, "Gast");
+            guest.Send(new { t = "join", code = host.RoomCode });
+            server.Tick();
+            StartMatch(server, host, guest);
+            Assert.IsTrue(server.Accounts.Delete(guest.AccountId), "gelöscht");
+            server.KickAccount(guest.AccountId, "deleted");
+            server.Tick();
+            Assert.IsTrue(guest.Sink.Closed, "Gast getrennt");
+            TickUntil(server, () => { host.Move(0, 0); return host.Sink.Last("end") != null; }, 40f);
+            Assert.AreEqual(null, server.Accounts.GetAccount(guest.AccountId), "kein Wiederauferstehen nach Matchende");
         }
     }
 }

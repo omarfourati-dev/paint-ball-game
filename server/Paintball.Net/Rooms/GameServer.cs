@@ -77,9 +77,9 @@ namespace Paintball.Net.Rooms
 
         // ---------------- Transport-API (thread-sicher) ----------------
 
-        public Session Connect(IClientSink sink, string remote)
+        public Session Connect(IClientSink sink, string remote, string playerId)
         {
-            var session = new Session { Sink = sink, Remote = remote, Tokens = Options.MessageBurst };
+            var session = new Session { Sink = sink, Remote = remote, Tokens = Options.MessageBurst, AccountId = playerId };
             lock (_sessions) session.Id = _nextSessionId++;
             _inbox.Enqueue(() => { _sessions[session.Id] = session; session.NextFloodCheck = Time + 1f; });
             return session;
@@ -101,6 +101,28 @@ namespace Paintball.Net.Rooms
         {
             if (session == null) return;
             _inbox.Enqueue(() => DropSession(session));
+        }
+
+        /// <summary>Nach Namensänderung über die HTTP-API: Sitzungen und Profil aktualisieren.</summary>
+        public void Renamed(string playerId)
+        {
+            _inbox.Enqueue(() =>
+            {
+                string name = Accounts.GetAccount(playerId)?.DisplayName;
+                if (name == null) return;
+                foreach (Session s in _sessions.Values)
+                    if (s.AccountId == playerId && s.Authenticated) { s.Name = name; s.Send(ProfileJson(playerId)); }
+            });
+        }
+
+        /// <summary>Trennt alle Sitzungen eines Kontos (Abmelden, Löschen).</summary>
+        public void KickAccount(string playerId, string reason)
+        {
+            _inbox.Enqueue(() =>
+            {
+                foreach (Session s in _sessions.Values.ToList())
+                    if (s.AccountId == playerId) { s.Sink.Close(reason); DropSession(s); }
+            });
         }
 
         // ---------------- Tick ----------------
@@ -213,27 +235,26 @@ namespace Paintball.Net.Rooms
 
         private void HandleHello(Session s, Msg msg)
         {
-            string name = msg.Str("name", 64, string.Empty);
-            string token = msg.Str("token", 128);
-            // ÜBERGANG bis Task 4: Legacy-Anmeldung über das Client-Token als Pseudo-Google-sub.
-            string legacy = string.IsNullOrEmpty(token) ? Guid.NewGuid().ToString("N") : token;
-            SignInResult signIn = Accounts.SignIn("legacy:" + legacy, "");
-            if (Accounts.NeedsName(signIn.PlayerId) && Accounts.SetName(signIn.PlayerId, name) != NameResult.Ok)
-                Accounts.SetName(signIn.PlayerId, "Spieler-" + System.Security.Cryptography.RandomNumberGenerator.GetInt32(1000, 9999));
-            PlayerAccount legacyAccount = Accounts.GetAccount(signIn.PlayerId);
+            PlayerAccount account = Accounts.GetAccount(s.AccountId);
+            if (account == null || Accounts.NeedsName(s.AccountId))
+            {
+                s.Send(Json.Error("not_authenticated"));
+                s.Sink.Close("unauthorized");
+                DropSession(s);
+                return;
+            }
             Metrics.Logins++;
 
             // Altes Sitzungsobjekt desselben Kontos ersetzen (nur eine aktive Sitzung)
             foreach (Session other in _sessions.Values.ToList())
             {
-                if (other == s || other.AccountId != legacyAccount.PlayerId || !other.Authenticated) continue;
+                if (other == s || other.AccountId != account.PlayerId || !other.Authenticated) continue;
                 other.Sink.Close("replaced");
                 DropSession(other);
             }
 
             s.Authenticated = true;
-            s.AccountId = legacyAccount.PlayerId;
-            s.Name = legacyAccount.DisplayName;
+            s.Name = account.DisplayName;
             s.Input = msg.Str("input", 8, "kbm") switch { "touch" => "touch", "pad" => "pad", _ => "kbm" };
             s.CrossPlay = msg.Bool("crossPlay", true);
             s.Lang = msg.Str("lang", 5, "de") == "en" ? "en" : "de";
@@ -250,13 +271,11 @@ namespace Paintball.Net.Rooms
             s.Send(Json.Write(w =>
             {
                 w.WriteString("t", "welcome");
-                w.WriteString("account", legacyAccount.PlayerId);
-                w.WriteString("token", legacy);
-                w.WriteString("name", legacyAccount.DisplayName);
-                w.WriteBoolean("isNew", signIn.IsNew);
+                w.WriteString("account", account.PlayerId);
+                w.WriteString("name", account.DisplayName);
                 w.Num("serverTime", Time, 3);
                 w.WritePropertyName("profile");
-                WriteProfile(w, legacyAccount.PlayerId);
+                WriteProfile(w, account.PlayerId);
             }));
 
             // Reconnect in laufendes Match (FR-27)
