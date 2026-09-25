@@ -28,7 +28,7 @@ Programmdateien und Grafiken, nie API oder WebSocket.
 
 **Steuerung:** WASD bewegen · Maus zielen · Linksklick schießen · R nachladen · Leertaste springen · Strg ducken ·
 Shift sprinten · Q Dash · F Heil-Spray · Tab Punktetabelle · T Quick-Chat · B Emotes · G/Mittelklick markieren · Esc Pause.
-Touch (virtueller Stick + Buttons) und Gamepad werden automatisch erkannt; alle Tasten sind neu belegbar.
+Touch (virtueller Stick, zwei Schuss-Buttons – halten und ziehen zielt und schießt zugleich, Auto-Feuer abschaltbar) und Gamepad werden automatisch erkannt; alle Tasten sind neu belegbar.
 
 ## Inhalte
 

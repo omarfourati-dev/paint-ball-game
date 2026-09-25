@@ -4,7 +4,7 @@ export function aimAngles(eye, target) {
   return { yaw: Math.atan2(dx, dz), pitch: Math.atan2(dy, Math.hypot(dx, dz)) };
 }
 
-const ASSIST_CONE = 0.06;
+export const ASSIST_CONE = 0.06;
 
 /** Verlangsamt die Blickbewegung nahe am Gegner (nur Touch/Gamepad, abschaltbar). */
 export function aimAssistFactor(angleToTarget, enabled) {
@@ -17,4 +17,13 @@ export function angleBetween(a, b) {
   if (la < 1e-9 || lb < 1e-9) return Math.PI;
   const d = (a[0] * b[0] + a[1] * b[1] + a[2] * b[2]) / (la * lb);
   return Math.acos(Math.min(1, Math.max(-1, d)));
+}
+
+/**
+ * Auto-Feuer (Event-Paket, nur Touch): schießen, wenn ein sichtbarer, nicht geschützter Gegner
+ * in Waffenreichweite im Zielkegel der Zielhilfe liegt. Der Server prüft wie bisher Feuerrate und Blickrichtung.
+ */
+export function shouldAutoFire({ enabled, device, target, range }) {
+  if (!enabled || device !== 'touch' || !target) return false;
+  return target.visible && !target.protected && target.angle < ASSIST_CONE && target.distance <= range;
 }

@@ -4,7 +4,7 @@ import { Predictor } from './prediction.js';
 import { SnapshotBuffer, ServerClock } from './interpolation.js';
 import { BTN, decodePlayers, encodeInput, TEAM_MODES } from './protocol.js';
 import * as M from './movement.js';
-import { aimAngles, aimAssistFactor, angleBetween } from './aim.js';
+import { aimAngles, aimAssistFactor, angleBetween, shouldAutoFire } from './aim.js';
 import { hexToRgb } from './renderer.js';
 import * as S from './scene.js';
 import { t, phrases, getLang } from './i18n.js';
@@ -70,6 +70,7 @@ export class ClientGame {
     this.frameInput = { mx: 0, mz: 0, fire: false, sprint: false, crouch: false, jump: false };
     this.localShots = [];
     this.lastLocalShot = 0;
+    this.autoTarget = null;
     this.localDashUntil = 0;
     this.localDashReady = 0;
     this.projectiles = [];
@@ -402,6 +403,7 @@ export class ClientGame {
     const wh = this.world.raycast(cam, dir, 150);
     if (wh) best = wh.distance;
     let assistAngle = Infinity;
+    let auto = null;
     for (const [id, p] of this.renderPlayers) {
       if (!p.alive) continue;
       const h = p.crouched ? M.CROUCH_HEIGHT : M.STAND_HEIGHT;
@@ -411,7 +413,11 @@ export class ClientGame {
       if (r && r.distance < best) { best = r.distance; enemyHit = enemy; }
       if (enemy) {
         const chest = [p.x - cam[0], p.y + h * 0.6 - cam[1], p.z - cam[2]];
-        if (Math.hypot(...chest) < 60) assistAngle = Math.min(assistAngle, angleBetween(dir, chest));
+        if (Math.hypot(...chest) < 60) {
+          const angle = angleBetween(dir, chest);
+          assistAngle = Math.min(assistAngle, angle);
+          if (!auto || angle < auto.angle) auto = { angle, point: [p.x, p.y + h * 0.6, p.z], protected: !!p.protected };
+        }
       }
     }
     const camToEye = Math.hypot(eye[0] - cam[0], eye[1] - cam[1], eye[2] - cam[2]);
@@ -421,7 +427,16 @@ export class ClientGame {
     if (angleBetween(M.aimDirection(yaw, pitch), dir) > 0.3) { yaw = this.yaw; pitch = this.pitch; }
     this.aimOnEnemy = enemyHit;
     this.assistAngle = assistAngle;
+    this.autoTarget = auto ? this.#autoTarget(eye, auto) : null;
     return { yaw, pitch, target };
+  }
+
+  /** Entfernung und freie Sicht vom Auge zur Brust des Gegners im Zielkegel (Auto-Feuer). */
+  #autoTarget(eye, auto) {
+    const d = [auto.point[0] - eye[0], auto.point[1] - eye[1], auto.point[2] - eye[2]];
+    const distance = Math.hypot(...d);
+    const hit = distance > 1e-6 ? this.world.raycast(eye, d.map(v => v / distance), distance) : null;
+    return { angle: auto.angle, distance, visible: !hit || hit.distance >= distance - 0.3, protected: auto.protected };
   }
 
   // ---------------- Frame & Tick ----------------
@@ -467,8 +482,9 @@ export class ClientGame {
     const nowS = performance.now() / 1000;
     const running = this.phase === 'running' && this.myAlive;
 
+    const autoFire = shouldAutoFire({ enabled: this.settings.autoFire, device: this.input.device, target: this.autoTarget, range: this.marker?.range ?? 0 });
     let buttons = 0;
-    if (inp.fire && running) buttons |= BTN.FIRE;
+    if ((inp.fire || autoFire) && running) buttons |= BTN.FIRE;
     if (inp.jump) buttons |= BTN.JUMP;
     if (inp.crouch) buttons |= BTN.CROUCH;
     if (inp.sprint) buttons |= BTN.SPRINT;

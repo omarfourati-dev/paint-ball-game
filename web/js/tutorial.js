@@ -12,6 +12,13 @@ export const STEPS = [
   { id: 'eliminate', event: 'eliminated', target: 1 }
 ];
 
+const TOUCH_TEXT = new Set(['move', 'look', 'shoot', 'crouch', 'hit']);
+
+/** i18n-Schlüssel des Schritt-Texts; bei Touch mit eigenem Hinweis zur Bedienung. */
+export function stepTextKey(id, device) {
+  return device === 'touch' && TOUCH_TEXT.has(id) ? `tutorial.${id}.touch` : `tutorial.${id}`;
+}
+
 const KEY = 'pb.tutorial';
 
 export class TutorialTracker {

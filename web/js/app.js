@@ -229,7 +229,8 @@ export class App {
 
   markerInfo(id) {
     const m = this.profile?.markers?.find(x => x.id === id);
-    return m ? { id: m.id, name: m.name, rps: m.rps, velocity: m.velocity ?? 90, gravity: m.gravity ?? 1, spread: m.spread } : { id, name: id, rps: 8, velocity: 90, gravity: 1, spread: 1.2 };
+    return m ? { id: m.id, name: m.name, rps: m.rps, velocity: m.velocity ?? 90, gravity: m.gravity ?? 1, spread: m.spread, range: m.range ?? 120 }
+      : { id, name: id, rps: 8, velocity: 90, gravity: 1, spread: 1.2, range: 120 };
   }
 
   // ---------------- Screens ----------------
@@ -915,7 +916,7 @@ export class App {
     let body = '';
     if (tab === 'graphics') body = `${select('quality', ['low', 'medium', 'high'])}${select('fpsCap', [0, 30, 60], v => v ? `${v} FPS` : 'settings.fpsCap.0')}${slider('fov', 50, 100, 1, v => `${v}°`)}${check('showFps')}`;
     if (tab === 'audio') body = `${slider('volume', 0, 1, 0.05, pct)}${slider('sfx', 0, 1, 0.05, pct)}${slider('music', 0, 1, 0.05, pct)}`;
-    if (tab === 'controls') body = `${slider('sensitivity', 0.1, 5, 0.05, v => v.toFixed(2))}${check('invertY')}${check('aimAssist')}${check('haptics')}${slider('touchScale', 0.7, 1.5, 0.05, pct)}
+    if (tab === 'controls') body = `${slider('sensitivity', 0.1, 5, 0.05, v => v.toFixed(2))}${check('invertY')}${check('aimAssist')}${this.input.device === 'touch' ? check('autoFire') : ''}${check('haptics')}${slider('touchScale', 0.7, 1.5, 0.05, pct)}
       <div class="card" style="grid-column:1/-1"><h3>${esc(t('settings.keybinds'))}</h3><div class="settings-grid">
         ${ACTIONS.map(a => `<div class="keybind"><span>${esc(t(`action.${a}`))}</span><button class="btn" data-bind="${a}">${esc(this.bindingAction === a ? t('settings.pressKey') : keyName(s.keybinds[a]))}</button></div>`).join('')}
       </div><button class="btn" id="reset-keys">${esc(t('settings.resetKeys'))}</button></div>`;

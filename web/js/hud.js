@@ -1,7 +1,7 @@
 // In-Game-HUD auf 2D-Canvas (UI-05, UX-17, UX-19, UX-21, FR-29).
 import { t } from './i18n.js';
 import { formatTime, connectionQuality } from './format.js';
-import { STEPS } from './tutorial.js';
+import { STEPS, stepTextKey } from './tutorial.js';
 
 const FONT = '"Baloo 2", "Trebuchet MS", system-ui, sans-serif';
 const PU_ICON = { RapidFire: '⚡', Shield: '🛡', SpeedBoost: '💨', RadarPulse: '📡' };
@@ -388,7 +388,7 @@ export class Hud {
     const x = 14 * s, y = narrow ? 34 * s + 150 : 34 * s, w = Math.min(300 * s, this.w - 28 * s), h = 64 * s;
     this.panel(x, y, w, h, 0.6);
     this.text(`${t('tutorial.title')} ${tr.index + 1}/${STEPS.length}`, x + 12 * s, y + 16 * s, 13 * s, '#ffd166', 'left');
-    this.text(t(`tutorial.${step.id}`), x + 12 * s, y + 36 * s, 14 * s, '#fff', 'left', 700);
+    this.text(t(stepTextKey(step.id, g.input?.device)), x + 12 * s, y + 36 * s, 14 * s, '#fff', 'left', 700);
     this.ctx.fillStyle = 'rgba(255,255,255,0.2)'; this.ctx.fillRect(x + 12 * s, y + 52 * s, w - 24 * s, 5 * s);
     this.ctx.fillStyle = '#ffd166'; this.ctx.fillRect(x + 12 * s, y + 52 * s, (w - 24 * s) * tr.ratio, 5 * s);
   }

@@ -1,5 +1,6 @@
 // Eingabe-Abstraktion (AR-05): Tastatur/Maus, Touch (virtueller Stick), Gamepad.
 // Automatische Erkennung des aktiven Geräts (PA-01, UX-11), frei belegbare Tasten (UX-09/UX-23).
+import { TouchState } from './touch.js';
 const DEADZONE = 0.15;
 
 export class InputManager {
@@ -18,7 +19,7 @@ export class InputManager {
     this.enabled = false;
     this.sensitivity = 1;
     this.invertY = false;
-    this.touch = { moveId: null, lookId: null, base: [0, 0], move: [0, 0], lookLast: [0, 0], fire: false, crouchToggle: false, buttons: new Set() };
+    this.touch = new TouchState();
     this.padPrev = [];
     this.#bindKeyboard();
     this.#bindMouse();
@@ -97,30 +98,18 @@ export class InputManager {
     const stick = root.querySelector('.stick');
     const knob = root.querySelector('.stick .knob');
     const t = this.touch;
-    const stickRadius = 55;
 
     root.addEventListener('touchstart', e => {
       this.#setDevice('touch');
       for (const touch of e.changedTouches) {
-        const el = touch.target.closest('[data-btn]');
-        if (el) {
-          const b = el.dataset.btn;
-          if (b === 'fire') { t.fire = true; t.lookId = touch.identifier; t.lookLast = [touch.clientX, touch.clientY]; }
-          else if (b === 'crouch') t.crouchToggle = !t.crouchToggle;
-          else { t.buttons.add(b); this.pressed.add(b); }
-          el.classList.add('active');
-          continue;
-        }
-        if (touch.clientX < innerWidth * 0.45 && t.moveId === null) {
-          t.moveId = touch.identifier;
-          t.base = [touch.clientX, touch.clientY];
-          t.move = [0, 0];
+        const el = touch.target.closest?.('[data-btn]');
+        const r = t.start(touch.identifier, touch.clientX, touch.clientY, el?.dataset.btn ?? null, touch.clientX < innerWidth * 0.45);
+        if (el) el.classList.add('active');
+        if (r.pressed) this.pressed.add(r.pressed);
+        if (r.stick) {
           stick.style.left = `${touch.clientX - 70}px`;
           stick.style.top = `${touch.clientY - 70}px`;
           stick.classList.add('visible');
-        } else if (t.lookId === null) {
-          t.lookId = touch.identifier;
-          t.lookLast = [touch.clientX, touch.clientY];
         }
       }
       e.preventDefault();
@@ -128,35 +117,22 @@ export class InputManager {
 
     root.addEventListener('touchmove', e => {
       for (const touch of e.changedTouches) {
-        if (touch.identifier === t.moveId) {
-          let dx = touch.clientX - t.base[0], dy = touch.clientY - t.base[1];
-          const len = Math.hypot(dx, dy);
-          if (len > stickRadius) { dx *= stickRadius / len; dy *= stickRadius / len; }
-          t.move = [dx / stickRadius, -dy / stickRadius];
-          knob.style.transform = `translate(${dx}px, ${dy}px)`;
-        } else if (touch.identifier === t.lookId) {
-          this.lookDx += (touch.clientX - t.lookLast[0]) * 0.0055;
-          this.lookDy += (touch.clientY - t.lookLast[1]) * 0.0055;
-          t.lookLast = [touch.clientX, touch.clientY];
-        }
+        const r = t.moveTo(touch.identifier, touch.clientX, touch.clientY);
+        this.lookDx += r.look[0] * 0.0055;
+        this.lookDy += r.look[1] * 0.0055;
+        if (r.knob) knob.style.transform = `translate(${r.knob[0]}px, ${r.knob[1]}px)`;
       }
       e.preventDefault();
     }, { passive: false });
 
     const end = e => {
       for (const touch of e.changedTouches) {
-        if (touch.identifier === t.moveId) {
-          t.moveId = null; t.move = [0, 0];
+        const r = t.end(touch.identifier);
+        if (r.stickEnded) {
           knob.style.transform = '';
           stick.classList.remove('visible');
         }
-        if (touch.identifier === t.lookId) { t.lookId = null; t.fire = false; }
-        const el = touch.target.closest?.('[data-btn]');
-        if (el) {
-          el.classList.remove('active');
-          if (el.dataset.btn === 'fire') t.fire = false;
-          t.buttons.delete(el.dataset.btn);
-        }
+        touch.target.closest?.('[data-btn]')?.classList.remove('active');
       }
     };
     root.addEventListener('touchend', end);

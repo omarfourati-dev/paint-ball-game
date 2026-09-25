@@ -4,9 +4,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { STRINGS, t, setLang, phrases, getLang, mapName } from '../../web/js/i18n.js';
 import { DEFAULTS, DEFAULT_KEYS, KEYS_VERSION, sanitize, loadSettings, saveSettings, rebind, teamPalette, ACTIONS, keyLabel } from '../../web/js/settings.js';
-import { TutorialTracker, STEPS } from '../../web/js/tutorial.js';
+import { TutorialTracker, STEPS, stepTextKey } from '../../web/js/tutorial.js';
 import { formatTime, connectionQuality, formatNumber, inviteUrl } from '../../web/js/format.js';
-import { aimAngles, aimAssistFactor } from '../../web/js/aim.js';
+import { aimAngles, aimAssistFactor, shouldAutoFire, ASSIST_CONE } from '../../web/js/aim.js';
 
 function memoryStorage() {
   const data = new Map();
@@ -195,4 +195,38 @@ test('Tasten: Anzeige „Strg“ bzw. „Ctrl“ in Einstellungen und Tutorial',
   setLang('en');
   assert.match(t('tutorial.crouch'), /Ctrl/);
   setLang('de');
+});
+
+test('Auto-Feuer: nur Touch, nur im Zielkegel, in Reichweite und bei freier Sicht', () => {
+  const target = { angle: ASSIST_CONE / 2, distance: 20, visible: true, protected: false };
+  const base = { enabled: true, device: 'touch', target, range: 120 };
+  assert.equal(shouldAutoFire(base), true);
+  assert.equal(shouldAutoFire({ ...base, enabled: false }), false, 'Einstellung aus');
+  assert.equal(shouldAutoFire({ ...base, device: 'kbm' }), false, 'Maus/Tastatur: nicht verfügbar');
+  assert.equal(shouldAutoFire({ ...base, device: 'pad' }), false, 'Gamepad: nicht verfügbar');
+  assert.equal(shouldAutoFire({ ...base, target: null }), false, 'kein Gegner');
+  assert.equal(shouldAutoFire({ ...base, target: { ...target, angle: ASSIST_CONE } }), false, 'Rand des Kegels zählt nicht');
+  assert.equal(shouldAutoFire({ ...base, range: 19 }), false, 'außer Reichweite');
+});
+
+test('Auto-Feuer: verdeckter oder spawn-geschützter Gegner löst nicht aus', () => {
+  const target = { angle: 0.01, distance: 10, visible: true, protected: false };
+  assert.equal(shouldAutoFire({ enabled: true, device: 'touch', target: { ...target, visible: false }, range: 120 }), false, 'hinter Deckung');
+  assert.equal(shouldAutoFire({ enabled: true, device: 'touch', target: { ...target, protected: true }, range: 120 }), false, 'Spawn-Schutz');
+});
+
+test('Auto-Feuer ist bei Touch standardmäßig an', () => {
+  assert.equal(DEFAULTS.autoFire, true);
+  assert.equal(sanitize({ autoFire: false }).autoFire, false);
+  assert.equal(sanitize({ autoFire: 'ja' }).autoFire, true, 'Unsinn → Standard');
+});
+
+test('Tutorial: Touch-Hinweise für Bewegen, Umschauen, Schießen, Ducken, Treffen', () => {
+  assert.equal(stepTextKey('shoot', 'touch'), 'tutorial.shoot.touch');
+  assert.equal(stepTextKey('shoot', 'kbm'), 'tutorial.shoot');
+  assert.equal(stepTextKey('reload', 'touch'), 'tutorial.reload', 'ohne Touch-Variante: Standardtext');
+  for (const id of ['move', 'look', 'shoot', 'crouch', 'hit']) {
+    assert.ok(STRINGS.de[`tutorial.${id}.touch`], `DE fehlt: ${id}`);
+    assert.ok(STRINGS.en[`tutorial.${id}.touch`], `EN fehlt: ${id}`);
+  }
 });

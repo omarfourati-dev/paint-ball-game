@@ -199,13 +199,19 @@ table.table { width: 100%; border-collapse: separate; border-spacing: 0 6px; }
   background: rgba(255, 255, 255, .75); font-size: calc(1.5rem * var(--ts)); display: grid; place-items: center; box-shadow: 3px 3px 0 var(--ink); touch-action: none;
 }
 .touch-buttons .tb.active { background: var(--yellow); }
-.tb-fire { right: calc(30px + env(safe-area-inset-right)); bottom: calc(40px + env(safe-area-inset-bottom)); width: calc(92px * var(--ts)) !important; height: calc(92px * var(--ts)) !important; background: rgba(255, 63, 164, .85) !important; }
-.tb-jump { right: calc(140px + env(safe-area-inset-right)); bottom: calc(30px + env(safe-area-inset-bottom)); }
-.tb-crouch { right: calc(140px + env(safe-area-inset-right)); bottom: calc(110px + env(safe-area-inset-bottom)); }
-.tb-reload { right: calc(40px + env(safe-area-inset-right)); bottom: calc(150px + env(safe-area-inset-bottom)); }
-.tb-dash { right: calc(210px + env(safe-area-inset-right)); bottom: calc(70px + env(safe-area-inset-bottom)); }
-.tb-use { right: calc(110px + env(safe-area-inset-right)); bottom: calc(200px + env(safe-area-inset-bottom)); }
+/* Schuss rechts auf Daumenhöhe: Mitte bei 25 % der Höhe über dem unteren Rand (Event-Paket) */
+.tb-fire { right: calc(28px + env(safe-area-inset-right)); bottom: max(calc(24px + env(safe-area-inset-bottom)), calc(25vh - 46px * var(--ts))); width: calc(92px * var(--ts)) !important; height: calc(92px * var(--ts)) !important; background: rgba(255, 63, 164, .85) !important; }
+/* Zweiter, kleinerer Schuss-Button links oberhalb des Bewegungsbereichs (Zeigefinger / zweiter Daumen) */
+.tb-fire2 { left: calc(24px + env(safe-area-inset-left)); top: calc(154px + env(safe-area-inset-top)); width: calc(72px * var(--ts)) !important; height: calc(72px * var(--ts)) !important; background: rgba(255, 63, 164, .7) !important; }
+.tb-jump { right: calc(134px + env(safe-area-inset-right)); bottom: calc(24px + env(safe-area-inset-bottom)); }
+.tb-crouch { right: calc(134px + env(safe-area-inset-right)); bottom: calc(100px + env(safe-area-inset-bottom)); }
+.tb-reload { right: calc(40px + env(safe-area-inset-right)); bottom: calc(max(calc(24px + env(safe-area-inset-bottom)), calc(25vh - 46px * var(--ts))) + 106px * var(--ts)); }
+.tb-dash { right: calc(212px + env(safe-area-inset-right)); bottom: calc(62px + env(safe-area-inset-bottom)); }
+.tb-use { right: calc(128px + env(safe-area-inset-right)); bottom: calc(200px + env(safe-area-inset-bottom)); }
 .tb-chat { left: calc(20px + env(safe-area-inset-left)); top: calc(90px + env(safe-area-inset-top)); width: 52px !important; height: 52px !important; }
+@media (orientation: portrait) {
+  .tb-fire2 { top: auto; bottom: calc(46vh + env(safe-area-inset-bottom)); }
+}
 .tb-pause { left: 50%; top: calc(8px + env(safe-area-inset-top)); transform: translateX(-50%); width: 48px !important; height: 48px !important; font-size: 1rem !important; }
 
 /* ---------- Google-Login (UI-01) ---------- */

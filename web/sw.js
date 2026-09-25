@@ -11,7 +11,7 @@ const SHELL = [
   '/js/aim.js', '/js/app.js', '/js/audio.js', '/js/auth.js', '/js/avatar.js', '/js/format.js', '/js/game.js', '/js/gltf.js',
   '/js/guard.js', '/js/hdr.js', '/js/hud.js', '/js/i18n.js', '/js/input.js', '/js/install.js', '/js/interpolation.js',
   '/js/landing.js', '/js/main.js', '/js/movement.js', '/js/net.js', '/js/prediction.js', '/js/protocol.js',
-  '/js/renderer.js', '/js/scene.js', '/js/settings.js', '/js/sw-register.js', '/js/tutorial.js', '/js/world.js',
+  '/js/renderer.js', '/js/scene.js', '/js/settings.js', '/js/sw-register.js', '/js/touch.js', '/js/tutorial.js', '/js/world.js',
   '/manifest.webmanifest', '/favicon.svg',
   '/icons/icon-192.png', '/icons/icon-512.png', '/icons/icon-maskable-512.png', '/icons/apple-touch-icon.png'
 ];
