@@ -140,7 +140,8 @@ test('Landingpage: alle data-i18n-Schlüssel existieren in DE und EN', () => {
     assert.ok(STRINGS.de[k], `DE fehlt: ${k}`);
     assert.ok(STRINGS.en[k], `EN fehlt: ${k}`);
   }
-  assert.doesNotMatch(html, /<script(?![^>]*\bsrc=)[^>]*>/, 'kein Inline-Skript (CSP)');
+  // JSON-LD ist ein Datenblock, kein ausführbares Skript – CSP script-src greift dafür nicht
+  assert.doesNotMatch(html, /<script(?![^>]*\bsrc=)(?![^>]*type="application\/ld\+json")[^>]*>/, 'kein Inline-Skript (CSP)');
   assert.doesNotMatch(html, /\son[a-z]+=/i, 'keine Inline-Handler (CSP)');
 });
 

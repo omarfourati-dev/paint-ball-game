@@ -1,0 +1,28 @@
+# Paint-Ball
+
+> Paint-Ball ist ein kostenloses Online-Multiplayer-Paintball-Spiel, das direkt im Browser läuft – am PC, Tablet und Handy, ohne Download. Betreiber ist Omar Fourati aus Gummersbach (Deutschland). Die Seite ist auf Deutsch, das Spiel lässt sich auf Englisch umstellen.
+
+## Fakten
+
+- Preis: kostenlos. Der Shop verkauft nur Optik gegen im Spiel verdiente Münzen – keine Spielvorteile, keine Lootboxen, kein Pay-to-Win.
+- Plattform: läuft in einem aktuellen Browser mit WebGL 2; kein Download nötig. Zusätzlich als App (PWA) installierbar – in Chrome, Edge, Samsung Internet oder auf dem iPhone über Safari.
+- Geräte: PC (Maus und Tastatur), Handy und Tablet (Touch-Steuerung mit virtuellem Stick), Gamepads werden automatisch erkannt. Cross-Play zwischen den Geräten, abschaltbar.
+- Spielmodi (6): Team-Deathmatch, Jeder gegen jeden, Capture the Flag, Last Player Standing, King of the Hill, Training gegen Bots.
+- Karten (4): Lagerhaus (bis 12 Spieler), Wald (bis 10), Arena (bis 8), Turnierfeld (bis 10).
+- Spieler: bis zu 12 pro Match je nach Karte; freie Plätze werden mit Bots gefüllt. Private Räume per Code oder Link für Spiele mit Freunden.
+- Fairness: Matchmaking nach Spielstärke (MMR), Bestenliste.
+- Barrierefreiheit: Farbenblind-Modi, UI-Skalierung, Untertitel, weniger Bewegung, frei belegbare Tasten.
+- Konto: Anmeldung mit Google-Konto; öffentlich sichtbar ist nur der selbst gewählte Spielername. Daten-Export und Kontolöschung im Spiel. Kein Tracking, keine Werbung.
+- Sprachen: Deutsch und Englisch.
+
+## Seiten
+
+- [Startseite](https://paint-ball-game.omarfourati.de/): Überblick, Spielmodi, Karten, Steuerung, häufige Fragen
+- [Jetzt spielen](https://paint-ball-game.omarfourati.de/play): das Spiel selbst (Anmeldung mit Google)
+- [Impressum](https://paint-ball-game.omarfourati.de/impressum): Anbieterkennzeichnung
+- [Datenschutz](https://paint-ball-game.omarfourati.de/datenschutz): welche Daten gespeichert werden und warum
+
+## Optional
+
+- [Omar Fourati](https://omarfourati.de): Portfolio des Entwicklers
+- Kontakt: info@omarfourati.de

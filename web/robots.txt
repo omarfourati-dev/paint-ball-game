@@ -1,0 +1,26 @@
+# Paint-Ball – https://paint-ball-game.omarfourati.de
+# Alles darf gecrawlt werden außer der API. /play ist erlaubt, trägt aber <meta name="robots" content="noindex">
+# (nur App-Shell ohne Inhalt) – ein Disallow würde verhindern, dass Suchmaschinen dieses noindex sehen.
+
+User-agent: *
+Allow: /
+Disallow: /api/
+
+# KI-Suche und Antwortmaschinen ausdrücklich erlaubt (Ziel: gefunden und zitiert werden)
+User-agent: GPTBot
+User-agent: OAI-SearchBot
+User-agent: ChatGPT-User
+User-agent: PerplexityBot
+User-agent: Perplexity-User
+User-agent: ClaudeBot
+User-agent: Claude-SearchBot
+User-agent: Claude-User
+User-agent: Google-Extended
+User-agent: Googlebot
+User-agent: Bingbot
+User-agent: Applebot
+User-agent: Applebot-Extended
+Allow: /
+Disallow: /api/
+
+Sitemap: https://paint-ball-game.omarfourati.de/sitemap.xml

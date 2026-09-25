@@ -36,6 +36,7 @@ namespace Paintball.Net.Tests
             r.RunAsync("Web: Landingpage unter /, Einladung /?join= leitet ins Spiel (Query bleibt)", LandingAndJoinRedirect);
             r.RunAsync("Web: /play, /impressum, /datenschutz liefern ihre Seite, /play/ → /play", PageRoutes);
             r.RunAsync("Web: Service Worker wird nie gecacht (no-cache)", ServiceWorkerNoCache);
+            r.RunAsync("SEO: robots.txt, sitemap.xml, llms.txt mit Typ und UTF-8, /play mit noindex", ServesSeoFiles);
             r.RunAsync("Proxy: Hinter TLS-Reverse-Proxy nur HTTP, X-Forwarded-Proto zählt als HTTPS", ProxyTrustsForwardedProto);
             r.RunAsync("Proxy: Ohne Forwarded-Proto Weiterleitung auf HTTPS ohne internen Port", ProxyRedirectsWithoutPort);
             r.RunAsync("Proxy: WebSocket über den Proxy mit gleicher Origin", ProxyWebSocket);
@@ -597,6 +598,40 @@ namespace Paintball.Net.Tests
             HttpResponseMessage res = await h.Http.GetAsync("/sw.js");
             Assert.AreEqual(HttpStatusCode.OK, res.StatusCode, "sw.js 200");
             Assert.IsTrue(res.Headers.CacheControl?.NoCache == true, "sw.js mit no-cache, damit Updates sofort ankommen");
+        }
+
+        /// <summary>Echte Dateien aus web/ in den Test-Webroot kopieren und wie ein Crawler abrufen.</summary>
+        private static async Task ServesSeoFiles()
+        {
+            await using Harness h = await Harness.StartAsync();
+            string repoWeb = ServerHost.FindWebRoot();
+            Assert.IsTrue(repoWeb != null && File.Exists(Path.Combine(repoWeb, "robots.txt")), "web/ des Repos gefunden");
+            foreach (string f in new[] { "robots.txt", "sitemap.xml", "llms.txt", "play.html" })
+                File.Copy(Path.Combine(repoWeb, f), Path.Combine(HarnessWebRoot, f), overwrite: true);
+
+            var files = new (string Path, string Type, string Contains)[]
+            {
+                ("/robots.txt", "text/plain", "Sitemap: https://paint-ball-game.omarfourati.de/sitemap.xml"),
+                ("/sitemap.xml", "application/xml", "<loc>https://paint-ball-game.omarfourati.de/</loc>"),
+                ("/llms.txt", "text/plain", "kostenloses Online-Multiplayer-Paintball-Spiel")
+            };
+            foreach (var f in files)
+            {
+                HttpResponseMessage res = await h.Http.GetAsync(f.Path);
+                Assert.AreEqual(HttpStatusCode.OK, res.StatusCode, f.Path + " 200 ohne Umleitung");
+                Assert.AreEqual(f.Type, res.Content.Headers.ContentType?.MediaType, f.Path + " Typ");
+                Assert.AreEqual("utf-8", res.Content.Headers.ContentType?.CharSet, f.Path + " UTF-8");
+                Assert.IsTrue((await res.Content.ReadAsStringAsync()).Contains(f.Contains), f.Path + " Inhalt");
+            }
+
+            string sitemap = await h.Http.GetStringAsync("/sitemap.xml");
+            Assert.IsTrue(!sitemap.Contains("/play"), "Spiel-Shell nicht in der Sitemap");
+            string robots = await h.Http.GetStringAsync("/robots.txt");
+            Assert.IsTrue(robots.Contains("Disallow: /api/") && !robots.Contains("Disallow: /play"), "/api/ gesperrt, /play erlaubt (damit noindex gelesen wird)");
+
+            HttpResponseMessage play = await h.Http.GetAsync("/play");
+            Assert.AreEqual(HttpStatusCode.OK, play.StatusCode, "/play 200");
+            Assert.IsTrue((await play.Content.ReadAsStringAsync()).Contains("<meta name=\"robots\" content=\"noindex\">"), "/play mit noindex");
         }
 
         private static async Task ServesClient()

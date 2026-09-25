@@ -220,6 +220,9 @@ namespace Paintball.Server
                 types.Mappings[".gltf"] = "model/gltf+json";   // echte Menschen und Props (CC0)
                 types.Mappings[".bin"] = "application/octet-stream";
                 types.Mappings[".webmanifest"] = "application/manifest+json";
+                // robots.txt, llms.txt (Umlaute) und sitemap.xml: ohne charset raten Browser und Crawler sonst Latin-1
+                types.Mappings[".txt"] = "text/plain; charset=utf-8";
+                types.Mappings[".xml"] = "application/xml; charset=utf-8";
                 app.UseStaticFiles(new StaticFileOptions
                 {
                     ContentTypeProvider = types,

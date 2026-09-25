@@ -1,0 +1,114 @@
+// SEO/GEO: Meta-Daten, strukturierte Daten, robots.txt, sitemap.xml, llms.txt (statisch geprüft, ohne Browser).
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { STRINGS } from '../../web/js/i18n.js';
+
+const ORIGIN = 'https://paint-ball-game.omarfourati.de';
+const web = f => readFileSync(new URL(`../../web/${f}`, import.meta.url), 'utf8');
+const index = web('index.html');
+const decode = s => s.replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+const meta = (html, attr, name) => html.match(new RegExp(`<meta ${attr}="${name.replace(/[.:]/g, '\\$&')}" content="([^"]*)">`))?.[1];
+
+function jsonLd(html) {
+  const blocks = [...html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)].map(m => JSON.parse(m[1]));
+  assert.equal(blocks.length, 1, 'genau ein JSON-LD-Block');
+  return blocks[0]['@graph'];
+}
+
+test('SEO: Landingpage mit Titel, Beschreibung, Canonical, robots, Autor', () => {
+  assert.match(index, /<html lang="de">/);
+  const title = index.match(/<title>([^<]+)<\/title>/)[1];
+  assert.ok(title.includes('Paintball online spielen') && title.length <= 65, `Titel: ${title}`);
+  assert.equal(STRINGS.de['landing.title'], title, 'landing.js setzt denselben Titel per i18n');
+  const desc = meta(index, 'name', 'description');
+  assert.ok(desc.length >= 120 && desc.length <= 170, `Beschreibung ${desc.length} Zeichen`);
+  assert.match(index, new RegExp(`<link rel="canonical" href="${ORIGIN}/">`));
+  assert.match(meta(index, 'name', 'robots'), /^index, follow/);
+  assert.equal(meta(index, 'name', 'author'), 'Omar Fourati');
+});
+
+test('SEO: Open Graph und Twitter-Card vollständig, Bildmaße stimmen mit hero.jpg', () => {
+  assert.equal(meta(index, 'property', 'og:url'), `${ORIGIN}/`);
+  assert.equal(meta(index, 'property', 'og:locale'), 'de_DE');
+  assert.equal(meta(index, 'property', 'og:site_name'), 'Paint-Ball');
+  for (const p of ['og:title', 'og:description', 'og:image:alt']) assert.ok(meta(index, 'property', p), p);
+  assert.equal(meta(index, 'property', 'og:image'), `${ORIGIN}/assets/landing/hero.jpg`);
+  assert.equal(meta(index, 'property', 'og:image:width'), '1280');
+  assert.equal(meta(index, 'property', 'og:image:height'), '720');
+  assert.equal(meta(index, 'name', 'twitter:card'), 'summary_large_image');
+  for (const p of ['twitter:title', 'twitter:description', 'twitter:image']) assert.ok(meta(index, 'name', p), p);
+});
+
+test('SEO: JSON-LD gültig – Spiel kostenlos, Browser, Mehrspieler, Herausgeber, Website', () => {
+  const graph = jsonLd(index);
+  const byType = t => graph.find(n => [].concat(n['@type']).includes(t));
+  const game = byType('VideoGame');
+  assert.ok([].concat(game['@type']).includes('WebApplication'));
+  assert.equal(game.operatingSystem, 'Browser');
+  assert.equal(game.offers.price, '0');
+  assert.equal(game.offers.priceCurrency, 'EUR');
+  assert.ok([].concat(game.playMode).includes('MultiPlayer'));
+  assert.ok(game.genre.length > 0 && game.applicationCategory);
+  assert.equal(game.numberOfPlayers.maxValue, 12, 'Lagerhaus: MaxPlayers 12 (MapCatalog)');
+  const person = byType('Person');
+  assert.equal(person.url, 'https://omarfourati.de');
+  assert.equal(game.publisher['@id'], person['@id']);
+  assert.equal(byType('WebSite').url, `${ORIGIN}/`);
+  assert.ok(!JSON.stringify(graph).includes('aggregateRating'), 'keine erfundenen Bewertungen');
+});
+
+test('SEO: FAQPage im JSON-LD entspricht wörtlich der sichtbaren FAQ und den DE-Texten', () => {
+  const faq = jsonLd(index).find(n => n['@type'] === 'FAQPage');
+  const visible = [...index.matchAll(/<summary data-i18n="(landing\.faq\.[a-z]+)\.q">([^<]+)<\/summary>\s*<p data-i18n="\1\.a">([^<]+)<\/p>/g)]
+    .map(m => ({ key: m[1], q: decode(m[2]), a: decode(m[3]) }));
+  assert.ok(visible.length >= 4 && visible.length <= 6, 'vier bis sechs Fragen sichtbar');
+  assert.deepEqual(faq.mainEntity.map(e => [e.name, e.acceptedAnswer.text]), visible.map(v => [v.q, v.a]));
+  for (const v of visible) {
+    assert.equal(STRINGS.de[`${v.key}.q`], v.q, `${v.key}.q DE`);
+    assert.equal(STRINGS.de[`${v.key}.a`], v.a, `${v.key}.a DE`);
+    assert.ok(STRINGS.en[`${v.key}.q`] && STRINGS.en[`${v.key}.a`], `${v.key} EN`);
+  }
+});
+
+test('SEO: /play ist noindex, Rechtstexte haben eigenen Titel, Beschreibung und Canonical', () => {
+  assert.match(web('play.html'), /<meta name="robots" content="noindex">/);
+  for (const [file, path] of [['impressum.html', '/impressum'], ['datenschutz.html', '/datenschutz']]) {
+    const html = web(file);
+    assert.match(html, /<title>[^<]+ – Paint-Ball<\/title>/, file);
+    assert.ok(meta(html, 'name', 'description')?.length > 50, `${file} Beschreibung`);
+    assert.match(html, new RegExp(`<link rel="canonical" href="${ORIGIN}${path}">`));
+    assert.doesNotMatch(html, /noindex/, `${file} steht in der Sitemap, darf also nicht noindex sein`);
+  }
+});
+
+test('SEO: robots.txt sperrt nur /api/, erlaubt KI-Crawler, verweist auf die Sitemap', () => {
+  const robots = web('robots.txt');
+  assert.match(robots, /^Disallow: \/api\/$/m);
+  assert.doesNotMatch(robots, /^Disallow: \/(?!api\/)/m, 'nichts außer /api/ gesperrt');
+  for (const bot of ['GPTBot', 'OAI-SearchBot', 'ChatGPT-User', 'PerplexityBot', 'ClaudeBot', 'Google-Extended', 'Bingbot', 'Applebot-Extended'])
+    assert.match(robots, new RegExp(`^User-agent: ${bot}$`, 'm'), bot);
+  assert.match(robots, new RegExp(`^Sitemap: ${ORIGIN}/sitemap.xml$`, 'm'));
+});
+
+test('SEO: sitemap.xml enthält /, /datenschutz, /impressum mit lastmod, aber nicht /play', () => {
+  const xml = web('sitemap.xml');
+  const locs = [...xml.matchAll(/<loc>([^<]+)<\/loc>/g)].map(m => m[1]);
+  assert.deepEqual(locs, [`${ORIGIN}/`, `${ORIGIN}/datenschutz`, `${ORIGIN}/impressum`]);
+  assert.equal([...xml.matchAll(/<lastmod>2026-09-25<\/lastmod>/g)].length, 3);
+  assert.match(xml, /xmlns="http:\/\/www\.sitemaps\.org\/schemas\/sitemap\/0\.9"/);
+});
+
+test('GEO: llms.txt im llmstxt.org-Format mit Fakten und Links', () => {
+  const llms = web('llms.txt');
+  assert.match(llms, /^# Paint-Ball\n\n> .+/, 'H1 und Zusammenfassung als Blockzitat');
+  for (const s of ['kostenlos', 'Browser', 'PWA', 'Capture the Flag', 'Lagerhaus', 'Handy'])
+    assert.ok(llms.includes(s), s);
+  for (const path of ['/', '/play', '/impressum', '/datenschutz'])
+    assert.ok(llms.includes(`](${ORIGIN}${path})`), `Link ${path}`);
+});
+
+test('GEO: zitierfähiger Einleitungssatz sichtbar im Hero, DE und EN', () => {
+  assert.match(index, /<p class="intro" data-i18n="landing.intro">Paint-Ball ist ein kostenloses Online-Multiplayer-Paintball-Spiel, das direkt im Browser läuft/);
+  assert.ok(STRINGS.en['landing.intro'].startsWith('Paint-Ball is a free online multiplayer paintball game'));
+});
