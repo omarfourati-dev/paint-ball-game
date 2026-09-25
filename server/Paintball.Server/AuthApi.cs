@@ -25,8 +25,9 @@ namespace Paintball.Server
         public static string SessionToken(HttpContext ctx)
             => ctx.Request.Cookies.TryGetValue(SessionCookie, out string v) ? v : null;
 
-        public static void SetSession(HttpContext ctx, string token)
+        public static void SetSession(HttpContext ctx, AccountStore accounts, string token)
         {
+            EndLegacySessionIfPresent(ctx, accounts);
             // Kein Domain-Attribut: das __Host--Präfix verbietet es, sonst verwirft der Browser das Cookie.
             ctx.Response.Cookies.Append(SessionCookie, token, new CookieOptions
             {
@@ -36,10 +37,22 @@ namespace Paintball.Server
             ctx.Response.Cookies.Delete(LegacySessionCookie, new CookieOptions { Path = "/", Secure = true, HttpOnly = true, SameSite = SameSiteMode.Lax });
         }
 
-        public static void ClearSession(HttpContext ctx)
+        public static void ClearSession(HttpContext ctx, AccountStore accounts)
         {
+            EndLegacySessionIfPresent(ctx, accounts);
             ctx.Response.Cookies.Delete(SessionCookie, new CookieOptions { HttpOnly = true, Secure = true, SameSite = SameSiteMode.Lax, Path = "/" });
             ctx.Response.Cookies.Delete(LegacySessionCookie, new CookieOptions { Path = "/", Secure = true, HttpOnly = true, SameSite = SameSiteMode.Lax });
+        }
+
+        /// <summary>
+        /// Härtung (Minor): Ein noch mitgeschicktes altes pb_session-Cookie (von vor der Umstellung auf __Host-pb_session)
+        /// wird nicht mehr als Sitzung akzeptiert (<see cref="SessionToken"/> liest nur <see cref="SessionCookie"/>) – sein Token
+        /// blieb bisher aber serverseitig gültig. Bei Anmeldung und Abmeldung wird es deshalb hier zusätzlich widerrufen.
+        /// </summary>
+        private static void EndLegacySessionIfPresent(HttpContext ctx, AccountStore accounts)
+        {
+            if (ctx.Request.Cookies.TryGetValue(LegacySessionCookie, out string legacyToken) && !string.IsNullOrEmpty(legacyToken))
+                accounts.EndSession(legacyToken);
         }
 
         /// <summary>CSRF-Schutz für ändernde Requests: Origin muss zur eigenen Herkunft passen.</summary>
@@ -106,7 +119,7 @@ namespace Paintball.Server
                 string token = SessionToken(ctx);
                 string id = accounts.PlayerIdForSession(token);
                 accounts.EndSession(token);
-                ClearSession(ctx);
+                ClearSession(ctx, accounts);
                 if (id != null) game.KickAccount(id, "logout");
                 return Results.NoContent();
             });
@@ -126,7 +139,7 @@ namespace Paintball.Server
                 // Erst löschen (Sessions ungültig), dann kicken: kein /ws-Handshake mehr dazwischen.
                 accounts.Delete(id);
                 game.KickAccount(id, "deleted");
-                ClearSession(ctx);
+                ClearSession(ctx, accounts);
                 return Results.NoContent();
             });
 
@@ -141,7 +154,7 @@ namespace Paintball.Server
                 try { s = accounts.SignIn(sub, "dev@localhost"); }
                 catch (AccountDeletedException) { return Results.Conflict(); }   // gleichzeitig gelöscht
                 if (s.NeedsName && !string.IsNullOrEmpty(name)) accounts.SetName(s.PlayerId, name);
-                SetSession(ctx, accounts.CreateSession(s.PlayerId));
+                SetSession(ctx, accounts, accounts.CreateSession(s.PlayerId));
                 string join = ctx.Request.Query["join"].ToString();
                 return Results.Redirect(GoogleAuthApi.ValidJoin(join) != null ? "/play?join=" + join : "/play");
             });

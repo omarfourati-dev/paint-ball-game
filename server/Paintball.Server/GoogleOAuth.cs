@@ -126,7 +126,7 @@ namespace Paintball.Server
                     GoogleUser user = await google.ExchangeAsync(code, RedirectUri(options, ctx.Request), verifier, ctx.RequestAborted);
                     SignInResult s = accounts.SignIn(user.Sub, user.Email);
                     accounts.EndSession(AuthApi.SessionToken(ctx)); // Re-Login: altes Token nicht gültig lassen
-                    AuthApi.SetSession(ctx, accounts.CreateSession(s.PlayerId));
+                    AuthApi.SetSession(ctx, accounts, accounts.CreateSession(s.PlayerId));
                     if (s.NeedsName && !string.IsNullOrEmpty(user.GivenName))
                         ctx.Response.Cookies.Append("pb_suggest", user.GivenName, new CookieOptions { HttpOnly = true, Secure = true, SameSite = SameSiteMode.Lax, Path = "/", MaxAge = TimeSpan.FromMinutes(30) });
                     else

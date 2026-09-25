@@ -73,8 +73,10 @@ namespace Paintball.Server
         public const int ProtocolVersion = 1;
         /// <summary>
         /// Stopp-Budget des Hosts. Schlimmster Fall 25 s Host + 5 s Warten auf die Takt-Schleife (<see cref="GameLoopService.LoopExitWait"/>)
-        /// + 10 s Leeren der Warteschlange (<see cref="PersistenceQueue.DisposeFlushTimeout"/>) = 40 s, passt unter die 45 s von
-        /// <c>docker stop -t 45</c> bzw. <c>stop_grace_period</c>; offene WebSockets werden beim Stoppen sofort geschlossen und blockieren es nicht.
+        /// + 10 s Leeren der Warteschlange (<see cref="PersistenceQueue.DisposeFlushTimeout"/>), plus darin schon enthalten ein noch
+        /// laufender Datenbank-Schreibversuch (bis zu dessen Befehls-Zeitlimit, <see cref="Paintball.Net.Accounts.PostgresPlayerRepository.DefaultCommandTimeoutSeconds"/>,
+        /// Standard 5 s) = 40 s, passt unter die 45 s von <c>docker stop -t 45</c> bzw. <c>stop_grace_period</c>; offene WebSockets
+        /// werden beim Stoppen sofort geschlossen und blockieren es nicht.
         /// </summary>
         public static readonly TimeSpan ShutdownTimeout = TimeSpan.FromSeconds(25);
         /// <summary>So lange darf ein Client nach dem 1001-Close noch antworten, dann wird die Verbindung abgebrochen.</summary>

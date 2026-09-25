@@ -28,6 +28,8 @@ namespace Paintball.Net.Tests
             r.Run("Shop: Kosmetik mit Münzen kaufen, nur kosmetisch (M-02/M-04)", ShopCosmetics);
             r.Run("Bestenliste: nur benannte Spieler, nach MMR (FR-46/FR-43)", Leaderboard);
             r.Run("Bestenliste: 10 Sekunden zwischengespeichert, höchstens eine Datenbank-Abfrage pro Fenster", LeaderboardCached);
+            r.RunAsync("Bestenliste (Spieltakt): macht nie I/O, liefert veralteten/leeren Stand sofort, ein Hintergrund-Refresh füllt ihn", LeaderboardForTickNeverBlocks);
+            r.RunAsync("Bestenliste (Spieltakt): scheiternder Refresh wirft nicht, wird für ~5 s nicht wiederholt", LeaderboardForTickCachesErrorBriefly);
             r.Run("DSGVO: Export und vollständige Löschung inkl. Sessions (NFR-12)", GdprExportAndDelete);
             r.RunAsync("Konto: langsames Repository blockiert ApplyMatch nicht", SlowRepositoryDoesNotBlockApplyMatch);
             r.RunAsync("Konto: Löschen mit offenen Schreibaufträgen hinterlässt nichts", DeleteWithPendingWritesLeavesNothing);
@@ -227,6 +229,41 @@ namespace Paintball.Net.Tests
             store.Delete(alpha);
             Assert.AreEqual(0, store.Leaderboard(50).Count, "gelöschter Spieler sofort nicht mehr in der Bestenliste (DSGVO)");
             Assert.AreEqual(3, repo.TopByMmrCalls, "Löschen leert den Zwischenspeicher");
+        }
+
+        private static async Task LeaderboardForTickNeverBlocks()
+        {
+            var repo = new WrappingRepository { TopByMmrDelayMs = 2000 };
+            AccountStore store = NewStore(repo);
+            NewPlayer(store, "Alpha");
+
+            var watch = Stopwatch.StartNew();
+            IReadOnlyList<LeaderboardRow> first = store.LeaderboardForTick(50);
+            watch.Stop();
+            Assert.IsTrue(watch.ElapsedMilliseconds < 100, $"Spieltakt-Methode wartet nicht auf die Datenbank ({watch.ElapsedMilliseconds} ms bei 2000 ms Verzögerung)");
+            Assert.AreEqual(0, first.Count, "noch kein Stand vorhanden → leere Liste, kein Wurf");
+
+            DateTime deadline = DateTime.UtcNow.AddSeconds(5);
+            IReadOnlyList<LeaderboardRow> rows;
+            do { rows = store.LeaderboardForTick(50); if (rows.Count == 0) await Task.Delay(50); }
+            while (rows.Count == 0 && DateTime.UtcNow < deadline);
+            Assert.AreEqual(1, rows.Count, "nach dem Hintergrund-Refresh liefert der nächste Aufruf den Stand");
+            Assert.AreEqual(1, repo.TopByMmrCalls, "genau ein Refresh angestoßen");
+        }
+
+        private static async Task LeaderboardForTickCachesErrorBriefly()
+        {
+            var repo = new WrappingRepository { TopByMmrThrows = true };
+            AccountStore store = NewStore(repo);
+
+            Assert.AreEqual(0, store.LeaderboardForTick(50).Count, "kein Stand, aber kein Wurf trotz scheiterndem Repository");
+
+            DateTime deadline = DateTime.UtcNow.AddSeconds(5);
+            while (repo.TopByMmrCalls == 0 && DateTime.UtcNow < deadline) await Task.Delay(20);
+            Assert.AreEqual(1, repo.TopByMmrCalls, "genau ein Versuch");
+
+            for (int i = 0; i < 5; i++) { store.LeaderboardForTick(50); await Task.Delay(20); }
+            Assert.AreEqual(1, repo.TopByMmrCalls, "innerhalb der Fehler-Karenzzeit (~5 s) kein erneuter Versuch");
         }
 
         private static void GdprExportAndDelete()

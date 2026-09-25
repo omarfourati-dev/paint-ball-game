@@ -45,6 +45,8 @@ namespace Paintball.Net.Tests
             r.RunAsync("Auth: /api/me 401 ohne Session, needsName nach erstem Login, Namenswahl mit taken/invalid", MeAndName);
             r.RunAsync("Auth: /ws ohne Cookie 401, ohne Namen 403", WsRequiresSession);
             r.RunAsync("Auth: Abmelden macht Session ungültig", Logout);
+            r.RunAsync("Auth: ein mitgeschicktes altes pb_session-Cookie wird beim Abmelden serverseitig ebenfalls widerrufen", LegacyCookieTokenRevokedOnLogout);
+            r.RunAsync("Auth: ein mitgeschicktes altes pb_session-Cookie wird bei neuer Anmeldung serverseitig ebenfalls widerrufen", LegacyCookieTokenRevokedOnLogin);
             r.RunAsync("Auth: POST ohne gleiche Origin wird abgelehnt", CsrfOrigin);
             r.RunAsync("Auth: Rate-Limit 20/min/IP auf /api/auth/logout, pro Server-Instanz", LogoutRateLimit);
             r.Run("Auth: RateLimiter – Fenster läuft ab, IPs getrennt, alte Einträge werden entfernt", RateLimiterWindow);
@@ -774,6 +776,46 @@ namespace Paintball.Net.Tests
             string cookie = await h.LoginAsync("Lou");
             Assert.AreEqual(HttpStatusCode.NoContent, (await h.Http.SendAsync(h.Req(HttpMethod.Post, "/api/auth/logout", cookie))).StatusCode, "abgemeldet");
             Assert.AreEqual(HttpStatusCode.Unauthorized, (await h.Http.SendAsync(h.Req(HttpMethod.Get, "/api/me", cookie))).StatusCode, "Session ungültig");
+        }
+
+        /// <summary>
+        /// Härtung (Minor): Wer noch ein altes pb_session-Cookie mit gültigem Token trägt (von vor der Umstellung auf
+        /// __Host-pb_session), dessen Token wird beim Abmelden serverseitig ebenfalls widerrufen – nicht nur das Cookie gelöscht.
+        /// </summary>
+        private static async Task LegacyCookieTokenRevokedOnLogout()
+        {
+            await using Harness h = await Harness.StartAsync();
+            string legacyToken = await LoginTokenAsync(h, "Legacy1");
+            string cookie = await h.LoginAsync("Legacy2");   // aktuelle, gültige Sitzung
+
+            HttpResponseMessage logout = await h.Http.SendAsync(h.Req(HttpMethod.Post, "/api/auth/logout", cookie + "; pb_session=" + legacyToken));
+            Assert.AreEqual(HttpStatusCode.NoContent, logout.StatusCode, "abgemeldet");
+
+            HttpResponseMessage check = await h.Http.SendAsync(h.Req(HttpMethod.Get, "/api/me", "__Host-pb_session=" + legacyToken));
+            Assert.AreEqual(HttpStatusCode.Unauthorized, check.StatusCode, "Token aus altem pb_session-Cookie nach Abmelden widerrufen");
+        }
+
+        /// <summary>Wie <see cref="LegacyCookieTokenRevokedOnLogout"/>, aber der Login-Pfad (Dev-Login und Google-Callback nutzen beide AuthApi.SetSession).</summary>
+        private static async Task LegacyCookieTokenRevokedOnLogin()
+        {
+            await using Harness h = await Harness.StartAsync();
+            string legacyToken = await LoginTokenAsync(h, "Legacy3");
+
+            var req = new HttpRequestMessage(HttpMethod.Get, "/api/auth/dev?name=Legacy4");
+            req.Headers.Add("Cookie", "pb_session=" + legacyToken);
+            HttpResponseMessage res = await h.Http.SendAsync(req);
+            Assert.AreEqual(HttpStatusCode.Found, res.StatusCode, "Login trotz mitgeschicktem altem Cookie erfolgreich");
+
+            HttpResponseMessage check = await h.Http.SendAsync(h.Req(HttpMethod.Get, "/api/me", "__Host-pb_session=" + legacyToken));
+            Assert.AreEqual(HttpStatusCode.Unauthorized, check.StatusCode, "Token aus altem pb_session-Cookie nach Login widerrufen");
+        }
+
+        /// <summary>Meldet sich per Dev-Login an und gibt nur den Token-Wert (ohne Cookie-Namen/Attribute) zurück.</summary>
+        private static async Task<string> LoginTokenAsync(Harness h, string name)
+        {
+            string set = await h.LoginAsync(name);
+            string prefix = "__Host-pb_session=";
+            return set.StartsWith(prefix, StringComparison.Ordinal) ? set.Substring(prefix.Length) : set;
         }
 
         private static async Task CsrfOrigin()

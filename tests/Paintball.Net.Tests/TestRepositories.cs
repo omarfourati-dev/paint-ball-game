@@ -11,7 +11,8 @@ namespace Paintball.Net.Tests
     internal sealed class WrappingRepository : IPlayerRepository
     {
         private readonly IPlayerRepository _inner;
-        public int TopByMmrCalls;
+        private int _topByMmrCalls;
+        public int TopByMmrCalls => System.Threading.Volatile.Read(ref _topByMmrCalls);
         public string FailWritesFor;
         /// <summary>Verzögert jedes <see cref="Get"/> (weitet Wettläufe beim ersten Laden auf).</summary>
         public int GetDelayMs;
@@ -19,6 +20,10 @@ namespace Paintball.Net.Tests
         public int GetCalls => System.Threading.Volatile.Read(ref _getCalls);
         /// <summary>Läuft nach jedem RecordLogin (z. B. um ein Löschen mitten in die Anmeldung zu legen).</summary>
         public Action<string> OnRecordLogin;
+        /// <summary>Verzögert jeden <see cref="TopByMmr"/>-Aufruf (simuliert eine langsame Datenbank).</summary>
+        public int TopByMmrDelayMs;
+        /// <summary>Lässt jeden <see cref="TopByMmr"/>-Aufruf scheitern (simuliert eine unerreichbare Datenbank).</summary>
+        public bool TopByMmrThrows;
 
         public WrappingRepository(IPlayerRepository inner = null) { _inner = inner ?? new InMemoryPlayerRepository(); }
 
@@ -40,7 +45,13 @@ namespace Paintball.Net.Tests
         public NameResult TrySetName(string playerId, string name) => _inner.TrySetName(playerId, name);
         public void AddMatch(string playerId, MatchRecord match) { MaybeFail(playerId); _inner.AddMatch(playerId, match); }
         public IReadOnlyList<MatchRecord> RecentMatches(string playerId, int limit) => _inner.RecentMatches(playerId, limit);
-        public IReadOnlyList<PlayerRecord> TopByMmr(int limit) { TopByMmrCalls++; return _inner.TopByMmr(limit); }
+        public IReadOnlyList<PlayerRecord> TopByMmr(int limit)
+        {
+            System.Threading.Interlocked.Increment(ref _topByMmrCalls);
+            if (TopByMmrDelayMs > 0) System.Threading.Thread.Sleep(TopByMmrDelayMs);
+            if (TopByMmrThrows) throw new InvalidOperationException("Datenbank nicht erreichbar (Test)");
+            return _inner.TopByMmr(limit);
+        }
         public int Count() => _inner.Count();
         public bool Delete(string playerId) => _inner.Delete(playerId);
         public void CreateSession(string tokenHash, string playerId, DateTime expiresAt) => _inner.CreateSession(tokenHash, playerId, expiresAt);

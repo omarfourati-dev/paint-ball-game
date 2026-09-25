@@ -152,9 +152,21 @@ namespace Paintball.Net.Accounts
         private readonly ShopCatalog _shop = new();
         private readonly Func<DateTime> _clock;
         private readonly object _leaderboardLock = new();
-        private readonly Dictionary<int, (DateTime At, IReadOnlyList<LeaderboardRow> Rows)> _leaderboard = new();
+        private readonly Dictionary<int, LeaderboardEntry> _leaderboard = new();
         /// <summary>So lange wird die Bestenliste zwischengespeichert: aus vielen leaderboard-Nachrichten wird höchstens eine Abfrage.</summary>
         public static readonly TimeSpan LeaderboardCacheDuration = TimeSpan.FromSeconds(10);
+        /// <summary>Nach einem gescheiterten Hintergrund-Refresh (<see cref="LeaderboardForTick"/>) wird für diese Zeit kein neuer Versuch gestartet.</summary>
+        public static readonly TimeSpan LeaderboardErrorCooldown = TimeSpan.FromSeconds(5);
+
+        /// <summary>Stand je <c>top</c>-Wert: letzter erfolgreicher Stand (auch veraltet nutzbar), Zeitpunkt des letzten Erfolgs/Fehlers,
+        /// und ob gerade ein Hintergrund-Refresh läuft (<see cref="LeaderboardForTick"/> stößt nie mehr als einen gleichzeitig an).</summary>
+        private sealed class LeaderboardEntry
+        {
+            public IReadOnlyList<LeaderboardRow> Rows;
+            public DateTime RowsAt;
+            public DateTime? ErrorAt;
+            public int Refreshing;   // 0/1, nur über Interlocked verändert
+        }
         public static readonly TimeSpan SessionLifetime = TimeSpan.FromDays(30);
         /// <summary>So lange bleibt ein gelöschtes Konto gesperrt (kein Laden, kein Schreiben).</summary>
         public static readonly TimeSpan TombstoneLifetime = TimeSpan.FromHours(1);
@@ -461,26 +473,92 @@ namespace Paintball.Net.Accounts
 
         // ---------------- Bestenliste ----------------
 
-        /// <summary>Top-Spieler nach MMR; das Ergebnis wird pro <paramref name="top"/> für <see cref="LeaderboardCacheDuration"/> zwischengespeichert.</summary>
+        /// <summary>
+        /// Top-Spieler nach MMR; das Ergebnis wird pro <paramref name="top"/> für <see cref="LeaderboardCacheDuration"/> zwischengespeichert.
+        /// Blockierend (Datenbankzugriff bei abgelaufenem Zwischenspeicher) – nur aus HTTP-Threads aufrufen, nie aus dem Spieltakt
+        /// (dafür <see cref="LeaderboardForTick"/>). Die Abfrage läuft außerhalb von <see cref="_leaderboardLock"/>, damit der
+        /// Spieltakt nie auf diese Sperre wartet.
+        /// </summary>
         public IReadOnlyList<LeaderboardRow> Leaderboard(int top)
         {
             int limit = Math.Clamp(top, 1, 200);
+            DateTime now = _clock();
+            LeaderboardEntry entry;
             lock (_leaderboardLock)
             {
-                DateTime now = _clock();
-                if (_leaderboard.TryGetValue(limit, out var cached) && now - cached.At < LeaderboardCacheDuration) return cached.Rows;
-                var rows = new List<LeaderboardRow>();
-                int rank = 0;
-                foreach (PlayerRecord p in _repo.TopByMmr(limit))
-                    rows.Add(new LeaderboardRow
-                    {
-                        Rank = ++rank, Name = p.DisplayName, Mmr = p.Mmr, Level = p.Level,
-                        League = SeasonRanker.GetRankName(p.Mmr), Division = SeasonRanker.GetDivision(p.Mmr), AccountId = p.Id
-                    });
-                IReadOnlyList<LeaderboardRow> result = rows.AsReadOnly();
-                _leaderboard[limit] = (now, result);
-                return result;
+                entry = EntryLocked(limit);
+                if (entry.Rows != null && now - entry.RowsAt < LeaderboardCacheDuration) return entry.Rows;
             }
+            IReadOnlyList<LeaderboardRow> rows = QueryLeaderboardRows(limit);   // außerhalb der Sperre: Datenbankzugriff
+            lock (_leaderboardLock) { entry.Rows = rows; entry.RowsAt = _clock(); entry.ErrorAt = null; }
+            return rows;
+        }
+
+        /// <summary>
+        /// Für den Spieltakt (Erfolgskriterium: kein Aufruf im Spieltakt wartet auf die Datenbank): macht nie I/O. Liefert den
+        /// zwischengespeicherten Stand – auch veraltet – oder eine leere Liste, wenn noch keiner vorliegt. Ist der Stand
+        /// veraltet oder fehlt er (und läuft gerade keine Fehler-Karenzzeit, <see cref="LeaderboardErrorCooldown"/>), stößt es
+        /// genau einen Hintergrund-Refresh an (<see cref="LeaderboardEntry.Refreshing"/> per <see cref="Interlocked"/>: nie mehr
+        /// als einer gleichzeitig je <paramref name="top"/>-Wert). Ein gescheiterter Refresh wirft nie hierher, wird nur geloggt
+        /// (nur der Ausnahmetyp) und für <see cref="LeaderboardErrorCooldown"/> nicht wiederholt.
+        /// </summary>
+        public IReadOnlyList<LeaderboardRow> LeaderboardForTick(int top)
+        {
+            int limit = Math.Clamp(top, 1, 200);
+            DateTime now = _clock();
+            LeaderboardEntry entry;
+            IReadOnlyList<LeaderboardRow> rows;
+            bool needsRefresh;
+            lock (_leaderboardLock)
+            {
+                entry = EntryLocked(limit);
+                rows = entry.Rows ?? Array.Empty<LeaderboardRow>();
+                bool fresh = entry.Rows != null && now - entry.RowsAt < LeaderboardCacheDuration;
+                bool coolingDown = entry.ErrorAt.HasValue && now - entry.ErrorAt.Value < LeaderboardErrorCooldown;
+                needsRefresh = !fresh && !coolingDown;
+            }
+            if (needsRefresh && Interlocked.CompareExchange(ref entry.Refreshing, 1, 0) == 0)
+                Task.Run(() => RefreshLeaderboardInBackground(limit, entry));
+            return rows;
+        }
+
+        private LeaderboardEntry EntryLocked(int limit)   // unter _leaderboardLock aufrufen
+        {
+            if (!_leaderboard.TryGetValue(limit, out LeaderboardEntry entry)) _leaderboard[limit] = entry = new LeaderboardEntry();
+            return entry;
+        }
+
+        /// <summary>Läuft auf einem Threadpool-Thread (<see cref="Task.Run(Action)"/>), nie im Spieltakt.</summary>
+        private void RefreshLeaderboardInBackground(int limit, LeaderboardEntry entry)
+        {
+            try
+            {
+                IReadOnlyList<LeaderboardRow> rows = QueryLeaderboardRows(limit);
+                lock (_leaderboardLock) { entry.Rows = rows; entry.RowsAt = _clock(); entry.ErrorAt = null; }
+            }
+            catch (Exception ex)
+            {
+                lock (_leaderboardLock) entry.ErrorAt = _clock();
+                Console.Error.WriteLine("[Bestenliste] Hintergrund-Refresh fehlgeschlagen: " + ex.GetType().Name);   // nur der Typ: Meldungen können Verbindungsdaten enthalten
+            }
+            finally
+            {
+                Interlocked.Exchange(ref entry.Refreshing, 0);
+            }
+        }
+
+        /// <summary>Datenbankzugriff (<see cref="_repo"/>) – nie unter <see cref="_leaderboardLock"/> und nie im Spieltakt aufrufen.</summary>
+        private IReadOnlyList<LeaderboardRow> QueryLeaderboardRows(int limit)
+        {
+            var rows = new List<LeaderboardRow>();
+            int rank = 0;
+            foreach (PlayerRecord p in _repo.TopByMmr(limit))
+                rows.Add(new LeaderboardRow
+                {
+                    Rank = ++rank, Name = p.DisplayName, Mmr = p.Mmr, Level = p.Level,
+                    League = SeasonRanker.GetRankName(p.Mmr), Division = SeasonRanker.GetDivision(p.Mmr), AccountId = p.Id
+                });
+            return rows.AsReadOnly();
         }
 
         private void InvalidateLeaderboard()

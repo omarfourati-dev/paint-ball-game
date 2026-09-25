@@ -154,7 +154,7 @@ namespace Paintball.Net.Rooms
             while (_inbox.TryDequeue(out Action action))
             {
                 try { action(); }
-                catch (Exception ex) { Console.Error.WriteLine("[GameServer] Nachricht fehlgeschlagen: " + ex.Message); }
+                catch (Exception ex) { Console.Error.WriteLine("[GameServer] Nachricht fehlgeschlagen: " + ex.GetType().Name); }   // nur der Typ: Meldungen können sensible Daten enthalten
             }
 
             // Nur neu bauen, wenn sich etwas geändert haben könnte (Sitzung), oder spätestens einmal pro Sekunde (fängt
@@ -730,11 +730,13 @@ namespace Paintball.Net.Rooms
             w.WriteEndArray();
         }
 
+        /// <summary>Wird aus dem Spieltakt gesendet (case "leaderboard"): nutzt <see cref="AccountStore.LeaderboardForTick"/>,
+        /// das nie auf die Datenbank wartet, statt <see cref="AccountStore.Leaderboard"/>.</summary>
         public string LeaderboardJson(string accountId) => Json.Write(w =>
         {
             w.WriteString("t", "leaderboard");
             w.WriteStartArray("rows");
-            foreach (LeaderboardRow r in Accounts.Leaderboard(50))
+            foreach (LeaderboardRow r in Accounts.LeaderboardForTick(50))
             {
                 w.WriteStartObject();
                 w.WriteNumber("rank", r.Rank);
