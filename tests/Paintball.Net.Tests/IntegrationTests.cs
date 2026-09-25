@@ -49,20 +49,27 @@ namespace Paintball.Net.Tests
             r.RunAsync("Google: Callback legt Konto an, setzt Session, behält Einladungscode", GoogleCallbackOk);
             r.RunAsync("Google: Fehler beim Token-Tausch → oauth_failed, ohne Details", GoogleExchangeFails);
             r.RunAsync("Google: nicht konfiguriert → not_configured", GoogleNotConfigured);
+            r.RunAsync("Google: Abbruch bei Google → auth_error=cancelled", GoogleCancelled);
+            r.RunAsync("Google: Login ohne Namensbedarf löscht einen alten Namensvorschlag", GoogleClearsSuggest);
+            r.RunAsync("Google: Cookie ohne Verifier (altes Format) → invalid_state", GoogleCookieWithoutVerifier);
         }
 
         private static string HarnessWebRoot;
 
         private sealed class FakeGoogle : IGoogleOAuthClient
         {
-            public string LastCode, LastRedirect;
-            public Task<GoogleUser> ExchangeAsync(string code, string redirectUri, CancellationToken ct)
+            public string LastCode, LastRedirect, LastVerifier;
+            public string GivenName = "Omar";
+            public Task<GoogleUser> ExchangeAsync(string code, string redirectUri, string codeVerifier, CancellationToken ct)
             {
-                LastCode = code; LastRedirect = redirectUri;
+                LastCode = code; LastRedirect = redirectUri; LastVerifier = codeVerifier;
                 if (code == "bad") throw new InvalidOperationException("token error");
-                return Task.FromResult(new GoogleUser { Sub = "g-" + code, Email = code + "@gmail.com", GivenName = "Omar" });
+                return Task.FromResult(new GoogleUser { Sub = "g-" + code, Email = code + "@gmail.com", GivenName = GivenName });
             }
         }
+
+        private static string Challenge(string v) => Convert.ToBase64String(System.Security.Cryptography.SHA256.HashData(Encoding.ASCII.GetBytes(v)))
+            .TrimEnd('=').Replace('+', '-').Replace('/', '_');
 
         private static (string State, string Cookie) ReadOAuthCookie(HttpResponseMessage start)
         {
@@ -88,6 +95,9 @@ namespace Paintball.Net.Tests
             Assert.AreEqual("code", q["response_type"], "Code-Flow");
             Assert.IsTrue(q["redirect_uri"].EndsWith("/api/auth/google/callback"), "Redirect-URI");
             Assert.IsTrue(q["state"].Length >= 32, "state zufällig");
+            Assert.AreEqual("S256", q["code_challenge_method"], "PKCE-Methode");
+            Assert.IsTrue(q["code_challenge"].Length == 43, "code_challenge base64url(SHA256) ohne Padding");
+            Assert.IsTrue(res.Headers.CacheControl?.NoStore == true, "no-store");
             string set = res.Headers.GetValues("Set-Cookie").First(v => v.StartsWith("pb_oauth=")).ToLowerInvariant();
             Assert.IsTrue(set.Contains("httponly") && set.Contains("secure") && set.Contains("path=/api/auth"), "Cookie-Attribute");
             Assert.IsFalse(res.Headers.Location.ToString().Contains("test-secret"), "Secret nie in der URL");
@@ -115,12 +125,15 @@ namespace Paintball.Net.Tests
             string oldSession = await h.LoginAsync("Vorher");
             HttpResponseMessage start = await h.Http.GetAsync("/api/auth/google?join=AB12");
             var (state, cookie) = ReadOAuthCookie(start);
+            string expectedChallenge = System.Web.HttpUtility.ParseQueryString(start.Headers.Location.Query)["code_challenge"];
             var req = new HttpRequestMessage(HttpMethod.Get, $"/api/auth/google/callback?code=c77&state={state}");
             req.Headers.Add("Cookie", cookie + "; " + oldSession);
             HttpResponseMessage res = await h.Http.SendAsync(req);
             Assert.AreEqual("/play?join=AB12", res.Headers.Location.OriginalString, "zurück mit Einladungscode");
             Assert.AreEqual("c77", fake.LastCode, "Code weitergereicht");
             Assert.IsTrue(fake.LastRedirect.EndsWith("/api/auth/google/callback"), "gleiche Redirect-URI");
+            Assert.IsTrue(fake.LastVerifier?.Length == 43, "Verifier 43 Zeichen");
+            Assert.AreEqual(expectedChallenge, Challenge(fake.LastVerifier), "Challenge aus Verifier passt zur Start-Weiterleitung");
             string session = res.Headers.GetValues("Set-Cookie").First(v => v.StartsWith("pb_session="));
             session = session.Substring(0, session.IndexOf(';'));
             var meReq = h.Req(HttpMethod.Get, "/api/me", session);
@@ -150,6 +163,47 @@ namespace Paintball.Net.Tests
             await using Harness h = await Harness.StartAsync(google: null, googleConfigured: false);
             HttpResponseMessage res = await h.Http.GetAsync("/api/auth/google");
             Assert.AreEqual("/play?auth_error=not_configured", res.Headers.Location.OriginalString, "nicht konfiguriert");
+        }
+
+        private static async Task GoogleCancelled()
+        {
+            await using Harness h = await Harness.StartAsync();
+            HttpResponseMessage start = await h.Http.GetAsync("/api/auth/google");
+            var (state, cookie) = ReadOAuthCookie(start);
+            var req = new HttpRequestMessage(HttpMethod.Get, $"/api/auth/google/callback?error=access_denied&state={state}");
+            req.Headers.Add("Cookie", cookie);
+            HttpResponseMessage res = await h.Http.SendAsync(req);
+            Assert.AreEqual("/play?auth_error=cancelled", res.Headers.Location.OriginalString, "Abbruch bei Google");
+            Assert.IsFalse(SetsSession(res), "keine Session");
+        }
+
+        private static async Task GoogleClearsSuggest()
+        {
+            var fake = new FakeGoogle { GivenName = null };
+            await using Harness h = await Harness.StartAsync(google: fake);
+            HttpResponseMessage start = await h.Http.GetAsync("/api/auth/google");
+            var (state, cookie) = ReadOAuthCookie(start);
+            var req = new HttpRequestMessage(HttpMethod.Get, $"/api/auth/google/callback?code=c1&state={state}");
+            req.Headers.Add("Cookie", cookie);
+            HttpResponseMessage res = await h.Http.SendAsync(req);
+            string suggest = res.Headers.GetValues("Set-Cookie").FirstOrDefault(v => v.StartsWith("pb_suggest="));
+            Assert.IsTrue(suggest != null, "pb_suggest wird gelöscht");
+            string value = suggest.Substring("pb_suggest=".Length, suggest.IndexOf(';') - "pb_suggest=".Length);
+            Assert.AreEqual("", value, "Cookie-Wert leer");
+            Assert.IsTrue(suggest.ToLowerInvariant().Contains("expires="), "abgelaufenes expires");
+        }
+
+        private static async Task GoogleCookieWithoutVerifier()
+        {
+            await using Harness h = await Harness.StartAsync();
+            HttpResponseMessage start = await h.Http.GetAsync("/api/auth/google");
+            var (state, _) = ReadOAuthCookie(start);
+            string oldCookie = "pb_oauth=" + state + ".";
+            var req = new HttpRequestMessage(HttpMethod.Get, $"/api/auth/google/callback?code=c1&state={state}");
+            req.Headers.Add("Cookie", oldCookie);
+            HttpResponseMessage res = await h.Http.SendAsync(req);
+            Assert.AreEqual("/play?auth_error=invalid_state", res.Headers.Location.OriginalString, "Cookie ohne Verifier (altes Format)");
+            Assert.IsFalse(SetsSession(res), "keine Session");
         }
 
         private sealed class Harness : IAsyncDisposable

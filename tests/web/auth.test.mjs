@@ -59,6 +59,7 @@ test('Fehlercodes werden auf Texte abgebildet', () => {
   assert.equal(authErrorKey('not_configured'), 'auth.error.not_configured');
   assert.equal(authErrorKey('invalid_state'), 'auth.error.invalid_state');
   assert.equal(authErrorKey('oauth_failed'), 'auth.error.oauth_failed');
+  assert.equal(authErrorKey('cancelled'), 'auth.error.cancelled');
   assert.equal(authErrorKey('<script>'), 'auth.error.oauth_failed', 'Unbekanntes → allgemeiner Fehler');
   assert.equal(authErrorKey(null), null);
   assert.equal(nameErrorKey(409, { error: 'taken' }), 'name.error.taken');
@@ -72,7 +73,7 @@ test('Alte Local-Storage-Schlüssel werden aufgeräumt', () => {
 
 test('Anmelde-Texte in DE und EN', () => {
   for (const k of ['auth.title', 'auth.text', 'auth.google', 'auth.error.not_configured', 'auth.error.invalid_state',
-    'auth.error.oauth_failed', 'name.title', 'name.label', 'name.go', 'name.hint', 'name.error.taken', 'name.error.invalid',
+    'auth.error.oauth_failed', 'auth.error.cancelled', 'name.title', 'name.label', 'name.go', 'name.hint', 'name.error.taken', 'name.error.invalid',
     'name.error.generic', 'settings.logout', 'settings.rename', 'conn.replaced', 'conn.resume', 'conn.kicked',
     'conn.reconnect']) {
     assert.ok(STRINGS.de[k], `DE fehlt: ${k}`);

@@ -24,10 +24,10 @@ namespace Paintball.Server
     /// <summary>Tauscht einen OAuth-Code gegen die Google-Nutzerdaten (Fake in Tests).</summary>
     public interface IGoogleOAuthClient
     {
-        Task<GoogleUser> ExchangeAsync(string code, string redirectUri, CancellationToken ct);
+        Task<GoogleUser> ExchangeAsync(string code, string redirectUri, string codeVerifier, CancellationToken ct);
     }
 
-    /// <summary>Echter Google-Client: Code → Token (oauth2.googleapis.com), dann userinfo (OpenID).</summary>
+    /// <summary>Echter Google-Client: Code → Token (oauth2.googleapis.com, mit PKCE-Verifier), dann userinfo (OpenID).</summary>
     public sealed class GoogleOAuthClient : IGoogleOAuthClient
     {
         private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(10) };
@@ -35,12 +35,12 @@ namespace Paintball.Server
 
         public GoogleOAuthClient(string clientId, string clientSecret) { _clientId = clientId; _clientSecret = clientSecret; }
 
-        public async Task<GoogleUser> ExchangeAsync(string code, string redirectUri, CancellationToken ct)
+        public async Task<GoogleUser> ExchangeAsync(string code, string redirectUri, string codeVerifier, CancellationToken ct)
         {
             using var tokenRes = await Http.PostAsync("https://oauth2.googleapis.com/token", new FormUrlEncodedContent(new Dictionary<string, string>
             {
                 ["code"] = code, ["client_id"] = _clientId, ["client_secret"] = _clientSecret,
-                ["redirect_uri"] = redirectUri, ["grant_type"] = "authorization_code"
+                ["redirect_uri"] = redirectUri, ["grant_type"] = "authorization_code", ["code_verifier"] = codeVerifier
             }), ct);
             if (!tokenRes.IsSuccessStatusCode) throw new InvalidOperationException($"Google-Token-Tausch fehlgeschlagen ({(int)tokenRes.StatusCode})");
             using JsonDocument tokenDoc = JsonDocument.Parse(await tokenRes.Content.ReadAsStringAsync(ct));
@@ -74,6 +74,9 @@ namespace Paintball.Server
 
         private static bool Configured(ServerHostOptions o) => !string.IsNullOrEmpty(o.GoogleClientId) && !string.IsNullOrEmpty(o.GoogleClientSecret);
 
+        private static string Base64Url(byte[] b) => Convert.ToBase64String(b).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        private static bool ValidVerifier(string v) => v != null && v.Length == 43 && Regex.IsMatch(v, @"\A[A-Za-z0-9\-_]{43}\z");
+
         /// <param name="limiter">Dieselbe Instanz wie in AuthApi.Map (20/min/IP pro Host).</param>
         public static void Map(WebApplication app, AccountStore accounts, ServerHostOptions options, RateLimiter limiter)
         {
@@ -83,16 +86,21 @@ namespace Paintball.Server
             app.MapGet("/api/auth/google", (HttpContext ctx) =>
             {
                 if (limiter.Exceeded(ctx)) return Results.StatusCode(429);
+                ctx.Response.Headers.CacheControl = "no-store";
                 if (!Configured(options) || google == null) return Results.Redirect("/play?auth_error=not_configured");
                 string state = Convert.ToHexString(RandomNumberGenerator.GetBytes(24));
                 string join = ValidJoin(ctx.Request.Query["join"].ToString()) ?? string.Empty;
-                ctx.Response.Cookies.Append(OAuthCookie, state + "." + join, cookieOpts);
+                string verifier = Base64Url(RandomNumberGenerator.GetBytes(32));
+                string challenge = Base64Url(SHA256.HashData(Encoding.ASCII.GetBytes(verifier)));
+                ctx.Response.Cookies.Append(OAuthCookie, state + "." + join + "." + verifier, cookieOpts);
                 string url = "https://accounts.google.com/o/oauth2/v2/auth?" + string.Join("&",
                     "client_id=" + Uri.EscapeDataString(options.GoogleClientId),
                     "redirect_uri=" + Uri.EscapeDataString(RedirectUri(options, ctx.Request)),
                     "response_type=code",
                     "scope=" + Uri.EscapeDataString("openid email profile"),
                     "state=" + state,
+                    "code_challenge=" + challenge,
+                    "code_challenge_method=S256",
                     "prompt=select_account");
                 return Results.Redirect(url);
             });
@@ -100,24 +108,29 @@ namespace Paintball.Server
             app.MapGet("/api/auth/google/callback", async (HttpContext ctx) =>
             {
                 if (limiter.Exceeded(ctx)) return Results.StatusCode(429);
+                ctx.Response.Headers.CacheControl = "no-store";
                 string stored = ctx.Request.Cookies.TryGetValue(OAuthCookie, out string v) ? v : null;
                 ctx.Response.Cookies.Delete(OAuthCookie, cookieOpts); // state gilt genau einmal
                 string state = ctx.Request.Query["state"].ToString(), code = ctx.Request.Query["code"].ToString();
-                int dot = stored?.IndexOf('.') ?? -1;
-                string storedState = dot > 0 ? stored.Substring(0, dot) : null;
-                string join = dot > 0 ? ValidJoin(stored.Substring(dot + 1)) : null;
-                if (storedState == null || string.IsNullOrEmpty(state) ||
+                string[] parts = stored?.Split('.');
+                string storedState = parts?.Length == 3 ? parts[0] : null;
+                string join = parts?.Length == 3 ? ValidJoin(parts[1]) : null;
+                string verifier = parts?.Length == 3 ? parts[2] : null;
+                if (storedState == null || !ValidVerifier(verifier) || string.IsNullOrEmpty(state) ||
                     !CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(storedState), Encoding.ASCII.GetBytes(state)))
                     return Results.Redirect("/play?auth_error=invalid_state");
+                if (ctx.Request.Query["error"].ToString() == "access_denied") return Results.Redirect("/play?auth_error=cancelled");
                 if (string.IsNullOrEmpty(code) || google == null) return Results.Redirect("/play?auth_error=oauth_failed");
                 try
                 {
-                    GoogleUser user = await google.ExchangeAsync(code, RedirectUri(options, ctx.Request), ctx.RequestAborted);
+                    GoogleUser user = await google.ExchangeAsync(code, RedirectUri(options, ctx.Request), verifier, ctx.RequestAborted);
                     SignInResult s = accounts.SignIn(user.Sub, user.Email);
                     accounts.EndSession(AuthApi.SessionToken(ctx)); // Re-Login: altes Token nicht gültig lassen
                     AuthApi.SetSession(ctx, accounts.CreateSession(s.PlayerId));
                     if (s.NeedsName && !string.IsNullOrEmpty(user.GivenName))
                         ctx.Response.Cookies.Append("pb_suggest", user.GivenName, new CookieOptions { HttpOnly = true, Secure = true, SameSite = SameSiteMode.Lax, Path = "/", MaxAge = TimeSpan.FromMinutes(30) });
+                    else
+                        ctx.Response.Cookies.Delete("pb_suggest", new CookieOptions { HttpOnly = true, Secure = true, SameSite = SameSiteMode.Lax, Path = "/" });
                     return Results.Redirect(join != null ? "/play?join=" + join : "/play");
                 }
                 catch (Exception ex)

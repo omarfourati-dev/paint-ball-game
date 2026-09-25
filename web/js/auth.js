@@ -17,7 +17,7 @@ export function loginUrl(join) {
   return typeof join === 'string' && /^[A-Z0-9]{1,12}$/.test(join) ? `/api/auth/google?join=${join}` : '/api/auth/google';
 }
 
-const AUTH_ERRORS = ['not_configured', 'invalid_state', 'oauth_failed'];
+const AUTH_ERRORS = ['not_configured', 'invalid_state', 'oauth_failed', 'cancelled'];
 
 export function authErrorKey(code) {
   if (!code) return null;
