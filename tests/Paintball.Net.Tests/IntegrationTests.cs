@@ -664,8 +664,8 @@ namespace Paintball.Net.Tests
 
         private static AdsConfig Ads(Dictionary<string, string> env) => AdsConfig.FromEnvironment(k => env.TryGetValue(k, out string v) ? v : null);
 
-        private const string BaseCsp = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; " +
-            "connect-src 'self' wss:; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
+        private const string BaseCsp = "default-src 'self'; script-src 'self' https://analytics.omarfourati.de; style-src 'self' 'unsafe-inline'; img-src 'self' data:; " +
+            "connect-src 'self' wss: https://analytics.omarfourati.de; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
 
         private static void AdsConfigFromEnvironment()
         {
@@ -724,8 +724,8 @@ namespace Paintball.Net.Tests
             Dictionary<string, string> dirs = csp.Split(';').Select(d => d.Trim()).ToDictionary(d => d.Split(' ')[0], d => d);
             string[] Sources(string dir) => dirs[dir].Split(' ', StringSplitOptions.RemoveEmptyEntries).Skip(1).ToArray();
             Assert.AreEqual(string.Join(" ", new[] { "'self'", "https://pagead2.googlesyndication.com", "https://fundingchoicesmessages.google.com",
-                "https://www.google.com", "https://tpc.googlesyndication.com", "https://*.adtrafficquality.google" }), string.Join(" ", Sources("script-src")),
-                "script-src nur konkrete AdSense-/CMP-Hosts");
+                "https://www.google.com", "https://tpc.googlesyndication.com", "https://*.adtrafficquality.google", AdsConfig.AnalyticsHost }), string.Join(" ", Sources("script-src")),
+                "script-src nur konkrete AdSense-/CMP-Hosts plus Umami");
             Assert.IsFalse(dirs["script-src"].Contains("https://*.google.com") || dirs["script-src"].Contains("https://*.gstatic.com")
                 || dirs["script-src"].Contains("doubleclick"), "keine breiten Google-Wildcards für Skripte");
             foreach (string dir in new[] { "frame-src", "img-src", "connect-src" })
@@ -733,6 +733,8 @@ namespace Paintball.Net.Tests
                     Assert.IsTrue(Sources(dir).Contains(src), $"{dir} enthält {src}");
             Assert.IsTrue(Sources("img-src").Contains("https://www.google.de"), "img-src enthält www.google.de");
             Assert.IsFalse(Sources("connect-src").Contains("https://www.google.de"), "google.de nur für Bilder");
+            Assert.IsTrue(Sources("connect-src").Contains(AdsConfig.AnalyticsHost), "connect-src enthält Umami, unabhängig von Werbung");
+            Assert.IsFalse(Sources("frame-src").Contains(AdsConfig.AnalyticsHost), "Umami nicht in frame-src");
             foreach (string dir in new[] { "script-src", "frame-src", "img-src", "connect-src" })
             {
                 string[] list = Sources(dir);

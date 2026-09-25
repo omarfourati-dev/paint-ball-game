@@ -14,6 +14,10 @@ namespace Paintball.Server
     {
         public const int DefaultInterstitialEvery = 3;
 
+        /// <summary>Selbst gehostete Umami-Instanz (Reichweitenmessung, Teil 2 der Analyse-Spec) – unabhängig von Werbung immer in
+        /// script-src (Tracker-Skript) und connect-src (Sendeaufruf an /api/e) erlaubt.</summary>
+        public const string AnalyticsHost = "https://analytics.omarfourati.de";
+
         /// <summary>
         /// Skripte: nur die konkreten Hosts von AdSense, Consent-Nachricht (CMP) und Betrugserkennung – keine breiten Google-Wildcards,
         /// damit nicht jedes Skript unter google.com/gstatic.com auf der Seite laufen darf.
@@ -81,13 +85,13 @@ namespace Paintball.Server
         public string ContentSecurityPolicy()
         {
             if (!Enabled)
-                return "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; " +
-                       "connect-src 'self' wss:; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
+                return $"default-src 'self'; script-src 'self' {AnalyticsHost}; style-src 'self' 'unsafe-inline'; img-src 'self' data:; " +
+                       $"connect-src 'self' wss: {AnalyticsHost}; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
             string scripts = string.Join(" ", ScriptSources);
             string g = string.Join(" ", AdSources);
             string img = string.Join(" ", AdSources.Concat(ImageOnlySources));
-            return $"default-src 'self'; script-src 'self' {scripts}; style-src 'self' 'unsafe-inline'; img-src 'self' data: {img}; " +
-                   $"connect-src 'self' wss: {g}; frame-src {g}; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
+            return $"default-src 'self'; script-src 'self' {scripts} {AnalyticsHost}; style-src 'self' 'unsafe-inline'; img-src 'self' data: {img}; " +
+                   $"connect-src 'self' wss: {g} {AnalyticsHost}; frame-src {g}; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
         }
     }
 }

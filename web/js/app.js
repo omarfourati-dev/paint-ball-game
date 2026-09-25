@@ -15,6 +15,7 @@ import { Ads } from './ads.js';
 import { escapeHtml as esc, formatNumber, formatPercent, formatTime, inviteUrl } from './format.js';
 import { MODES, TEAM_MODES } from './protocol.js';
 import { bootStep, loginUrl, authErrorKey, nameErrorKey, nextConnectState, closeAction, retryDelay, LEGACY_KEYS } from './auth.js';
+import { track } from './track.js';
 
 const MODE_ICON = { tdm: '⚔️', ffa: '💥', ctf: '🚩', elim: '☠️', koth: '👑', training: '🎯' };
 const MAP_IDS = ['speedball', 'warehouse', 'forest', 'arena'];
@@ -325,6 +326,7 @@ export class App {
           <span class="muted small"><a href="/datenschutz">${esc(t('landing.privacy'))}</a> · <a href="/impressum">${esc(t('landing.imprint'))}</a></span>
         </div>
       </div>`;
+    $('#btn-google').addEventListener('click', () => track('login'));
   }
 
   /** Hinweis nach Server-Kick oder Übernahme durch einen anderen Tab; verbindet nur auf Knopfdruck neu. */
@@ -557,6 +559,7 @@ export class App {
     $('#lobby-leave').onclick = () => this.net.send({ t: 'leave' });
     const copy = $('#copy-code');
     if (copy) copy.onclick = async () => {
+      track('share_invite');
       try { await navigator.clipboard.writeText(inviteLink); this.toast(t('lobby.copied')); }
       catch { this.toast(inviteLink); }
     };
@@ -594,6 +597,7 @@ export class App {
   // ---------------- Match ----------------
 
   onStart(m) {
+    track('match_start', { mode: m.mode, map: m.map });
     this.audio.unlock();
     this.audio.stopMusic();
     this.closeWheel();
@@ -734,6 +738,8 @@ export class App {
   onEnd(m) {
     this.lastEnd = m;
     this.endAt = performance.now();
+    const result = m.winner === null ? 'draw' : m.you.won ? 'win' : 'loss';
+    track('match_end', { mode: this.game.mode, map: this.game.map, result });
     if (this.game.tutorial && !this.game.tutorial.done) { /* Tutorial-Fortschritt bleibt gespeichert */ }
     this.leaveGameView();
     this.matchesFinished++;

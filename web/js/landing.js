@@ -3,6 +3,7 @@ import { t, setLang, getLang, mapName } from './i18n.js';
 import { loadSettings, saveSettings, keyLabel } from './settings.js';
 import { installMode, isIos } from './install.js';
 import { registerServiceWorker } from './sw-register.js';
+import { track } from './track.js';
 
 const MODES = [['tdm', '🎯'], ['ffa', '💥'], ['ctf', '🚩'], ['elim', '☠️'], ['koth', '👑'], ['training', '🤖']];
 const FEATURES = [['fair', '⚖️'], ['rooms', '🔑'], ['nop2w', '🛡️'], ['a11y', '♿'], ['input', '🎮'], ['crossplay', '🌍']];
@@ -135,7 +136,8 @@ async function onInstallClick() {
   hint.hidden = true;
   if (mode === 'prompt' && deferredPrompt) {
     deferredPrompt.prompt();
-    await deferredPrompt.userChoice.catch(() => null);
+    const choice = await deferredPrompt.userChoice.catch(() => null);
+    if (choice?.outcome === 'accepted') track('install_pwa');
     deferredPrompt = null;
     renderInstall();
   } else if (mode === 'ios') {
@@ -158,6 +160,7 @@ function init() {
     setLang(next.lang);
     render();
   });
+  $('#btn-play').addEventListener('click', () => track('play_browser'));
   $('#btn-install').addEventListener('click', onInstallClick);
   $('#btn-exe').addEventListener('click', e => e.preventDefault());
   addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferredPrompt = e; renderInstall(); });

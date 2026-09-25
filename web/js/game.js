@@ -31,6 +31,7 @@ export class ClientGame {
   start(msg) {
     this.active = true;
     this.mode = msg.mode;
+    this.map = msg.map;
     this.me = msg.you;
     this.myTeam = msg.team;
     this.teamMode = TEAM_MODES.has(msg.mode) || msg.teamMode;
