@@ -4,7 +4,7 @@ import { Predictor } from './prediction.js';
 import { SnapshotBuffer, ServerClock } from './interpolation.js';
 import { BTN, decodePlayers, encodeInput, TEAM_MODES } from './protocol.js';
 import * as M from './movement.js';
-import { aimAngles, aimAssistFactor, angleBetween, shouldAutoFire } from './aim.js';
+import { aimAngles, aimAssistFactor, angleBetween, shouldAutoFire, resolveFireButton } from './aim.js';
 import { hexToRgb } from './renderer.js';
 import * as S from './scene.js';
 import { t, phrases, getLang } from './i18n.js';
@@ -67,6 +67,7 @@ export class ClientGame {
     this.eyeH = M.EYE_STAND;
     this.renderOffset = [0, 0, 0];
     this.pendingPressed = new Set();
+    this.uiBlocking = false;
     this.frameInput = { mx: 0, mz: 0, fire: false, sprint: false, crouch: false, jump: false };
     this.localShots = [];
     this.lastLocalShot = 0;
@@ -443,6 +444,7 @@ export class ClientGame {
 
   frame(nowMs, dt, uiBlocking) {
     if (!this.active || !this.world) return;
+    this.uiBlocking = uiBlocking;
     this.fps = this.fps * 0.95 + (1 / Math.max(1e-3, dt)) * 0.05;
     const settings = this.settings;
     const assist = (this.input.device === 'touch' || this.input.device === 'pad')
@@ -484,7 +486,7 @@ export class ClientGame {
 
     const autoFire = shouldAutoFire({ enabled: this.settings.autoFire, device: this.input.device, target: this.autoTarget, range: this.marker?.range ?? 0 });
     let buttons = 0;
-    if ((inp.fire || autoFire) && running) buttons |= BTN.FIRE;
+    if (resolveFireButton({ fire: inp.fire, autoFire, running, uiBlocking: this.uiBlocking })) buttons |= BTN.FIRE;
     if (inp.jump) buttons |= BTN.JUMP;
     if (inp.crouch) buttons |= BTN.CROUCH;
     if (inp.sprint) buttons |= BTN.SPRINT;

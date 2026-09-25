@@ -27,3 +27,13 @@ export function shouldAutoFire({ enabled, device, target, range }) {
   if (!enabled || device !== 'touch' || !target) return false;
   return target.visible && !target.protected && target.angle < ASSIST_CONE && target.distance <= range;
 }
+
+/**
+ * Endgültiger Feuer-Knopf für diesen Tick (Review-Fix Runde 1, A2): manuelles Feuer oder Auto-Feuer,
+ * aber nie während blockierender UI (Pause/Wheel/Menü) und nie außerhalb einer laufenden Runde.
+ * `fire` kommt aus frameInput und ist bei uiBlocking bereits false; Auto-Feuer wird unabhängig davon
+ * berechnet und muss deshalb hier ausdrücklich mit uiBlocking verknüpft werden.
+ */
+export function resolveFireButton({ fire, autoFire, running, uiBlocking }) {
+  return !!running && !uiBlocking && (!!fire || !!autoFire);
+}

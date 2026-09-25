@@ -6,7 +6,7 @@ import { STRINGS, t, setLang, phrases, getLang, mapName } from '../../web/js/i18
 import { DEFAULTS, DEFAULT_KEYS, KEYS_VERSION, sanitize, loadSettings, saveSettings, rebind, teamPalette, ACTIONS, keyLabel } from '../../web/js/settings.js';
 import { TutorialTracker, STEPS, stepTextKey } from '../../web/js/tutorial.js';
 import { formatTime, connectionQuality, formatNumber, inviteUrl } from '../../web/js/format.js';
-import { aimAngles, aimAssistFactor, shouldAutoFire, ASSIST_CONE } from '../../web/js/aim.js';
+import { aimAngles, aimAssistFactor, shouldAutoFire, ASSIST_CONE, resolveFireButton } from '../../web/js/aim.js';
 
 function memoryStorage() {
   const data = new Map();
@@ -229,4 +229,12 @@ test('Tutorial: Touch-Hinweise für Bewegen, Umschauen, Schießen, Ducken, Treff
     assert.ok(STRINGS.de[`tutorial.${id}.touch`], `DE fehlt: ${id}`);
     assert.ok(STRINGS.en[`tutorial.${id}.touch`], `EN fehlt: ${id}`);
   }
+});
+
+test('Auto-Feuer: blockierende UI (Pause/Wheel/Menü) unterdrückt den Feuer-Knopf auch mit gültigem Ziel (Review-Fix)', () => {
+  assert.equal(resolveFireButton({ fire: false, autoFire: true, running: true, uiBlocking: true }), false, 'Auto-Feuer bei blockierender UI aus');
+  assert.equal(resolveFireButton({ fire: true, autoFire: false, running: true, uiBlocking: true }), false, 'manuelles Feuer bei blockierender UI aus');
+  assert.equal(resolveFireButton({ fire: false, autoFire: true, running: true, uiBlocking: false }), true, 'Auto-Feuer normal an');
+  assert.equal(resolveFireButton({ fire: true, autoFire: false, running: true, uiBlocking: false }), true, 'manuelles Feuer normal an');
+  assert.equal(resolveFireButton({ fire: true, autoFire: true, running: false, uiBlocking: false }), false, 'nicht laufende Runde: kein Feuer');
 });
