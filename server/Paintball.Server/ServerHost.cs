@@ -56,6 +56,8 @@ namespace Paintball.Server
         public string GoogleClientSecret;
         /// <summary>Überschreibbar für Tests (Task 6).</summary>
         public IGoogleOAuthClient Google;
+        /// <summary>Nur für Tests: Vorrang vor DatabaseUrl.</summary>
+        public IPlayerRepository Repository;
     }
 
     /// <summary>
@@ -102,7 +104,11 @@ namespace Paintball.Server
             builder.Services.Configure<BrotliCompressionProviderOptions>(o => o.Level = CompressionLevel.Optimal);
 
             IPlayerRepository repo;
-            if (string.IsNullOrWhiteSpace(options.DatabaseUrl))
+            if (options.Repository != null)
+            {
+                repo = options.Repository;
+            }
+            else if (string.IsNullOrWhiteSpace(options.DatabaseUrl))
             {
                 Console.Error.WriteLine("[DB] DATABASE_URL nicht gesetzt – Konten nur im Arbeitsspeicher (gehen beim Neustart verloren)");
                 repo = new InMemoryPlayerRepository();

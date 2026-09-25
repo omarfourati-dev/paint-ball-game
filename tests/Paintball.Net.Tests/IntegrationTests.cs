@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -23,6 +24,7 @@ namespace Paintball.Net.Tests
         {
             r.RunAsync("WSS: Login, Training starten, Snapshots empfangen über wss:// (FR-25/NFR-11)", WssEndToEnd);
             r.RunAsync("HTTPS: Health-Endpoint und Security-Header (NFR-06/NFR-11)", HealthAndHeaders);
+            r.RunAsync("Health: Datenbank nicht erreichbar → 503 mit db=error", HealthDatabaseUnavailable);
             r.RunAsync("HTTPS: Kartendaten aus Core-MapCatalog für den Client (FR-53)", MapsApi);
             r.RunAsync("WSS: Fremde Origin wird abgewiesen (CSWSH-Schutz)", ForeignOriginRejected);
             r.RunAsync("HTTP: Weiterleitung auf HTTPS (NFR-11)", HttpRedirectsToHttps);
@@ -70,6 +72,33 @@ namespace Paintball.Net.Tests
                 if (code == "bad") throw new InvalidOperationException("token error");
                 return Task.FromResult(new GoogleUser { Sub = "g-" + code, Email = code + "@gmail.com", GivenName = GivenName });
             }
+        }
+
+        private sealed class ThrowingRepository : Paintball.Net.Accounts.IPlayerRepository
+        {
+            private readonly Paintball.Net.Accounts.InMemoryPlayerRepository _inner;
+
+            public ThrowingRepository()
+            {
+                _inner = new Paintball.Net.Accounts.InMemoryPlayerRepository();
+            }
+
+            public Paintball.Net.Accounts.PlayerRecord FindBySub(string googleSub) => _inner.FindBySub(googleSub);
+            public Paintball.Net.Accounts.PlayerRecord Get(string playerId) => _inner.Get(playerId);
+            public Paintball.Net.Accounts.PlayerRecord Create(string googleSub, string email) => _inner.Create(googleSub, email);
+            public void RecordLogin(string playerId, string email, DateTime when) => _inner.RecordLogin(playerId, email, when);
+            public void SaveProgress(Paintball.Net.Accounts.PlayerRecord player) => _inner.SaveProgress(player);
+            public Paintball.Net.Accounts.NameResult TrySetName(string playerId, string name) => _inner.TrySetName(playerId, name);
+            public void AddMatch(string playerId, Paintball.Net.Accounts.MatchRecord match) => _inner.AddMatch(playerId, match);
+            public IReadOnlyList<Paintball.Net.Accounts.MatchRecord> RecentMatches(string playerId, int limit) => _inner.RecentMatches(playerId, limit);
+            public IReadOnlyList<Paintball.Net.Accounts.PlayerRecord> TopByMmr(int limit) => _inner.TopByMmr(limit);
+            public int Count() => throw new InvalidOperationException("db down");
+            public bool Delete(string playerId) => _inner.Delete(playerId);
+            public void CreateSession(string tokenHash, string playerId, DateTime expiresAt) => _inner.CreateSession(tokenHash, playerId, expiresAt);
+            public string PlayerIdForSession(string tokenHash, DateTime now) => _inner.PlayerIdForSession(tokenHash, now);
+            public void DeleteSession(string tokenHash) => _inner.DeleteSession(tokenHash);
+            public void DeleteSessionsOf(string playerId) => _inner.DeleteSessionsOf(playerId);
+            public int DeleteExpiredSessions(DateTime now) => _inner.DeleteExpiredSessions(now);
         }
 
         private static string Challenge(string v) => Convert.ToBase64String(System.Security.Cryptography.SHA256.HashData(Encoding.ASCII.GetBytes(v)))
@@ -279,7 +308,7 @@ namespace Paintball.Net.Tests
             public int HttpPort;
             public HttpClient Http;
 
-            public static async Task<Harness> StartAsync(bool devLogin = true, IGoogleOAuthClient google = null, bool googleConfigured = true)
+            public static async Task<Harness> StartAsync(bool devLogin = true, IGoogleOAuthClient google = null, bool googleConfigured = true, Paintball.Net.Accounts.IPlayerRepository repository = null)
             {
                 string web = AccountTests.TempDir();
                 HarnessWebRoot = web;
@@ -298,6 +327,7 @@ namespace Paintball.Net.Tests
                     GoogleClientSecret = googleConfigured ? "test-secret" : null,
                     Google = google ?? new FakeGoogle(), // der echte Client wird in Tests nie aufgerufen
                     PublicUrl = null,
+                    Repository = repository,
                     Game = new Paintball.Net.Rooms.ServerOptions { LobbyCountdownSeconds = 0.5f }
                 };
                 WebApplication app = ServerHost.Build(Array.Empty<string>(), options);
@@ -405,6 +435,19 @@ namespace Paintball.Net.Tests
             Assert.IsTrue(res.Headers.Contains("Content-Security-Policy"), "CSP gesetzt");
             Assert.IsTrue(res.Headers.GetValues("X-Content-Type-Options").First() == "nosniff", "nosniff");
             Assert.IsTrue(res.Headers.Contains("Strict-Transport-Security"), "HSTS");
+        }
+
+        private static async Task HealthDatabaseUnavailable()
+        {
+            var throwingRepo = new ThrowingRepository();
+            await using Harness h = await Harness.StartAsync(repository: throwingRepo);
+            HttpResponseMessage res = await h.Http.GetAsync("/api/health");
+            Assert.AreEqual((HttpStatusCode)503, res.StatusCode, "Health 503");
+            string bodyText = await res.Content.ReadAsStringAsync();
+            JsonElement body = JsonDocument.Parse(bodyText).RootElement;
+            Assert.AreEqual("degraded", body.GetProperty("status").GetString(), "Status degraded");
+            Assert.AreEqual("error", body.GetProperty("db").GetString(), "db=error");
+            Assert.IsFalse(bodyText.Contains("db down"), "Fehlermeldung nicht nach außen");
         }
 
         private static async Task ServesModels()
