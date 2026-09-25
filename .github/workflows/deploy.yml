@@ -56,16 +56,22 @@ jobs:
 
       - name: Write .env
         run: |
+          # AdSense (öffentliche Werte, daher GitHub-Variables): nur gültige Werte schreiben – gleiche Regeln wie der Server
+          # (AdsConfig.cs). Ungültiges oder Fehlendes fällt weg, dann bleibt die Werbung bzw. der Slot aus. printf '%s\n'
+          # schreibt genau eine Zeile; da die Muster nur Ziffern/ca-pub- erlauben, kann kein Zeilenumbruch eine zweite Variable einschleusen.
+          adsense_line() { # Name, Wert, Muster
+            if [[ -n "$2" && "$2" =~ $3 ]]; then printf '%s\n' "$1=$2"
+            elif [[ -n "$2" ]]; then echo "::warning::$1 hat ein ungültiges Format und wird nicht gesetzt" >&2; fi
+          }
           {
             echo "DB_PASSWORD=$DB_PASSWORD"
             echo "GOOGLE_CLIENT_ID=$GOOGLE_CLIENT_ID"
             echo "GOOGLE_CLIENT_SECRET=$GOOGLE_CLIENT_SECRET"
-            # AdSense (öffentliche Werte, daher GitHub-Variables): fehlen sie, bleibt die Werbung aus
-            echo "ADSENSE_CLIENT=$ADSENSE_CLIENT"
-            echo "ADSENSE_SLOT_LANDING=$ADSENSE_SLOT_LANDING"
-            echo "ADSENSE_SLOT_LOBBY=$ADSENSE_SLOT_LOBBY"
-            echo "ADSENSE_SLOT_RESULTS=$ADSENSE_SLOT_RESULTS"
-            echo "ADSENSE_INTERSTITIAL_EVERY=${ADSENSE_INTERSTITIAL_EVERY:-3}"
+            adsense_line ADSENSE_CLIENT "$ADSENSE_CLIENT" '^ca-pub-[0-9]{16}$'
+            adsense_line ADSENSE_SLOT_LANDING "$ADSENSE_SLOT_LANDING" '^[0-9]+$'
+            adsense_line ADSENSE_SLOT_LOBBY "$ADSENSE_SLOT_LOBBY" '^[0-9]+$'
+            adsense_line ADSENSE_SLOT_RESULTS "$ADSENSE_SLOT_RESULTS" '^[0-9]+$'
+            adsense_line ADSENSE_INTERSTITIAL_EVERY "$ADSENSE_INTERSTITIAL_EVERY" '^[0-9]{1,3}$'
           } > $DEPLOY_DIR/.env
           chmod 600 $DEPLOY_DIR/.env
         env:

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.RegularExpressions;
 
 namespace Paintball.Server
@@ -13,16 +14,28 @@ namespace Paintball.Server
     {
         public const int DefaultInterstitialEvery = 3;
 
-        /// <summary>Google-Domains für Anzeigen, Consent-Nachricht (CMP) und Betrugserkennung – nur bei aktiver Werbung in der CSP.</summary>
-        public static readonly string[] CspSources =
+        /// <summary>
+        /// Skripte: nur die konkreten Hosts von AdSense, Consent-Nachricht (CMP) und Betrugserkennung – keine breiten Google-Wildcards,
+        /// damit nicht jedes Skript unter google.com/gstatic.com auf der Seite laufen darf.
+        /// </summary>
+        public static readonly string[] ScriptSources =
         {
-            "https://pagead2.googlesyndication.com", "https://*.googlesyndication.com", "https://*.doubleclick.net",
-            "https://*.google.com", "https://*.gstatic.com", "https://fundingchoicesmessages.google.com",
-            "https://adservice.google.com", "https://*.adtrafficquality.google"
+            "https://pagead2.googlesyndication.com", "https://fundingchoicesmessages.google.com", "https://www.google.com",
+            "https://tpc.googlesyndication.com", "https://*.adtrafficquality.google"
         };
 
+        /// <summary>Anzeigen-Frames, Bilder und Messaufrufe: breitere Google-Domains (ohne Doppelungen, die Wildcards decken Unterhosts ab).</summary>
+        public static readonly string[] AdSources =
+        {
+            "https://*.googlesyndication.com", "https://*.doubleclick.net", "https://*.google.com", "https://*.gstatic.com",
+            "https://*.adtrafficquality.google"
+        };
+
+        /// <summary>Zusätzlich nur für Bilder (Consent-/Mess-Pixel über die Länder-Domain).</summary>
+        public static readonly string[] ImageOnlySources = { "https://www.google.de" };
+
         private static readonly Regex ClientPattern = new("^ca-pub-[0-9]{16}$", RegexOptions.CultureInvariant);
-        private static readonly Regex SlotPattern = new("^[0-9]{1,20}$", RegexOptions.CultureInvariant);
+        private static readonly Regex SlotPattern = new("^[0-9]+$", RegexOptions.CultureInvariant);
 
         public static readonly AdsConfig Disabled = new(null, new Dictionary<string, string>(), DefaultInterstitialEvery);
 
@@ -70,8 +83,10 @@ namespace Paintball.Server
             if (!Enabled)
                 return "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; " +
                        "connect-src 'self' wss:; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
-            string g = string.Join(" ", CspSources);
-            return $"default-src 'self'; script-src 'self' {g}; style-src 'self' 'unsafe-inline'; img-src 'self' data: {g}; " +
+            string scripts = string.Join(" ", ScriptSources);
+            string g = string.Join(" ", AdSources);
+            string img = string.Join(" ", AdSources.Concat(ImageOnlySources));
+            return $"default-src 'self'; script-src 'self' {scripts}; style-src 'self' 'unsafe-inline'; img-src 'self' data: {img}; " +
                    $"connect-src 'self' wss: {g}; frame-src {g}; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
         }
     }

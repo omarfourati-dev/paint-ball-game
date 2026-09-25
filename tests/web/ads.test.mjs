@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
-import { Ads, shouldShowBreak, normalizeConfig, scriptUrl, ADS_SCRIPT } from '../../web/js/ads.js';
+import { Ads, shouldShowBreak, normalizeConfig, scriptUrl, ADS_SCRIPT, BREAK_TIMEOUT_MS } from '../../web/js/ads.js';
 
 const webPath = p => new URL(`../../web/${p}`, import.meta.url);
 const ON = { enabled: true, client: 'ca-pub-1234567890123456', slots: { landing: '111', lobby: '222', results: '333' }, interstitialEvery: 3 };
@@ -21,14 +21,27 @@ function fakeDom() {
   return { doc, make };
 }
 
+const R = { screen: 'results', roomState: 'results' }; // Ergebnis-Screen in der Ergebnisphase des Raums
+
 test('Werbung: shouldShowBreak – nie im Match, nie ohne Werbung, genau jedes N-te Match', () => {
-  assert.equal(shouldShowBreak({ matchesFinished: 3, every: 3, inMatch: true }), false, 'nie während eines Matches');
-  assert.equal(shouldShowBreak({ enabled: false, matchesFinished: 3, every: 3, inMatch: false }), false, 'aus ohne Werbung');
-  assert.deepEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => shouldShowBreak({ matchesFinished: n, every: 3, inMatch: false })),
+  assert.equal(shouldShowBreak({ ...R, matchesFinished: 3, every: 3, inMatch: true }), false, 'nie während eines Matches');
+  assert.equal(shouldShowBreak({ ...R, enabled: false, matchesFinished: 3, every: 3, inMatch: false }), false, 'aus ohne Werbung');
+  assert.deepEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => shouldShowBreak({ ...R, matchesFinished: n, every: 3, inMatch: false })),
     [false, false, false, true, false, false, true, false, false, true]);
-  assert.equal(shouldShowBreak({ matchesFinished: 1, every: 1, inMatch: false }), true, 'every=1: nach jedem Match');
-  assert.equal(shouldShowBreak({ matchesFinished: 3, every: 3, inMatch: false, shownFor: 3 }), false, 'höchstens einmal je Match');
-  assert.equal(shouldShowBreak({ matchesFinished: 3, every: 0, inMatch: false }), false, 'ungültiges Intervall');
+  assert.equal(shouldShowBreak({ ...R, matchesFinished: 1, every: 1, inMatch: false }), true, 'every=1: nach jedem Match');
+  assert.equal(shouldShowBreak({ ...R, matchesFinished: 3, every: 3, inMatch: false, shownFor: 3 }), false, 'höchstens einmal je Match');
+  assert.equal(shouldShowBreak({ ...R, matchesFinished: 3, every: 0, inMatch: false }), false, 'ungültiges Intervall');
+});
+
+test('Werbung: shouldShowBreak – nur auf dem Ergebnis-Screen in der Ergebnisphase, nie in Lobby oder Countdown', () => {
+  const base = { matchesFinished: 3, every: 3, inMatch: false };
+  assert.equal(shouldShowBreak({ ...base, screen: 'results', roomState: 'results' }), true);
+  assert.equal(shouldShowBreak({ ...base, screen: 'lobby', roomState: 'results' }), false, 'nicht in der Lobby');
+  assert.equal(shouldShowBreak({ ...base, screen: 'lobby', roomState: 'lobby' }), false, 'nicht in der Lobby');
+  assert.equal(shouldShowBreak({ ...base, screen: 'results', roomState: 'countdown' }), false, 'nicht im Countdown');
+  assert.equal(shouldShowBreak({ ...base, screen: 'results', roomState: 'lobby' }), false, 'Ergebnisphase schon vorbei');
+  assert.equal(shouldShowBreak({ ...base, screen: 'results', roomState: 'match' }), false, 'Lobby-Update noch nicht da (end kommt zuerst)');
+  assert.equal(shouldShowBreak({ ...base, screen: 'results', roomState: undefined }), false, 'ohne Raum keine Pause');
 });
 
 test('Werbung: Server-Antwort wird geprüft – alles Unerwartete heißt aus', () => {
@@ -91,12 +104,12 @@ test('Werbung: mit Konfiguration einmal das Skript, H5-Konfiguration mit Vorlade
 test('Werbung: Interstitial nur außerhalb des Matches, nach jedem N-ten Match, Ton pausiert und läuft danach weiter', async () => {
   const { doc } = fakeDom();
   const win = {};
-  const ads = new Ads({ fetchJson: async () => ON, doc, win });
+  const ads = new Ads({ fetchJson: async () => ON, doc, win, timers: { setTimeout: () => 1, clearTimeout() {} } });
   await ads.init({ h5: true });
   const breaks = [];
   win.adBreak = o => breaks.push(o); // an Stelle der Google-Bibliothek
   const audio = [];
-  const cb = { onBefore: () => audio.push('pause'), onAfter: () => audio.push('resume') };
+  const cb = { ...R, onBefore: () => audio.push('pause'), onAfter: () => audio.push('resume') };
   assert.equal(ads.maybeBreak({ matchesFinished: 2, inMatch: false, ...cb }), false, 'Match 2: nein');
   assert.equal(ads.maybeBreak({ matchesFinished: 3, inMatch: true, ...cb }), false, 'im Match: nie');
   assert.equal(ads.maybeBreak({ matchesFinished: 3, inMatch: false, ...cb }), true, 'Match 3 in Lobby/Ergebnis: ja');
@@ -105,7 +118,9 @@ test('Werbung: Interstitial nur außerhalb des Matches, nach jedem N-ten Match, 
   assert.equal(breaks[0].name, 'match-break');
   breaks[0].beforeAd(); breaks[0].afterAd(); breaks[0].adBreakDone({});
   assert.deepEqual(audio, ['pause', 'resume']);
-  assert.equal(ads.maybeBreak({ matchesFinished: 3, inMatch: false, ...cb }), false, 'Wechsel Ergebnis → Lobby: nicht noch einmal');
+  assert.equal(ads.maybeBreak({ matchesFinished: 3, inMatch: false, ...cb }), false, 'erneutes Lobby-Update: nicht noch einmal');
+  assert.equal(ads.maybeBreak({ matchesFinished: 6, inMatch: false, ...cb, screen: 'lobby' }), false, 'in der Lobby nie');
+  assert.equal(ads.maybeBreak({ matchesFinished: 6, inMatch: false, ...cb, roomState: 'countdown' }), false, 'im Countdown nie');
   assert.equal(ads.maybeBreak({ matchesFinished: 6, inMatch: false, ...cb }), true, 'Match 6: wieder');
   assert.equal(ads.maybeBreak({ matchesFinished: 9, inMatch: false, ...cb }), false, 'solange eine Pause läuft keine zweite');
 });
@@ -146,4 +161,39 @@ test('Werbung: Service Worker cacht weder Google-Skripte noch /api/ads oder /ads
   assert.equal(SW.strategyFor(`${O}/api/ads`, O), 'network-only');
   assert.equal(SW.strategyFor(`${O}/ads.txt`, O), 'network-only');
   assert.ok(!SW.SHELL.includes('/ads.txt') && !SW.SHELL.some(u => u.startsWith('http')), 'nichts Fremdes vorab gecacht');
+});
+
+test('Werbung: blockiertes Skript (kein adBreakDone) – Sperre fällt nach 90 s, nächste Pause wieder möglich', async () => {
+  const { doc } = fakeDom();
+  const win = {};
+  const pending = [];
+  const cleared = [];
+  const timers = { setTimeout: (fn, ms) => { pending.push({ fn, ms }); return pending.length; }, clearTimeout: id => cleared.push(id) };
+  const ads = new Ads({ fetchJson: async () => ({ ...ON, interstitialEvery: 1 }), doc, win, timers });
+  await ads.init({ h5: true });
+  win.adBreak = () => {}; // Google-Bibliothek antwortet nie
+  assert.equal(ads.maybeBreak({ ...R, matchesFinished: 1, inMatch: false }), true);
+  assert.equal(pending[0].ms, BREAK_TIMEOUT_MS);
+  assert.equal(BREAK_TIMEOUT_MS, 90_000);
+  assert.equal(ads.maybeBreak({ ...R, matchesFinished: 2, inMatch: false }), false, 'Sperre aktiv');
+  pending[0].fn();
+  assert.equal(ads.breakRunning, false, 'Timeout gibt frei');
+  assert.equal(ads.maybeBreak({ ...R, matchesFinished: 2, inMatch: false }), true, 'danach wieder möglich');
+  let done;
+  win.adBreak = o => { done = o.adBreakDone; };
+  pending.length = 0;
+  cleared.length = 0;
+  ads.breakRunning = false;
+  assert.equal(ads.maybeBreak({ ...R, matchesFinished: 3, inMatch: false }), true);
+  done({});
+  assert.deepEqual(cleared, [1], 'adBreakDone räumt den Timeout ab');
+});
+
+test('Werbung: App ruft das Interstitial nur im Ergebnis-Screen in der Ergebnisphase und setzt den Ton nur ohne Match fort', () => {
+  const app = readFileSync(webPath('js/app.js'), 'utf8');
+  assert.match(app, /if \(name !== 'results'\) return;\n\s*this\.ads\.maybeBreak\(\{/);
+  assert.match(app, /roomState: this\.lobby\?\.state/);
+  assert.match(app, /onAfter: \(\) => \{ if \(!this\.game\.active\) this\.audio\.resume\(\); \}/);
+  assert.match(app, /if \(m\.state === 'results'\) \{ if \(this\.screen === 'results'\) this\.onAdScreen\('results'\); return; \}/,
+    'Lobby-Update mit state=results löst die Prüfung aus (end kommt vorher)');
 });

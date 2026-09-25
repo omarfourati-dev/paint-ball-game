@@ -251,13 +251,19 @@ export class App {
     if (first && this.input.device !== 'touch') first.focus();
   }
 
-  /** Werbung nur in Lobby und Ergebnis und nie während eines Matches: Banner füllen, ggf. Interstitial nach jedem N-ten Match. */
+  /**
+   * Werbung nur in Lobby und Ergebnis und nie während eines Matches: Banner füllen. Das Interstitial nach jedem N-ten Match
+   * nur auf dem Ergebnis-Screen, solange der Raum in der Ergebnisphase ist – nie in der Lobby oder im Countdown.
+   */
   onAdScreen(name) {
     if (this.game.active || !['lobby', 'results'].includes(name) || !this.ads.enabled) return;
     this.ads.fill(document.querySelector(`#screen-${name} > .ad-slot`), name);
+    if (name !== 'results') return;
     this.ads.maybeBreak({
-      matchesFinished: this.matchesFinished, inMatch: this.game.active,
-      onBefore: () => this.audio.pause(), onAfter: () => this.audio.resume()
+      matchesFinished: this.matchesFinished, inMatch: this.game.active, screen: name, roomState: this.lobby?.state,
+      // Ton nur außerhalb eines Matches anhalten/fortsetzen: im Match keine Menümusik neu starten
+      onBefore: () => { if (!this.game.active) this.audio.pause(); },
+      onAfter: () => { if (!this.game.active) this.audio.resume(); }
     });
   }
 
@@ -484,7 +490,8 @@ export class App {
   onLobby(m) {
     this.lobby = m;
     if (m.state === 'match' && this.game.active) return;
-    if (m.state === 'results') return;
+    // Das Ergebnis (end) kommt vor dem Lobby-Update mit state=results: erst jetzt ist die Ergebnisphase sicher
+    if (m.state === 'results') { if (this.screen === 'results') this.onAdScreen('results'); return; }
     if (this.screen !== 'lobby' && !this.game.active && this.screen !== 'results') this.show('lobby');
     else if (this.screen === 'lobby') this.renderLobby();
     else if (this.screen === 'results' && m.state === 'lobby') this.renderResultsCountdown();

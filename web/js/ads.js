@@ -4,7 +4,7 @@
 
 export const ADS_SCRIPT = 'https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js';
 const CLIENT = /^ca-pub-\d{16}$/;
-const SLOT = /^\d{1,20}$/;
+const SLOT = /^\d+$/;
 
 /** Server-Antwort von /api/ads prüfen; alles Unerwartete heißt „aus“. */
 export function normalizeConfig(raw) {
@@ -20,20 +20,27 @@ export function scriptUrl(client) {
   return `${ADS_SCRIPT}?client=${encodeURIComponent(client)}`;
 }
 
+/** Fällt adBreakDone aus (Skript blockiert), gibt die Sperre nach dieser Zeit wieder frei. */
+export const BREAK_TIMEOUT_MS = 90_000;
+
 /**
- * Interstitial nach jedem N-ten beendeten Match – nur außerhalb eines Matches und höchstens einmal je Match-Zählerstand.
- * @param {{enabled?: boolean, matchesFinished: number, every: number, inMatch: boolean, shownFor?: number}} s
+ * Interstitial nach jedem N-ten beendeten Match – nur auf dem Ergebnis-Screen, solange der Raum noch in der
+ * Ergebnisphase ist (nicht in der Lobby, nicht im Countdown, nie im Match) und höchstens einmal je Match-Zählerstand.
+ * @param {{enabled?: boolean, matchesFinished: number, every: number, inMatch: boolean, screen: string, roomState: string, shownFor?: number}} s
  */
-export function shouldShowBreak({ enabled = true, matchesFinished, every, inMatch, shownFor = 0 }) {
+export function shouldShowBreak({ enabled = true, matchesFinished, every, inMatch, screen, roomState, shownFor = 0 }) {
   if (!enabled || inMatch) return false;
+  if (screen !== 'results' || roomState !== 'results') return false;
   if (!Number.isInteger(every) || every < 1 || !Number.isInteger(matchesFinished) || matchesFinished < 1) return false;
   return matchesFinished % every === 0 && shownFor !== matchesFinished;
 }
 
 /** Werbe-Steuerung für eine Seite. `fetchJson` und `doc` sind für Tests austauschbar. */
 export class Ads {
-  constructor({ fetchJson = defaultFetchJson, doc = globalThis.document, win = globalThis } = {}) {
+  constructor({ fetchJson = defaultFetchJson, doc = globalThis.document, win = globalThis, timers = globalThis } = {}) {
     this.fetchJson = fetchJson;
+    this.timers = timers;
+    this.breakTimer = null;
     this.doc = doc;
     this.win = win;
     this.config = { enabled: false };
@@ -91,17 +98,23 @@ export class Ads {
    * Interstitial zwischen Matches. `inMatch` muss der aktuelle Zustand sein; Ton wird während der Anzeige pausiert.
    * @returns {boolean} ob eine Werbepause angefragt wurde
    */
-  maybeBreak({ matchesFinished, inMatch, onBefore, onAfter }) {
+  maybeBreak({ matchesFinished, inMatch, screen, roomState, onBefore, onAfter }) {
     if (this.breakRunning || typeof this.win.adBreak !== 'function') return false;
-    if (!shouldShowBreak({ enabled: this.config.enabled, matchesFinished, every: this.config.interstitialEvery, inMatch, shownFor: this.breakShownFor })) return false;
+    if (!shouldShowBreak({ enabled: this.config.enabled, matchesFinished, every: this.config.interstitialEvery, inMatch, screen, roomState, shownFor: this.breakShownFor })) return false;
     this.breakShownFor = matchesFinished;
     this.breakRunning = true;
+    const done = () => {
+      this.breakRunning = false;
+      if (this.breakTimer != null) this.timers.clearTimeout(this.breakTimer);
+      this.breakTimer = null;
+    };
+    this.breakTimer = this.timers.setTimeout(done, BREAK_TIMEOUT_MS);
     this.win.adBreak({
       type: 'next',
       name: 'match-break',
       beforeAd: () => onBefore?.(),
       afterAd: () => onAfter?.(),
-      adBreakDone: () => { this.breakRunning = false; }
+      adBreakDone: done
     });
     return true;
   }

@@ -22,7 +22,7 @@ test('SEO: Landingpage mit Titel, Beschreibung, Canonical, robots, Autor', () =>
   assert.ok(title.includes('Paintball online spielen') && title.length <= 65, `Titel: ${title}`);
   assert.equal(STRINGS.de['landing.title'], title, 'landing.js setzt denselben Titel per i18n');
   const desc = meta(index, 'name', 'description');
-  assert.ok(desc.length >= 120 && desc.length <= 170, `Beschreibung ${desc.length} Zeichen`);
+  assert.ok(desc.length >= 120 && desc.length <= 155, `Beschreibung ${desc.length} Zeichen (höchstens 155)`);
   assert.match(index, new RegExp(`<link rel="canonical" href="${ORIGIN}/">`));
   assert.match(meta(index, 'name', 'robots'), /^index, follow/);
   assert.equal(meta(index, 'name', 'author'), 'Omar Fourati');
@@ -115,10 +115,26 @@ test('GEO: zitierfähiger Einleitungssatz sichtbar im Hero, DE und EN', () => {
 
 test('Datenschutz: AdSense-Abschnitt mit Anbieter, Einwilligung, nicht personalisierten Anzeigen, Drittland und Widerruf', () => {
   const privacy = web('datenschutz.html');
-  for (const s of ['Werbung mit Google AdSense', 'Google Ireland Limited', 'Einwilligung', 'nicht personalisierte Anzeigen',
+  for (const s of ['Werbung mit Google AdSense', 'Google Ireland Limited', 'Einwilligung', 'eingeschränkte Anzeigen',
     'EU-US Data Privacy Framework', 'Datenschutzeinstellungen', 'widerrufen', '§ 25 Abs. 1 TDDDG', 'Art. 6 Abs. 1 lit. a DSGVO',
+    'Art. 6 Abs. 1 lit. f DSGVO: Mein berechtigtes Interesse ist, die gesetzlich vorgeschriebene Einwilligung', 'IP-Adresse',
+    'Nur mit deiner Einwilligung', 'Ohne Einwilligung',
     'Werbung wird über Google AdSense eingeblendet, sofern aktiviert'])
     assert.ok(privacy.includes(s), `Datenschutz enthält ${s}`);
   assert.ok(!privacy.includes('keine Werbung'), 'Aussage „keine Werbung“ korrigiert');
   assert.ok(!web('llms.txt').includes('keine Werbung'), 'llms.txt ebenso');
+});
+
+test('SEO: Bot-Angaben entsprechen Room.cs – Auffüllen nur bei schnellen Matches (8 Team, 6 FFA), privat bestimmt der Host', () => {
+  const graph = jsonLd(index);
+  const faq = graph.find(n => n['@type'] === 'FAQPage');
+  const players = faq.mainEntity.find(e => e.name.startsWith('Wie viele Spieler')).acceptedAnswer.text;
+  for (const txt of [players, STRINGS.de['landing.faq.players.a'], web('llms.txt')]) {
+    assert.ok(!/freie Plätze werden mit Bots gefüllt/i.test(txt), 'keine pauschale Aussage „freie Plätze mit Bots“');
+    assert.ok(txt.includes('Bei schnellen Matches füllen Bots auf 8 Spieler (Team-Modi) bzw. 6 (Jeder gegen jeden) auf'), 'Quick-Match-Auffüllung');
+    assert.ok(txt.includes('in privaten Räumen legt der Host die Bots fest'), 'private Räume');
+  }
+  const en = STRINGS.en['landing.faq.players.a'];
+  assert.ok(en.includes('bots top up to 8 players (team modes) or 6 (free for all)') && en.includes('private rooms the host decides'), 'EN');
+  assert.ok(!/free slots are filled/i.test(en));
 });

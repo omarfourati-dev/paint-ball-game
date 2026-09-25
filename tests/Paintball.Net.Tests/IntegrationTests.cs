@@ -664,10 +664,28 @@ namespace Paintball.Net.Tests
             HttpResponseMessage page = await h.Http.GetAsync("/");
             string csp = page.Headers.GetValues("Content-Security-Policy").First();
             Dictionary<string, string> dirs = csp.Split(';').Select(d => d.Trim()).ToDictionary(d => d.Split(' ')[0], d => d);
+            string[] Sources(string dir) => dirs[dir].Split(' ', StringSplitOptions.RemoveEmptyEntries).Skip(1).ToArray();
+            Assert.AreEqual(string.Join(" ", new[] { "'self'", "https://pagead2.googlesyndication.com", "https://fundingchoicesmessages.google.com",
+                "https://www.google.com", "https://tpc.googlesyndication.com", "https://*.adtrafficquality.google" }), string.Join(" ", Sources("script-src")),
+                "script-src nur konkrete AdSense-/CMP-Hosts");
+            Assert.IsFalse(dirs["script-src"].Contains("https://*.google.com") || dirs["script-src"].Contains("https://*.gstatic.com")
+                || dirs["script-src"].Contains("doubleclick"), "keine breiten Google-Wildcards für Skripte");
+            foreach (string dir in new[] { "frame-src", "img-src", "connect-src" })
+                foreach (string src in AdsConfig.AdSources)
+                    Assert.IsTrue(Sources(dir).Contains(src), $"{dir} enthält {src}");
+            Assert.IsTrue(Sources("img-src").Contains("https://www.google.de"), "img-src enthält www.google.de");
+            Assert.IsFalse(Sources("connect-src").Contains("https://www.google.de"), "google.de nur für Bilder");
             foreach (string dir in new[] { "script-src", "frame-src", "img-src", "connect-src" })
-                foreach (string src in AdsConfig.CspSources)
-                    Assert.IsTrue((" " + dirs[dir] + " ").Contains(" " + src + " "), $"{dir} enthält {src}");
-            Assert.IsTrue(dirs["script-src"].StartsWith("script-src 'self' "), "eigene Skripte weiter erlaubt");
+            {
+                string[] list = Sources(dir);
+                Assert.AreEqual(list.Length, list.Distinct().Count(), dir + " ohne Doppelungen");
+                foreach (string src in list.Where(x => x.StartsWith("https://", StringComparison.Ordinal) && !x.Contains('*')))
+                {
+                    string host = src.Substring(8);
+                    Assert.IsFalse(list.Any(w => w.StartsWith("https://*.", StringComparison.Ordinal) && host.EndsWith(w.Substring(9), StringComparison.Ordinal)),
+                        $"{dir}: {src} ist durch eine Wildcard schon abgedeckt");
+                }
+            }
             Assert.IsFalse(csp.Contains("unsafe-eval") || dirs["script-src"].Contains("unsafe-inline"), "keine unsicheren Skript-Quellen");
             Assert.AreEqual("default-src 'self'", dirs["default-src"], "default-src unverändert");
             Assert.AreEqual("frame-ancestors 'none'", dirs["frame-ancestors"], "nicht einbettbar");

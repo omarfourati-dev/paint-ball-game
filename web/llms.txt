@@ -9,7 +9,7 @@
 - Geräte: PC (Maus und Tastatur), Handy und Tablet (Touch-Steuerung mit virtuellem Stick), Gamepads werden automatisch erkannt. Cross-Play zwischen den Geräten, abschaltbar.
 - Spielmodi (6): Team-Deathmatch, Jeder gegen jeden, Capture the Flag, Last Player Standing, King of the Hill, Training gegen Bots.
 - Karten (4): Lagerhaus (bis 12 Spieler), Wald (bis 10), Arena (bis 8), Turnierfeld (bis 10).
-- Spieler: bis zu 12 pro Match je nach Karte; freie Plätze werden mit Bots gefüllt. Private Räume per Code oder Link für Spiele mit Freunden.
+- Spieler: bis zu 12 pro Match je nach Karte (Arena 8, Wald 10, Turnierfeld 10, Lagerhaus 12). Bei schnellen Matches füllen Bots auf 8 Spieler (Team-Modi) bzw. 6 (Jeder gegen jeden) auf; in privaten Räumen legt der Host die Bots fest. Private Räume per Code oder Link für Spiele mit Freunden.
 - Fairness: Matchmaking nach Spielstärke (MMR), Bestenliste.
 - Barrierefreiheit: Farbenblind-Modi, UI-Skalierung, Untertitel, weniger Bewegung, frei belegbare Tasten.
 - Konto: Anmeldung mit Google-Konto; öffentlich sichtbar ist nur der selbst gewählte Spielername. Daten-Export und Kontolöschung im Spiel.
