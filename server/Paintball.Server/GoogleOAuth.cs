@@ -85,8 +85,8 @@ namespace Paintball.Server
 
             app.MapGet("/api/auth/google", (HttpContext ctx) =>
             {
+                ctx.Response.Headers.CacheControl = "no-store"; // gilt auch für 429 (kein Zwischenspeichern von Auth-Antworten)
                 if (limiter.Exceeded(ctx)) return Results.StatusCode(429);
-                ctx.Response.Headers.CacheControl = "no-store";
                 if (!Configured(options) || google == null) return Results.Redirect("/play?auth_error=not_configured");
                 string state = Convert.ToHexString(RandomNumberGenerator.GetBytes(24));
                 string join = ValidJoin(ctx.Request.Query["join"].ToString()) ?? string.Empty;
@@ -107,8 +107,8 @@ namespace Paintball.Server
 
             app.MapGet("/api/auth/google/callback", async (HttpContext ctx) =>
             {
+                ctx.Response.Headers.CacheControl = "no-store"; // gilt auch für 429 (kein Zwischenspeichern von Auth-Antworten)
                 if (limiter.Exceeded(ctx)) return Results.StatusCode(429);
-                ctx.Response.Headers.CacheControl = "no-store";
                 string stored = ctx.Request.Cookies.TryGetValue(OAuthCookie, out string v) ? v : null;
                 ctx.Response.Cookies.Delete(OAuthCookie, cookieOpts); // state gilt genau einmal
                 string state = ctx.Request.Query["state"].ToString(), code = ctx.Request.Query["code"].ToString();

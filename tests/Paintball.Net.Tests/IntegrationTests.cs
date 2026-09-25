@@ -52,6 +52,9 @@ namespace Paintball.Net.Tests
             r.RunAsync("Google: Abbruch bei Google → auth_error=cancelled", GoogleCancelled);
             r.RunAsync("Google: Login ohne Namensbedarf löscht einen alten Namensvorschlag", GoogleClearsSuggest);
             r.RunAsync("Google: Cookie ohne Verifier (altes Format) → invalid_state", GoogleCookieWithoutVerifier);
+            r.RunAsync("Google: Cookie mit fehlerhaftem Verifier (Länge/Zeichen) → invalid_state", GoogleMalformedVerifier);
+            r.RunAsync("Google: Abbruch ohne pb_oauth-Cookie → invalid_state, keine Session (Anti-Login-CSRF)", GoogleCancelledWithoutCookie);
+            r.RunAsync("Google: no-store auch bei Rate-Limit (429) auf der Start-Route", GoogleStartRateLimitNoStore);
         }
 
         private static string HarnessWebRoot;
@@ -115,6 +118,7 @@ namespace Paintball.Net.Tests
                 HttpResponseMessage res = await h.Http.SendAsync(req);
                 Assert.AreEqual("/play?auth_error=invalid_state", res.Headers.Location.OriginalString, "Fehler-Weiterleitung: " + qs);
                 Assert.IsFalse(SetsSession(res), "keine Session");
+                Assert.IsTrue(res.Headers.CacheControl?.NoStore == true, "no-store: " + qs);
             }
         }
 
@@ -134,6 +138,7 @@ namespace Paintball.Net.Tests
             Assert.IsTrue(fake.LastRedirect.EndsWith("/api/auth/google/callback"), "gleiche Redirect-URI");
             Assert.IsTrue(fake.LastVerifier?.Length == 43, "Verifier 43 Zeichen");
             Assert.AreEqual(expectedChallenge, Challenge(fake.LastVerifier), "Challenge aus Verifier passt zur Start-Weiterleitung");
+            Assert.IsTrue(res.Headers.CacheControl?.NoStore == true, "no-store auf der Callback-Antwort");
             string session = res.Headers.GetValues("Set-Cookie").First(v => v.StartsWith("pb_session="));
             session = session.Substring(0, session.IndexOf(';'));
             var meReq = h.Req(HttpMethod.Get, "/api/me", session);
@@ -175,6 +180,20 @@ namespace Paintball.Net.Tests
             HttpResponseMessage res = await h.Http.SendAsync(req);
             Assert.AreEqual("/play?auth_error=cancelled", res.Headers.Location.OriginalString, "Abbruch bei Google");
             Assert.IsFalse(SetsSession(res), "keine Session");
+            Assert.IsTrue(res.Headers.CacheControl?.NoStore == true, "no-store");
+        }
+
+        private static async Task GoogleCancelledWithoutCookie()
+        {
+            // Anti-Login-CSRF: ohne den pb_oauth-Cookie (state gehört zum Browser, nicht zur URL) darf ein
+            // fremd verlinkter "error=access_denied&state=..." nicht als eigener Abbruch durchgehen.
+            await using Harness h = await Harness.StartAsync();
+            HttpResponseMessage start = await h.Http.GetAsync("/api/auth/google");
+            var (state, _) = ReadOAuthCookie(start);
+            var req = new HttpRequestMessage(HttpMethod.Get, $"/api/auth/google/callback?error=access_denied&state={state}");
+            HttpResponseMessage res = await h.Http.SendAsync(req);
+            Assert.AreEqual("/play?auth_error=invalid_state", res.Headers.Location.OriginalString, "ohne Cookie greift die state-Prüfung zuerst");
+            Assert.IsFalse(SetsSession(res), "keine Session");
         }
 
         private static async Task GoogleClearsSuggest()
@@ -191,6 +210,26 @@ namespace Paintball.Net.Tests
             string value = suggest.Substring("pb_suggest=".Length, suggest.IndexOf(';') - "pb_suggest=".Length);
             Assert.AreEqual("", value, "Cookie-Wert leer");
             Assert.IsTrue(suggest.ToLowerInvariant().Contains("expires="), "abgelaufenes expires");
+            Assert.IsTrue(suggest.ToLowerInvariant().Contains("path=/"), "Lösch-Cookie mit path=/");
+
+            // Zweiter Login desselben Google-Kontos: der Name wurde inzwischen vergeben (kein Namensbedarf
+            // mehr), diesmal liefert Google sogar einen Vornamen – trotzdem muss pb_suggest gelöscht werden,
+            // denn die Bedingung ist s.NeedsName, nicht das Vorhandensein eines Vornamens.
+            string session = res.Headers.GetValues("Set-Cookie").First(v => v.StartsWith("pb_session="));
+            session = session.Substring(0, session.IndexOf(';'));
+            HttpResponseMessage named = await h.Http.SendAsync(h.Req(HttpMethod.Post, "/api/me/name", session, "{\"name\":\"Cleo\"}"));
+            Assert.AreEqual(HttpStatusCode.OK, named.StatusCode, "Name gesetzt");
+
+            fake.GivenName = "Omar";
+            HttpResponseMessage start2 = await h.Http.GetAsync("/api/auth/google");
+            var (state2, cookie2) = ReadOAuthCookie(start2);
+            var req2 = new HttpRequestMessage(HttpMethod.Get, $"/api/auth/google/callback?code=c1&state={state2}");
+            req2.Headers.Add("Cookie", cookie2);
+            HttpResponseMessage res2 = await h.Http.SendAsync(req2);
+            string suggest2 = res2.Headers.GetValues("Set-Cookie").FirstOrDefault(v => v.StartsWith("pb_suggest="));
+            Assert.IsTrue(suggest2 != null, "pb_suggest wird auch ohne Namensbedarf gelöscht");
+            string value2 = suggest2.Substring("pb_suggest=".Length, suggest2.IndexOf(';') - "pb_suggest=".Length);
+            Assert.AreEqual("", value2, "Cookie-Wert leer (kein Namensbedarf, obwohl Vorname vorhanden)");
         }
 
         private static async Task GoogleCookieWithoutVerifier()
@@ -204,6 +243,32 @@ namespace Paintball.Net.Tests
             HttpResponseMessage res = await h.Http.SendAsync(req);
             Assert.AreEqual("/play?auth_error=invalid_state", res.Headers.Location.OriginalString, "Cookie ohne Verifier (altes Format)");
             Assert.IsFalse(SetsSession(res), "keine Session");
+        }
+
+        private static async Task GoogleMalformedVerifier()
+        {
+            await using Harness h = await Harness.StartAsync();
+            HttpResponseMessage start = await h.Http.GetAsync("/api/auth/google");
+            var (state, _) = ReadOAuthCookie(start);
+            foreach (string verifier in new[] { "short", new string('a', 42) + "!" })
+            {
+                string cookie = "pb_oauth=" + state + ".." + verifier;
+                var req = new HttpRequestMessage(HttpMethod.Get, $"/api/auth/google/callback?code=c1&state={state}");
+                req.Headers.Add("Cookie", cookie);
+                HttpResponseMessage res = await h.Http.SendAsync(req);
+                Assert.AreEqual("/play?auth_error=invalid_state", res.Headers.Location.OriginalString, "Verifier ungültig: " + verifier);
+                Assert.IsFalse(SetsSession(res), "keine Session: " + verifier);
+            }
+        }
+
+        private static async Task GoogleStartRateLimitNoStore()
+        {
+            await using Harness h = await Harness.StartAsync();
+            HttpResponseMessage res = null;
+            for (int i = 1; i <= 21; i++)
+                res = await h.Http.GetAsync("/api/auth/google");
+            Assert.AreEqual((HttpStatusCode)429, res.StatusCode, "21. Anfrage begrenzt");
+            Assert.IsTrue(res.Headers.CacheControl?.NoStore == true, "no-store auch bei 429");
         }
 
         private sealed class Harness : IAsyncDisposable
