@@ -51,6 +51,9 @@ namespace Paintball.Net.Simulation
         public float NextResupplyAt;
         public bool Connected = true;
 
+        /// <summary>Semi-Abzug gespannt: wird durch einen Frame ohne Feuer gespannt und durch einen Schuss entspannt.</summary>
+        public bool TriggerArmed = true;
+
         public int LastProcessedSeq;
         public int LastQueuedSeq;
         public int ShotsFired;

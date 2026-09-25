@@ -41,6 +41,8 @@ namespace Paintball.Core.Tests
 
             Run("Ballistik: Drop wächst mit Distanz", Ballistics_DropGrowsWithDistance);
             Run("Ballistik: Streuung bleibt im Kegel", Ballistics_SpreadStaysInCone);
+            Run("Ballistik: Schrot-Muster – Mitte plus Ring, alles im 7°-Kegel (Event)", Ballistics_PelletPattern);
+            Run("Marker: Abzugsart und Pellets – Standard Auto mit 1 Pellet (Event)", Marker_FireModeDefaults);
             Run("Marker: Feuerrate & Cooldown", Marker_FireRateAndCooldown);
             Run("Marker: Magazin leer loest Auto-Reload aus, Reserve wird verbraucht", Marker_ReloadConsumesReserve);
             Run("Marker: Unterbrechbares Nachladen (FR-08)", Marker_InterruptibleReload);
@@ -168,6 +170,43 @@ namespace Paintball.Core.Tests
                 float angleDeg = angleRad * 180f / MathF.PI;
                 Check.IsTrue(angleDeg <= 5.01f, $"Streuwinkel {angleDeg} ueberschreitet 5 Grad");
             }
+        }
+
+        private static void Ballistics_PelletPattern()
+        {
+            var rng = new Random(3);
+            Vector3 fwd = Vector3.UnitZ;
+            float Deg(Vector3 d) => MathF.Acos(System.Math.Clamp(Vector3.Dot(Vector3.Normalize(d), fwd), -1f, 1f)) * 180f / MathF.PI;
+            for (int k = 0; k < 50; k++)
+            {
+                Vector3[] dirs = BallisticSolver.PelletPattern(fwd, 6, 7f, rng);
+                Check.AreEqual(6, dirs.Length, "6 Pellets");
+                Check.IsTrue(Deg(dirs[0]) <= 7f * BallisticSolver.PelletJitterFraction + 1e-3f, "Pellet 0 mittig");
+                for (int i = 1; i < 6; i++)
+                {
+                    float a = Deg(dirs[i]);
+                    Check.IsTrue(a >= 7f * (BallisticSolver.PelletRingFraction - BallisticSolver.PelletJitterFraction) - 1e-3f
+                        && a <= 7f * (BallisticSolver.PelletRingFraction + BallisticSolver.PelletJitterFraction) + 1e-3f, $"Ring-Pellet {i}: {a:0.00}°");
+                    Check.IsTrue(a <= 3.5f, "im Kegel mit 7° Öffnungswinkel");
+                }
+            }
+            Vector3[] single = BallisticSolver.PelletPattern(fwd, 1, 0f, rng);
+            Check.AreEqual(1, single.Length, "ein Pellet");
+            Check.AreClose(1f, Vector3.Dot(single[0], fwd), 1e-5f, "ohne Streuung geradeaus");
+            foreach (Vector3 d in BallisticSolver.PelletPattern(fwd, 6, 0f, rng))
+                Check.AreClose(1f, Vector3.Dot(d, fwd), 1e-5f, "Streuung 0 = alle geradeaus");
+        }
+
+        private static void Marker_FireModeDefaults()
+        {
+            var s = new MarkerSpecs();
+            Check.AreEqual(FireMode.Auto, s.FireMode, "Standard: Auto");
+            Check.AreEqual(1, s.Pellets, "Standard: 1 Pellet");
+            MarkerSpecs c = s.Clone();
+            c.FireMode = FireMode.Semi;
+            c.Pellets = 6;
+            Check.AreEqual(FireMode.Auto, s.FireMode, "Clone ist unabhängig");
+            Check.AreEqual(1, s.Pellets, "Clone ist unabhängig (Pellets)");
         }
 
         // ---------- Marker (FR-06, FR-08) ----------

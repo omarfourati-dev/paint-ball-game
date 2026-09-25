@@ -285,6 +285,7 @@ namespace Paintball.Net.Simulation
             MoveInput move = Movement.Sanitize(f.Move);
             p.Yaw = move.Yaw;
             p.Pitch = move.Pitch;
+            if (!f.Fire) p.TriggerArmed = true;   // Semi: Loslassen spannt den Abzug (auch tot/in der Pause)
             if (!running || !p.Alive) return;
 
             if (f.Dash && CanDash(p))
@@ -305,13 +306,14 @@ namespace Paintball.Net.Simulation
                 Emit(new NoticeEvent { PlayerId = p.Id, Key = "notice.healed" });
             }
 
-            if (f.Fire) TryFire(p, f, move);
+            bool semi = p.Specs.FireMode == FireMode.Semi;
+            if (f.Fire && (!semi || p.TriggerArmed) && TryFire(p, f, move) && semi) p.TriggerArmed = false;
         }
 
-        private void TryFire(SimPlayer p, PlayerInputFrame f, MoveInput move)
+        private bool TryFire(SimPlayer p, PlayerInputFrame f, MoveInput move)
         {
             FireResult result = p.Marker.TryFire(Time);
-            if (!result.Success) return;
+            if (!result.Success) return false;
 
             float aimYaw = f.AimYaw, aimPitch = f.AimPitch;
             if (!float.IsFinite(aimYaw) || !float.IsFinite(aimPitch)
@@ -324,33 +326,47 @@ namespace Paintball.Net.Simulation
             Vector3 dir = Movement.AimDirection(aimYaw, Math.Clamp(aimPitch, -1.5f, 1.5f));
             bool moving = move.MoveX != 0f || move.MoveZ != 0f;
             float spread = p.Specs.SpreadDegrees * Settings.SpreadScale * (moving ? 1.4f : 1f) * (p.Move.Crouched ? 0.6f : 1f);
-            if (spread > 0f) dir = BallisticSolver.ApplySpread(dir, spread, _rng);
+            int pellets = Math.Max(1, p.Specs.Pellets);
+            Vector3[] dirs = spread > 0f ? BallisticSolver.PelletPattern(dir, pellets, spread, _rng) : Repeat(dir, pellets);
+            Vector3 eye = EyeOf(p);
 
-            var proj = new Projectile
+            for (int i = 0; i < dirs.Length; i++)
             {
-                Id = _nextProjectileId++,
-                ShooterId = p.Id,
-                ShooterTeam = p.Team,
-                Origin = EyeOf(p) + dir * 0.5f,
-                Velocity = dir * p.Specs.MuzzleVelocity,
-                Gravity = BallisticSolver.DefaultGravity * p.Specs.GravityScale,
-                Specs = p.Specs
-            };
-            _projectiles.Add(proj);
+                var proj = new Projectile
+                {
+                    Id = _nextProjectileId++,
+                    ShooterId = p.Id,
+                    ShooterTeam = p.Team,
+                    Origin = eye + dirs[i] * 0.5f,
+                    Velocity = dirs[i] * p.Specs.MuzzleVelocity,
+                    Gravity = BallisticSolver.DefaultGravity * p.Specs.GravityScale,
+                    Specs = p.Specs
+                };
+                _projectiles.Add(proj);
+                Stats.RegisterShot(p.Id);   // je Pellet: Treffer ≤ Schüsse bleibt wahr (MatchIntegrityValidator)
+                Emit(new ShotEvent
+                {
+                    ProjectileId = proj.Id,
+                    ShooterId = p.Id,
+                    ShooterTeam = p.Team,
+                    Origin = proj.Origin,
+                    Velocity = proj.Velocity,
+                    GravityScale = p.Specs.GravityScale,
+                    Pellet = pellets > 1 ? i : -1
+                });
+            }
 
             p.ShotsFired++;
             p.LastShotTime = Time;
             if (p.ProtectedUntil > Time) p.ProtectedUntil = Time; // Schießen beendet den Spawn-Schutz
-            Stats.RegisterShot(p.Id);
-            Emit(new ShotEvent
-            {
-                ProjectileId = proj.Id,
-                ShooterId = p.Id,
-                ShooterTeam = p.Team,
-                Origin = proj.Origin,
-                Velocity = proj.Velocity,
-                GravityScale = p.Specs.GravityScale
-            });
+            return true;
+        }
+
+        private static Vector3[] Repeat(Vector3 dir, int count)
+        {
+            var dirs = new Vector3[count];
+            for (int i = 0; i < count; i++) dirs[i] = dir;
+            return dirs;
         }
 
         private static float AngleBetween(Vector3 a, Vector3 b)

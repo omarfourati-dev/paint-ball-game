@@ -29,7 +29,11 @@ namespace Paintball.Net.Simulation
             public float UnstuckDir = 1f;
             public Vector3 WanderGoal;
             public float WanderUntil;
+            public bool FireHeld;
         }
+
+        /// <summary>Bots benutzen das Schrot nur auf kurze Distanz.</summary>
+        public const float ShotgunBotRange = 15f;
 
         private readonly Random _rng;
         private readonly Dictionary<int, Memory> _memory = new();
@@ -87,13 +91,17 @@ namespace Paintball.Net.Simulation
                 yaw = MathF.Atan2(d.X, d.Z) + mem.AimNoiseYaw;
                 pitch = MathF.Atan2(d.Y, MathF.Sqrt(d.X * d.X + d.Z * d.Z)) + mem.AimNoisePitch;
 
-                float preferred = bot.Specs.MaxRange > 140f ? 30f : bot.Specs.RoundsPerSecond > 10f ? 10f : 16f;
+                float preferred = bot.Specs.Pellets > 1 ? 8f : bot.Specs.MaxRange > 140f ? 30f : bot.Specs.RoundsPerSecond > 10f ? 10f : 16f;
                 moveZ = dist > preferred + 4f ? 1f : dist < preferred - 6f ? -1f : 0f;
                 moveX = mem.StrafeDir * (0.5f + Skill * 0.5f);
 
                 float reaction = 0.55f - Skill * 0.35f;
                 bool reloading = bot.Marker.State == Paintball.Core.Weapons.MarkerState.Reloading;
-                frame.Fire = now - mem.TargetSeenAt >= reaction && !reloading && dist <= bot.Specs.MaxRange;
+                float maxFireDistance = bot.Specs.Pellets > 1 ? ShotgunBotRange : bot.Specs.MaxRange;
+                bool wantsFire = now - mem.TargetSeenAt >= reaction && !reloading && dist <= maxFireDistance;
+                bool semi = bot.Specs.FireMode == Paintball.Core.Weapons.FireMode.Semi;
+                // Semi: im Takt der Feuerrate abdrücken und dazwischen loslassen (ein Frame ohne Feuer spannt den Abzug)
+                frame.Fire = wantsFire && (!semi || (!mem.FireHeld && bot.Marker.State != Paintball.Core.Weapons.MarkerState.Cooldown));
                 if (bot.Marker.AmmoInMagazine == 0) frame.Reload = true;
                 crouch = reloading && _rng.NextDouble() < 0.7;
             }
@@ -153,6 +161,7 @@ namespace Paintball.Net.Simulation
             frame.Move.Crouch = crouch;
             frame.AimYaw = yaw;
             frame.AimPitch = pitch;
+            mem.FireHeld = frame.Fire;
             return frame;
         }
 

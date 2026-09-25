@@ -1,6 +1,7 @@
 using System;
 using System.Linq;
 using System.Numerics;
+using Paintball.Core.Combat;
 using Paintball.Core.Maps;
 using Paintball.Core.Match;
 using Paintball.Net.Simulation;
@@ -18,6 +19,8 @@ namespace Paintball.Net.Tests
             r.Run("Bots: Kein Feuer auf Teamkameraden", NoFriendlyTargeting);
             r.Run("Bots: CTF-Bot läuft zur gegnerischen Flagge", CtfBotSeeksFlag);
             r.Run("Bots: Skill beeinflusst Zielgenauigkeit", SkillAffectsAccuracy);
+            r.Run("Bots: Schrot-Bot schießt nur unter 15 m", ShotgunBotShortRangeOnly);
+            r.Run("Bots: Semi-Bot (Longshot) lässt zwischen den Schüssen los und schießt mehrfach", SemiBotReleasesTrigger);
             r.Run("Bots: 4v4-Botmatch auf allen Karten läuft stabil mit Kills (Soak)", BotSoak);
         }
 
@@ -26,6 +29,48 @@ namespace Paintball.Net.Tests
             GameMatch m = MatchTests.NewMatch(mode, map, s => { s.SpreadScale = 1f; configure?.Invoke(s); });
             m.BotThink = new BotController(7, skill).Think;
             return m;
+        }
+
+        private static void ShotgunBotShortRangeOnly()
+        {
+            GameMatch m = BotMatch(GameMode.TeamDeathmatch);
+            SimPlayer bot = m.AddPlayer("Bot", 0, isBot: true, markerId: MarkerCatalog.Shotgun);
+            SimPlayer target = m.AddPlayer("T", 1, isBot: false);
+            MatchTests.StartRunning(m);
+            m.ClearProtection(target.Id);
+            target.Hp = new HitPointPool(100000f);
+            for (int i = 0; i < 60; i++)
+            {
+                m.Teleport(bot.Id, Vector3.Zero, bot.Yaw);
+                m.Teleport(target.Id, new Vector3(0f, 0f, 20f), MathF.PI);
+                m.Tick();
+            }
+            Assert.AreEqual(0, bot.ShotsFired, "auf 20 m kein Schrot");
+            for (int i = 0; i < 60; i++)
+            {
+                m.Teleport(bot.Id, Vector3.Zero, bot.Yaw);
+                m.Teleport(target.Id, new Vector3(0f, 0f, 8f), MathF.PI);
+                m.Tick();
+            }
+            Assert.IsTrue(bot.ShotsFired >= 1, $"auf 8 m schießt der Bot (Schüsse: {bot.ShotsFired})");
+        }
+
+        private static void SemiBotReleasesTrigger()
+        {
+            GameMatch m = BotMatch(GameMode.TeamDeathmatch);
+            SimPlayer bot = m.AddPlayer("Bot", 0, isBot: true, markerId: MarkerCatalog.Precision);
+            SimPlayer target = m.AddPlayer("T", 1, isBot: false);
+            MatchTests.StartRunning(m);
+            m.ClearProtection(target.Id);
+            target.Hp = new HitPointPool(100000f);   // bleibt stehen
+            for (int i = 0; i < 90; i++)
+            {
+                m.Teleport(bot.Id, Vector3.Zero, bot.Yaw);
+                m.Teleport(target.Id, new Vector3(0f, 0f, 20f), MathF.PI);
+                m.Tick();
+            }
+            Assert.IsTrue(bot.ShotsFired >= 3, $"Semi-Bot schießt wiederholt (Schüsse: {bot.ShotsFired})");
+            Assert.IsTrue(bot.ShotsFired <= 8, $"Feuerrate eingehalten (Schüsse: {bot.ShotsFired})");
         }
 
         private static void BotApproaches()

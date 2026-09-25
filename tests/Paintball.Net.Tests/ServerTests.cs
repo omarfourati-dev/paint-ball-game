@@ -645,15 +645,21 @@ namespace Paintball.Net.Tests
         {
             GameServer server = NewServer();
             var c = new TestClient(server, "Neu");
-            c.Send(new { t = "loadout", marker = "precision" });
+            c.Send(new { t = "loadout", marker = "bazooka" });
             server.Tick();
-            Assert.AreEqual("locked", c.Sink.Last("error").Value.GetProperty("code").GetString(), "Präzision noch gesperrt");
-            server.Accounts.GetAccount(c.AccountId).AddXp(5000);
-            c.Send(new { t = "loadout", marker = "precision", paint = "paint_cyan" });
+            Assert.AreEqual("locked", c.Sink.Last("error").Value.GetProperty("code").GetString(), "unbekannter Marker abgewiesen");
+            c.Send(new { t = "loadout", marker = "shotgun", paint = "paint_cyan" });
             server.Tick();
             JsonElement profile = c.Sink.Last("profile").Value;
-            Assert.AreEqual("precision", profile.GetProperty("marker").GetString(), "Marker ausgerüstet");
+            Assert.AreEqual("shotgun", profile.GetProperty("marker").GetString(), "Schrot ab Level 1 ausgerüstet");
             Assert.AreEqual("paint_cyan", profile.GetProperty("paint").GetString(), "Farbe ausgerüstet");
+            JsonElement[] markers = profile.GetProperty("markers").EnumerateArray().ToArray();
+            Assert.AreEqual(4, markers.Length, "vier Marker im Profil");
+            Assert.IsTrue(markers.All(m => m.GetProperty("unlocked").GetBoolean()), "alle freigeschaltet");
+            JsonElement sg = markers.First(m => m.GetProperty("id").GetString() == "shotgun");
+            Assert.AreEqual("semi", sg.GetProperty("fireMode").GetString(), "Abzugsart für den Client");
+            Assert.AreEqual(6, sg.GetProperty("pellets").GetInt32(), "Pellets für den Client");
+            Assert.AreEqual("auto", markers.First(m => m.GetProperty("id").GetString() == "standard").GetProperty("fireMode").GetString(), "Standard Auto");
         }
 
         private static void PingPong()

@@ -19,6 +19,9 @@ namespace Paintball.Net.Simulation
         public Vector3 Origin;
         public Vector3 Velocity;
         public float GravityScale;
+
+        /// <summary>Index des Pellets beim Schrot (0 = erstes), sonst −1 – das JSON-Feld pi fehlt dann.</summary>
+        public int Pellet = -1;
     }
 
     /// <summary>Farbklecks auf Umgebung oder Spieler (FR-04).</summary>

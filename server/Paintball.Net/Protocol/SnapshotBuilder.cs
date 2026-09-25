@@ -195,6 +195,7 @@ namespace Paintball.Net.Protocol
                     w.Vec("o", s.Origin, 3);
                     w.Vec("v", s.Velocity, 3);
                     w.Num("g", s.GravityScale);
+                    if (s.Pellet >= 0) w.WriteNumber("pi", s.Pellet);
                     break;
                 case ImpactEvent i:
                     w.WriteString("k", "imp");

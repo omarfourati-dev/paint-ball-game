@@ -87,7 +87,7 @@ namespace Paintball.Net.Simulation
     }
 
     /// <summary>
-    /// Marker-Katalog (FR-34): drei Marker mit unterschiedlichen Werten.
+    /// Marker-Katalog (FR-34): vier Marker mit unterschiedlichen Werten.
     /// Datengetrieben über Core-MarkerSpecs (AR-03).
     /// </summary>
     public static class MarkerCatalog
@@ -95,6 +95,7 @@ namespace Paintball.Net.Simulation
         public const string Standard = "standard";
         public const string Rapid = "rapid";
         public const string Precision = "precision";
+        public const string Shotgun = "shotgun";
 
         private static readonly Dictionary<string, MarkerSpecs> Specs = new(StringComparer.OrdinalIgnoreCase)
         {
@@ -109,7 +110,14 @@ namespace Paintball.Net.Simulation
             {
                 Id = Precision, DisplayName = "Longshot Präzision", RoundsPerSecond = 2.5f, BaseDamage = 50f,
                 HeadMultiplier = 1.8f, MuzzleVelocity = 130f, SpreadDegrees = 0.25f, MagazineSize = 6,
-                ReserveAmmo = 30, ReloadSeconds = 2.0f, MaxRange = 160f, GravityScale = 0.7f, ReloadInterruptible = false
+                ReserveAmmo = 30, ReloadSeconds = 2.0f, MaxRange = 160f, GravityScale = 0.7f, ReloadInterruptible = false,
+                FireMode = FireMode.Semi
+            },
+            [Shotgun] = new MarkerSpecs
+            {
+                Id = Shotgun, DisplayName = "Splatter Schrot", FireMode = FireMode.Semi, RoundsPerSecond = 1.2f, Pellets = 6,
+                SpreadDegrees = 7f, BaseDamage = 12f, MuzzleVelocity = 60f, MaxRange = 28f,
+                MagazineSize = 5, ReserveAmmo = 25, ReloadSeconds = 2.4f
             }
         };
 

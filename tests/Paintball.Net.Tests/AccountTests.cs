@@ -24,7 +24,7 @@ namespace Paintball.Net.Tests
             r.Run("Session: für unbekannten Spieler wird keine Session angelegt", CreateSessionUnknownPlayerThrows);
             r.Run("Konto: Fortschritt übersteht Neustart (neuer Store, gleiches Repository)", PersistsAcrossRestart);
             r.Run("Profil: Matchbelohnung XP/Münzen/Errungenschaften/Historie (FR-40/FR-45)", RewardsApplied);
-            r.Run("Profil: Marker-Freischaltung durch Level, keine Kaufvorteile (FR-41/NFR-14)", UnlocksByLevel);
+            r.Run("Profil: Event – alle vier Marker ab Level 1, unbekannte Marker gesperrt (FR-41/NFR-14)", UnlocksByLevel);
             r.Run("Shop: Kosmetik mit Münzen kaufen, nur kosmetisch (M-02/M-04)", ShopCosmetics);
             r.Run("Bestenliste: nur benannte Spieler, nach MMR (FR-46/FR-43)", Leaderboard);
             r.Run("Bestenliste: 10 Sekunden zwischengespeichert, höchstens eine Datenbank-Abfrage pro Fenster", LeaderboardCached);
@@ -178,11 +178,14 @@ namespace Paintball.Net.Tests
         {
             AccountStore store = NewStore();
             string id = NewPlayer(store, "Omar");
-            Assert.IsTrue(store.CanUseMarker(id, "standard"), "Standard");
-            Assert.IsFalse(store.CanUseMarker(id, "precision"), "Precision erst ab Level 4");
-            Assert.IsFalse(store.TryEquipMarker(id, "precision"), "nicht ausrüstbar");
-            store.GetAccount(id).AddXp(100000);
-            Assert.IsTrue(store.TryEquipMarker(id, "precision"), "nach Level-up ausrüstbar");
+            foreach (string marker in new[] { "standard", "rapid", "precision", "shotgun" })
+            {
+                Assert.IsTrue(store.CanUseMarker(id, marker), $"{marker} ab Level 1 (Event)");
+                Assert.AreEqual(1, AccountStore.MarkerUnlockLevel(marker), $"{marker}: Freischalt-Level 1");
+            }
+            Assert.IsTrue(store.TryEquipMarker(id, "shotgun"), "Schrot ausrüstbar");
+            Assert.IsFalse(store.CanUseMarker(id, "bazooka"), "unbekannter Marker bleibt gesperrt");
+            Assert.IsFalse(store.TryEquipMarker(id, "bazooka"), "unbekannter Marker nicht ausrüstbar");
         }
 
         private static void ShopCosmetics()

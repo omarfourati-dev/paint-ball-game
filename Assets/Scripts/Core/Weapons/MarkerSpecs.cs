@@ -1,5 +1,12 @@
 namespace Paintball.Core.Weapons
 {
+    /// <summary>Abzugsart: Auto feuert, solange gedrückt; Semi genau einmal pro Druck (Event-Paket).</summary>
+    public enum FireMode
+    {
+        Auto,
+        Semi
+    }
+
     /// <summary>
     /// Datengetriebene Marker-Konfiguration (FR-34, AR-03, NFR-17).
     /// Reines Datenobjekt ohne Engine-Abhängigkeiten – kann vom Server, aus
@@ -45,6 +52,12 @@ namespace Paintball.Core.Weapons
 
         /// <summary>Skaliert die Gravitation für den Drop (Balancing-Hebel).</summary>
         public float GravityScale = 1f;
+
+        /// <summary>Abzugsart (Auto = Dauerfeuer, Semi = ein Schuss pro Druck).</summary>
+        public FireMode FireMode = FireMode.Auto;
+
+        /// <summary>Projektile pro Schuss (Schrot). Munition wird einmal pro Schuss verbraucht.</summary>
+        public int Pellets = 1;
 
         public MarkerSpecs Clone() => (MarkerSpecs)MemberwiseClone();
     }

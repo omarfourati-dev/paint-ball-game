@@ -691,6 +691,8 @@ namespace Paintball.Net.Rooms
                 w.Num("reload", m.ReloadSeconds, 1);
                 w.Num("velocity", m.MuzzleVelocity, 1);
                 w.Num("gravity", m.GravityScale, 2);
+                w.WriteString("fireMode", m.FireMode == Paintball.Core.Weapons.FireMode.Semi ? "semi" : "auto");
+                w.WriteNumber("pellets", m.Pellets);
                 w.WriteEndObject();
             }
             w.WriteEndArray();

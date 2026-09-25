@@ -105,9 +105,10 @@ namespace Paintball.Net.Accounts
     /// </summary>
     public sealed class AccountStore
     {
+        /// <summary>Event-Paket: alle vier Marker ab Level 1 (bewusst für Vielfalt; Level-Freischaltung später wieder möglich).</summary>
         private static readonly (string Id, int Level)[] MarkerUnlocks =
         {
-            ("standard", 1), ("rapid", 2), ("precision", 4)
+            ("standard", 1), ("rapid", 1), ("precision", 1), ("shotgun", 1)
         };
 
         private static readonly ShopEntry[] Cosmetics =
