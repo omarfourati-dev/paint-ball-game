@@ -10,6 +10,7 @@ export class Net {
     this.retry = 0;
     this.closedByUser = false;
     this.pingTimer = null;
+    this.retryTimer = null;
     this.lastTick = null;
     this.expected = 0;
     this.received = 0;
@@ -28,6 +29,8 @@ export class Net {
 
   connect() {
     this.closedByUser = false;
+    clearTimeout(this.retryTimer);
+    this.retryTimer = null;
     const ws = new WebSocket(this.url);
     this.ws = ws;
     ws.onopen = () => {
@@ -53,7 +56,7 @@ export class Net {
       if (this.closedByUser || ev.reason === 'replaced') return;
       const delay = Math.min(8000, 800 * 2 ** this.retry++);
       this.#emit('retry', { delay });
-      setTimeout(() => this.connect(), delay);
+      this.retryTimer = setTimeout(() => { this.retryTimer = null; this.connect(); }, delay);
     };
     ws.onerror = () => { /* onclose folgt */ };
   }
@@ -82,6 +85,8 @@ export class Net {
 
   close() {
     this.closedByUser = true;
+    clearTimeout(this.retryTimer);
+    this.retryTimer = null;
     this.ws?.close();
   }
 }

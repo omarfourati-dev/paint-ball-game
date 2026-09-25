@@ -100,7 +100,7 @@ export class App {
     } catch { status = 0; }
     const step = bootStep(status, me);
     if (step === 'login') { this.renderLogin(); this.show('login'); return; }
-    if (step === 'name') { this.renderChooseName(me.suggestedName || ''); this.show('name'); return; }
+    if (step === 'name') { this.suggestedName = me.suggestedName || ''; this.renderChooseName(); this.show('name'); return; }
     this.connect();
   }
 
@@ -119,13 +119,25 @@ export class App {
     n.on('open', () => { this.welcomedThisConnection = false; this.hello(); });
     n.on('close', ev => {
       this.updateConnChip();
-      if (ev.code === 1008 || ev.reason === 'deleted' || ev.reason === 'logout') { location.href = '/'; return; }
+      if (ev.code === 1008 || ev.reason === 'deleted' || ev.reason === 'logout') {
+        this.net?.close();
+        this.net = null;
+        this.game.net = null;
+        location.href = '/';
+        return;
+      }
       if (!this.welcomedThisConnection) {
         this.connectAttempts++;
         if (this.connectAttempts >= 3) {
           this.connectAttempts = 0;
           fetch('/api/me', { cache: 'no-store', credentials: 'same-origin' }).then(res => {
-            if (res.status === 401) { this.renderLogin(); this.show('login'); }
+            if (res.status === 401) {
+              this.net?.close();
+              this.net = null;
+              this.game.net = null;
+              this.renderLogin();
+              this.show('login');
+            }
           }).catch(() => {});
         }
       } else {
@@ -265,7 +277,7 @@ export class App {
       </div>`;
   }
 
-  renderChooseName(suggested = '') {
+  renderChooseName(suggested = this.suggestedName || '') {
     $('#screen-name').innerHTML = `
       <div class="wrap center" style="min-height:90vh;justify-content:center;align-items:center">
         <div class="logo">Paint-Ball<small>${esc(t('app.subtitle'))}</small></div>
@@ -282,8 +294,11 @@ export class App {
     $('#name-form').onsubmit = async e => {
       e.preventDefault();
       this.audio.unlock();
+      const btn = e.target.querySelector('button[type=submit]');
+      btn.disabled = true;
       const ok = await this.submitName($('#name-input').value, $('#name-error'));
       if (ok) this.connect();
+      else btn.disabled = false;
     };
   }
 
