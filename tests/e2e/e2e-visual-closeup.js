@@ -1,12 +1,12 @@
 // Nahaufnahme der eigenen Figur von vorne (Maske, Markierer) und Seitenansicht Reifenstapel.
+// Server mit --dev-login starten: dotnet run --project server/Paintball.Server -- --dev-login
 async (page) => {
   const BASE = 'https://localhost:5443', OUT = 'e2e-output/';
+  const NAME = 'Nah-' + Date.now().toString(36).slice(-4);
   const ctx = await page.context().browser().newContext({ ignoreHTTPSErrors: true, viewport: { width: 1280, height: 720 } });
   const p = await ctx.newPage();
-  await p.goto(BASE + '/play');
-  await p.waitForFunction(() => ['welcome', 'menu'].includes(window.__paintball?.screen), null, { timeout: 20000 });
-  if (await p.evaluate(() => window.__paintball.screen === 'welcome')) { await p.fill('#welcome-name', 'Nah'); await p.click('#welcome-form button[type=submit]'); }
-  await p.waitForFunction(() => window.__paintball.profile?.name, null, { timeout: 10000 });
+  await p.goto(`${BASE}/api/auth/dev?name=${encodeURIComponent(NAME)}`);
+  await p.waitForFunction(() => window.__paintball?.screen === 'menu' || window.__paintball?.screen === 'lobby', null, { timeout: 20000 });
   await p.selectOption('#tr-map', 'speedball');
   await p.click('#btn-training');
   await p.waitForFunction(() => window.__paintball.game.phase === 'running', null, { timeout: 15000 });

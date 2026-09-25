@@ -2,9 +2,11 @@
 // Ausführung über Playwright (z. B. Playwright-MCP run_code mit filename) – erwartet
 // Server auf https://localhost:5443 (dotnet run --project server/Paintball.Server).
 // Screenshots landen in E2E_OUT (Standard: ./e2e-output).
+// Server mit --dev-login starten: dotnet run --project server/Paintball.Server -- --dev-login
 async (page) => {
   const BASE = 'https://localhost:5443';
   const OUT = (globalThis.process?.env?.E2E_OUT) || 'e2e-output/';
+  const RUN = '-' + Date.now().toString(36).slice(-4);
   const browser = page.context().browser();
   const results = [];
   const errors = [];
@@ -25,14 +27,11 @@ async (page) => {
     const p = await ctx.newPage();
     p.on('pageerror', e => errors.push(`${name}: ${e.message}`));
     p.on('console', m => { if (m.type() === 'error') errors.push(`${name} console: ${m.text()}`); });
-    await p.goto(BASE + (opts.query ?? '/play'));
-    const welcomed = await wait(p, () => ['welcome', 'menu', 'lobby'].includes(window.__paintball?.screen));
-    if (await p.evaluate(() => window.__paintball.screen === 'welcome')) {
-      await p.fill('#welcome-name', name);
-      await p.click('#welcome-form button[type=submit]');
-    }
-    await wait(p, () => window.__paintball.profile?.name);
-    return { ctx, p, welcomed };
+    const NAME = name + RUN;
+    const JOIN = opts.join ?? '';
+    await p.goto(`${BASE}/api/auth/dev?name=${encodeURIComponent(NAME)}${JOIN ? `&join=${JOIN}` : ''}`);
+    await p.waitForFunction(() => window.__paintball?.screen === 'menu' || window.__paintball?.screen === 'lobby', null, { timeout: 20000 });
+    return { ctx, p, welcomed: true };
   }
 
   const a = await newPlayer('Host');
@@ -41,7 +40,7 @@ async (page) => {
   const inLobby = await wait(a.p, () => window.__paintball.screen === 'lobby' && window.__paintball.lobby?.code);
   const code = await a.p.evaluate(() => window.__paintball.lobby.code);
   check('Privater Raum mit Code', inLobby && /^[A-Z0-9]{6}$/.test(code), code);
-  const b = await newPlayer('Freund', { query: `/?join=${code}` });
+  const b = await newPlayer('Freund', { join: code });
   const joined = await wait(b.p, () => window.__paintball.screen === 'lobby', 8000);
   check('Einladungslink ?join=CODE tritt bei (FR-20)', joined);
   await wait(a.p, () => window.__paintball.lobby.members.length === 2);

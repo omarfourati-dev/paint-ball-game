@@ -12,7 +12,7 @@
   <header class="top"><a class="brand" href="/"><img src="/favicon.svg" alt="" width="36" height="36"><span>Paint-Ball</span></a></header>
   <main class="legal">
     <h1>Datenschutzerklärung</h1>
-    <p class="muted">Stand: 24. September 2026</p>
+    <p class="muted">Stand: 25. September 2026</p>
 
     <h2>1. Verantwortlicher</h2>
     <address>Omar Fourati, Am Sandberg 28, 51643 Gummersbach, Deutschland<br>
@@ -20,9 +20,10 @@
 
     <h2>2. Das Wichtigste in Kürze</h2>
     <ul>
-      <li>Es gibt <strong>keine Cookies</strong>, kein Tracking, keine Werbung und keine Analyse-Tools.</li>
-      <li>Es werden keine Inhalte von Drittanbietern geladen – Schriften, Modelle und Texturen liegen auf meinem eigenen Server.</li>
-      <li>Für ein Spielkonto brauchst du nur einen frei gewählten Spielernamen – keine E-Mail-Adresse, kein Passwort, keinen Klarnamen.</li>
+      <li>Es gibt nur <strong>technisch notwendige Cookies</strong> für die Anmeldung, kein Tracking, keine Werbung und keine Analyse-Tools.</li>
+      <li>Es werden keine Inhalte von Drittanbietern geladen – Schriften, Modelle und Texturen liegen auf meinem eigenen Server –
+      mit Ausnahme der Anmeldung bei Google (siehe Abschnitt 5).</li>
+      <li>Angemeldet wird ausschließlich mit einem Google-Konto; öffentlich sichtbar ist nur dein selbst gewählter Spielername.</li>
       <li>Du kannst deine Daten jederzeit selbst im Spiel exportieren oder dein Konto löschen.</li>
     </ul>
 
@@ -41,13 +42,23 @@
     <p>Rechtsgrundlage ist Art. 6 Abs. 1 lit. f DSGVO – mein berechtigtes Interesse an einem sicheren und funktionsfähigen
     Angebot.</p>
 
-    <h2>5. Spielkonto</h2>
+    <h2>5. Anmeldung mit Google</h2>
+    <p>Die Anmeldung erfolgt ausschließlich über „Mit Google anmelden“. Anbieter ist die Google Ireland Limited, Gordon House,
+    Barrow Street, Dublin 4, Irland. Dabei wirst du auf eine Seite von Google weitergeleitet; Google übermittelt mir anschließend
+    deine Google-Konto-ID, deine E-Mail-Adresse und deinen Vornamen. Den Vornamen nutze ich nur als Vorschlag für deinen
+    Spielernamen und speichere ihn nicht. Google-Konto-ID und E-Mail-Adresse speichere ich, um dein Spielkonto eindeutig
+    zuzuordnen. Eine Übermittlung an die Google LLC in den USA ist möglich; sie erfolgt auf Grundlage des EU-US Data Privacy Framework,
+    dem Google angeschlossen ist. Rechtsgrundlage ist Art. 6 Abs. 1 lit. b DSGVO. Weitere Informationen:
+    <a href="https://policies.google.com/privacy" rel="noopener">Datenschutzerklärung von Google</a>.</p>
+
+    <h2>6. Spielkonto</h2>
     <p>Beim ersten Start legt das Spiel ein Konto an. Gespeichert werden:</p>
     <ul>
-      <li>der von dir gewählte Spielername,</li>
-      <li>ein zufälliges Zugangstoken – auf dem Server nur als kryptografischer Hash,</li>
+      <li>deine Google-Konto-ID und E-Mail-Adresse,</li>
+      <li>der von dir gewählte, eindeutige Spielername,</li>
       <li>dein Spielfortschritt: Erfahrungspunkte, Level, Spielstärke (MMR) und Liga, Münzen, freigeschaltete und gewählte
-      Kosmetik, Errungenschaften, Statistiken (z. B. Siege, Eliminierungen) und deine Match-Historie.</li>
+      Kosmetik, Errungenschaften, Statistiken (z. B. Siege, Eliminierungen) und deine Match-Historie,</li>
+      <li>deine Anmelde-Sitzungen – auf dem Server nur als kryptografischer Hash, bis zu 30 Tage gültig.</li>
     </ul>
     <p>Die Daten werden gespeichert, solange das Konto besteht. Rechtsgrundlage ist Art. 6 Abs. 1 lit. b DSGVO – sie sind
     nötig, damit du das Spiel mit deinem Fortschritt nutzen kannst.</p>
@@ -56,14 +67,17 @@
     <p>Kurznachrichten im Spiel (Quick-Chat mit vorgegebenen Sätzen) werden nur an die Mitspieler im Match weitergeleitet
     und nicht gespeichert.</p>
 
-    <h2>6. Speicherung auf deinem Gerät</h2>
-    <p>Das Spiel speichert im lokalen Speicher deines Browsers (Local Storage) deine Einstellungen (z. B. Sprache,
-    Tastenbelegung, Grafik) und dein Zugangstoken, damit du beim nächsten Besuch wieder eingeloggt bist. Außerdem legt ein
-    Service Worker Programmdateien und Grafiken im Browser-Cache ab, damit das Spiel schneller startet und sich als App
-    installieren lässt. Diese Daten verlassen dein Gerät nicht; du kannst sie jederzeit über die Browser-Einstellungen
-    löschen. Rechtsgrundlage ist § 25 Abs. 2 Nr. 2 TDDDG (unbedingt erforderlich für den von dir gewünschten Dienst).</p>
+    <h2>7. Speicherung auf deinem Gerät</h2>
+    <p>Für die Anmeldung setze ich zwei technisch notwendige Cookies: <code>pb_session</code> hält dich bis zu 30 Tage
+    angemeldet, <code>pb_oauth</code> schützt den Anmeldevorgang und verfällt nach 10 Minuten (bei der ersten Anmeldung kommt
+    für bis zu 30 Minuten <code>pb_suggest</code> mit dem Namensvorschlag hinzu). Im lokalen Speicher deines Browsers (Local
+    Storage) liegen nur deine Einstellungen (z. B. Sprache, Tastenbelegung, Grafik).</p>
+    <p>Außerdem legt ein Service Worker Programmdateien und Grafiken im Browser-Cache ab, damit das Spiel schneller startet
+    und sich als App installieren lässt. Diese Daten verlassen dein Gerät nicht; du kannst sie jederzeit über die
+    Browser-Einstellungen löschen. Rechtsgrundlage ist § 25 Abs. 2 Nr. 2 TDDDG (unbedingt erforderlich für den von dir
+    gewünschten Dienst).</p>
 
-    <h2>7. Deine Rechte</h2>
+    <h2>8. Deine Rechte</h2>
     <p>Du hast das Recht auf Auskunft (Art. 15 DSGVO), Berichtigung (Art. 16), Löschung (Art. 17), Einschränkung der
     Verarbeitung (Art. 18), Datenübertragbarkeit (Art. 20) und Widerspruch (Art. 21).</p>
     <p>Am schnellsten geht es direkt im Spiel unter <strong>Einstellungen</strong>:</p>
@@ -75,7 +89,7 @@
     <p>Du hast außerdem das Recht, dich bei einer Datenschutz-Aufsichtsbehörde zu beschweren, zum Beispiel bei der
     Landesbeauftragten für Datenschutz und Informationsfreiheit Nordrhein-Westfalen, Kavalleriestr. 2–4, 40213 Düsseldorf.</p>
 
-    <h2>8. Keine automatisierte Entscheidungsfindung</h2>
+    <h2>9. Keine automatisierte Entscheidungsfindung</h2>
     <p>Das Matchmaking bildet Teams anhand der Spielstärke (MMR). Das ist keine Entscheidung mit rechtlicher Wirkung im
     Sinne von Art. 22 DSGVO.</p>
   </main>

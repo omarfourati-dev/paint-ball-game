@@ -10,12 +10,15 @@ Voraussetzung: .NET SDK 10.
 
 ```bash
 dotnet dev-certs https            # einmalig: lokales TLS-Zertifikat für wss://
-dotnet run --project server/Paintball.Server
+dotnet run --project server/Paintball.Server -- --dev-login
 ```
 
 Dann **https://localhost:5443** öffnen (HTTP auf Port 5080 leitet auf HTTPS um): Unter `/` liegt die Landingpage,
-das Spiel selbst unter **`/play`**. Einladungslinks haben die Form `/play?join=CODE` (alte Links `/?join=CODE` leiten
-weiter). Freunde im LAN: `--public` starten und `https://<deine-IP>:5443/play?join=CODE` teilen. Weitere Optionen:
+das Spiel selbst unter **`/play`**. Ohne echtes Google-Konto meldet `https://localhost:5443/api/auth/dev?name=Ich`
+lokal an und leitet direkt zu `/play` weiter (`--dev-login` aktiviert diese Route, nur für die lokale Entwicklung –
+nie in Produktion verwenden). Einladungslinks haben die Form `/play?join=CODE` (alte Links `/?join=CODE` leiten
+weiter); auch der Dev-Login kennt `&join=CODE`. Freunde im LAN: `--public` starten und
+`https://<deine-IP>:5443/play?join=CODE` teilen. Weitere Optionen:
 `--port 5443 --http-port 5080 --data server-data --origin https://meine-domain.de`.
 Für einen öffentlichen Server ein echtes Zertifikat über die Kestrel-Konfiguration (`Kestrel:Certificates:Default`) hinterlegen.
 
@@ -38,15 +41,28 @@ Touch (virtueller Stick + Buttons) und Gamepad werden automatisch erkannt; alle 
 - **Grafik:** fotorealistisches PBR mit echtem Stadion-HDRI und Poly-Haven-Fototexturen, echte Menschen mit Skelett-Animation (Quaternius, CC0), fotogescannte Reifen/Fässer/Kisten, echtes NXL-Turnierfeld
 - **Sicherheit:** TLS/WSS, Origin-Prüfung, Flood-Schutz, Eingabevalidierung, serverseitige Feuerrate/Zielprüfung, Anti-Wallhack-Sichtbarkeit, Token nur gehasht gespeichert, DSGVO-Export/-Löschung
 
+## Anmeldung und Datenbank
+
+Angemeldet wird ausschließlich über Google-OAuth. Dafür `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` und `PUBLIC_URL`
+(die öffentliche Basis-URL für den OAuth-Redirect, z. B. `https://paint-ball-game.omarfourati.de`) setzen. Für die
+lokale Entwicklung ohne Google-Zugangsdaten ersetzt `--dev-login` (siehe Schnellstart) die Anmeldung.
+
+Konten, Fortschritt, Match-Historie und Sitzungen liegen in Postgres, adressiert über `DATABASE_URL`. Ohne diese
+Variable läuft der Server nur mit einem In-Memory-Speicher (Konten gehen beim Neustart verloren – für Tests und
+kurze lokale Läufe ausreichend). Die Server-Tests laufen gegen ein echtes Postgres, wenn `TEST_DATABASE_URL` gesetzt
+ist; ohne die Variable werden diese Tests übersprungen.
+
 ## Tests (TDD)
 
 ```bash
 dotnet run --project tests/Paintball.Core.Tests   # Core-Spiellogik (81)
-dotnet run --project tests/Paintball.Net.Tests    # Server: Simulation, Bots, Lobby, Konten, WSS-Integration, Seitenrouting (89)
-node --test tests/web/*.test.mjs                  # Client: Prediction-Golden, Netcode, glTF, Avatar, HDR, PWA/Service Worker, Landingpage (75)
+dotnet run --project tests/Paintball.Net.Tests    # Server: Simulation, Bots, Lobby, Konten, Google-Login, Postgres, WSS-Integration, Seitenrouting (114)
+node --test tests/web/*.test.mjs                  # Client: Prediction-Golden, Netcode, glTF, Avatar, HDR, PWA/Service Worker, Landingpage (83)
 ```
 
-Browser-End-to-End (Playwright, Server muss laufen): `tests/e2e/e2e-a-solo.js` und `tests/e2e/e2e-b-multiplayer.js`.
+Browser-End-to-End (Playwright, Server mit `--dev-login` muss laufen): `tests/e2e/e2e-a-solo.js`,
+`tests/e2e/e2e-b-multiplayer.js`, `tests/e2e/e2e-visual-closeup.js`, `tests/e2e/e2e-visual-humans.js` und
+`tests/e2e/e2e-landing-shots.js`.
 
 ## Struktur
 

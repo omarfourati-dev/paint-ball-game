@@ -1,5 +1,6 @@
 // Screenshots für die Landingpage: Übersicht jeder Karte + Action-Motiv für den Hero.
 // Ausführen über Playwright-MCP browser_run_code_unsafe, Server muss unter BASE laufen.
+// Server mit --dev-login starten: dotnet run --project server/Paintball.Server -- --dev-login
 // OUT ist ein fest einprogrammierter absoluter Pfad in diesem Checkout (Playwright-MCP hat ein
 // anderes Arbeitsverzeichnis als das Repo, ein relativer Pfad landet also woanders). Auf einer
 // anderen Maschine oder bei einem anderen Checkout-Pfad muss OUT entsprechend angepasst werden.
@@ -31,19 +32,15 @@ async (page) => {
   // null = voller Durchlauf (4 Karten + Hero, siehe ZUVERLÄSSIGKEIT oben); sonst eine Karten-ID
   // ('warehouse'|'forest'|'arena'|'speedball') für nur diese Karte, oder 'hero' für nur den Hero.
   const ONLY = null;
+  const RUN = '-' + Date.now().toString(36).slice(-4);
   const ctx = await page.context().browser().newContext({ ignoreHTTPSErrors: true, viewport: { width: 1280, height: 720 } });
   try {
     const maps = (await (await ctx.request.get(BASE + '/api/maps')).json()).maps;
 
     const startTraining = async (mapId) => {
       const p = await ctx.newPage();
-      await p.goto(BASE + '/play');
-      await p.waitForFunction(() => ['welcome', 'menu'].includes(window.__paintball?.screen), null, { timeout: 40000 });
-      if (await p.evaluate(() => window.__paintball.screen === 'welcome')) {
-        await p.fill('#welcome-name', 'Fotograf');
-        await p.click('#welcome-form button[type=submit]');
-      }
-      await p.waitForFunction(() => window.__paintball.profile?.name, null, { timeout: 15000 });
+      await p.goto(`${BASE}/api/auth/dev?name=${encodeURIComponent('Fotograf' + RUN)}`);
+      await p.waitForFunction(() => window.__paintball?.screen === 'menu' || window.__paintball?.screen === 'lobby', null, { timeout: 20000 });
       await p.waitForSelector('#tr-map', { state: 'visible', timeout: 15000 });
       await p.selectOption('#tr-map', mapId);
       await p.click('#btn-training');
