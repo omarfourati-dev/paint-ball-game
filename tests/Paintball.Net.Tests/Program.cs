@@ -31,6 +31,7 @@ namespace Paintball.Net.Tests
             MovementTests.Register(runner);
             MatchTests.Register(runner);
             BotTests.Register(runner);
+            PersistenceQueueTests.Register(runner);
             AccountTests.Register(runner);
             ServerTests.Register(runner);
             IntegrationTests.Register(runner);
