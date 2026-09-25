@@ -20,6 +20,7 @@ namespace Paintball.Net.Tests
             r.Run("Profil: Marker-Freischaltung durch Level, keine Kaufvorteile (FR-41/NFR-14)", UnlocksByLevel);
             r.Run("Shop: Kosmetik mit Münzen kaufen, nur kosmetisch (M-02/M-04)", ShopCosmetics);
             r.Run("Bestenliste: nur benannte Spieler, nach MMR (FR-46/FR-43)", Leaderboard);
+            r.Run("Bestenliste: 10 Sekunden zwischengespeichert, höchstens eine Datenbank-Abfrage pro Fenster", LeaderboardCached);
             r.Run("DSGVO: Export und vollständige Löschung inkl. Sessions (NFR-12)", GdprExportAndDelete);
         }
 
@@ -156,6 +157,26 @@ namespace Paintball.Net.Tests
             Assert.AreEqual("Bravo", rows[0].Name, "höchster MMR zuerst");
             Assert.AreEqual(1, rows[0].Rank, "Rang 1");
             Assert.IsFalse(string.IsNullOrEmpty(rows[0].League), "Liga");
+        }
+
+        private static void LeaderboardCached()
+        {
+            var repo = new WrappingRepository();
+            DateTime now = new DateTime(2026, 9, 25, 12, 0, 0, DateTimeKind.Utc);
+            var store = new AccountStore(repo, () => now);
+            string alpha = NewPlayer(store, "Alpha");
+            for (int i = 0; i < 100; i++)
+            {
+                now = now.AddMilliseconds(90);   // 100 Aufrufe in 9 Sekunden
+                Assert.AreEqual(1, store.Leaderboard(50).Count, "Zeilen");
+            }
+            Assert.AreEqual(1, repo.TopByMmrCalls, "100 Aufrufe innerhalb von 10 Sekunden → 1 Abfrage");
+            now = now.AddSeconds(11);
+            store.Leaderboard(50);
+            Assert.AreEqual(2, repo.TopByMmrCalls, "nach 11 Sekunden → neue Abfrage");
+            store.Delete(alpha);
+            Assert.AreEqual(0, store.Leaderboard(50).Count, "gelöschter Spieler sofort nicht mehr in der Bestenliste (DSGVO)");
+            Assert.AreEqual(3, repo.TopByMmrCalls, "Löschen leert den Zwischenspeicher");
         }
 
         private static void GdprExportAndDelete()

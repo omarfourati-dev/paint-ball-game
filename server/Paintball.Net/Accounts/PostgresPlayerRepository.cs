@@ -16,10 +16,25 @@ namespace Paintball.Net.Accounts
             _db = NpgsqlDataSource.Create(ToConnectionString(databaseUrl));
         }
 
+        /// <summary>Verbindungs-Timeout in Sekunden, falls die Konfiguration keinen vorgibt: ein Datenbank-Ausfall blockiert nicht lange.</summary>
+        public const int DefaultTimeoutSeconds = 3;
+        /// <summary>Befehls-Timeout in Sekunden, falls die Konfiguration keinen vorgibt.</summary>
+        public const int DefaultCommandTimeoutSeconds = 5;
+
+        /// <summary>
+        /// Wandelt eine DATABASE_URL (postgres[ql]://user:pass@host:port/db?Schlüssel=Wert) in einen Npgsql-String um; ein
+        /// Npgsql-String bleibt erhalten. In beiden Fällen werden Timeout und Command Timeout ergänzt, sofern sie fehlen.
+        /// </summary>
         public static string ToConnectionString(string databaseUrl)
         {
             if (!databaseUrl.StartsWith("postgres://", StringComparison.Ordinal) && !databaseUrl.StartsWith("postgresql://", StringComparison.Ordinal))
-                return databaseUrl;
+            {
+                var given = new System.Data.Common.DbConnectionStringBuilder { ConnectionString = databaseUrl };
+                string result = databaseUrl;
+                if (!HasKey(given, "timeout")) result = Append(result, "Timeout=" + DefaultTimeoutSeconds);
+                if (!HasKey(given, "commandtimeout")) result = Append(result, "Command Timeout=" + DefaultCommandTimeoutSeconds);
+                return result;
+            }
             var uri = new Uri(databaseUrl);
             string[] userInfo = uri.UserInfo.Split(':', 2);
             var b = new NpgsqlConnectionStringBuilder
@@ -30,8 +45,29 @@ namespace Paintball.Net.Accounts
                 Password = userInfo.Length > 1 ? Uri.UnescapeDataString(userInfo[1]) : null,
                 Database = uri.AbsolutePath.TrimStart('/')
             };
+            bool timeout = false, commandTimeout = false;
+            foreach (string pair in uri.Query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries))
+            {
+                string[] kv = pair.Split('=', 2);
+                string key = Uri.UnescapeDataString(kv[0]);
+                b[key] = kv.Length > 1 ? Uri.UnescapeDataString(kv[1]) : string.Empty;
+                timeout |= Normalize(key) == "timeout";
+                commandTimeout |= Normalize(key) == "commandtimeout";
+            }
+            if (!timeout) b.Timeout = DefaultTimeoutSeconds;
+            if (!commandTimeout) b.CommandTimeout = DefaultCommandTimeoutSeconds;
             return b.ConnectionString;
         }
+
+        private static string Normalize(string key) => key.Replace(" ", string.Empty).ToLowerInvariant();
+
+        private static bool HasKey(System.Data.Common.DbConnectionStringBuilder b, string normalized)
+        {
+            foreach (string key in b.Keys) if (Normalize(key) == normalized) return true;
+            return false;
+        }
+
+        private static string Append(string cs, string part) => cs.TrimEnd().TrimEnd(';') + ";" + part;
 
         /// <summary>Erzwingt Kind=Utc für timestamptz-Parameter; Aufrufer sind nicht vertrauenswürdig (Unspecified wird als UTC angenommen, Local korrekt umgerechnet).</summary>
         private static DateTime Utc(DateTime d) => d.Kind == DateTimeKind.Utc ? d : d.Kind == DateTimeKind.Local ? d.ToUniversalTime() : DateTime.SpecifyKind(d, DateTimeKind.Utc);

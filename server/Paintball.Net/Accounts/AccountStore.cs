@@ -126,14 +126,20 @@ namespace Paintball.Net.Accounts
         private readonly Dictionary<string, PlayerProfile> _profiles = new();
         private readonly Dictionary<string, PlayerRecord> _records = new();
         private readonly ShopCatalog _shop = new();
+        private readonly Func<DateTime> _clock;
+        private readonly object _leaderboardLock = new();
+        private readonly Dictionary<int, (DateTime At, IReadOnlyList<LeaderboardRow> Rows)> _leaderboard = new();
+        /// <summary>So lange wird die Bestenliste zwischengespeichert: aus vielen leaderboard-Nachrichten wird höchstens eine Abfrage.</summary>
+        public static readonly TimeSpan LeaderboardCacheDuration = TimeSpan.FromSeconds(10);
         public static readonly TimeSpan SessionLifetime = TimeSpan.FromDays(30);
 
         public IReadOnlyList<ShopEntry> Shop => Cosmetics;
         public static IReadOnlyList<AchievementDef> AchievementDefinitions => AchievementDefs;
 
-        public AccountStore(IPlayerRepository repository)
+        public AccountStore(IPlayerRepository repository, Func<DateTime> clock = null)
         {
             _repo = repository ?? throw new ArgumentNullException(nameof(repository));
+            _clock = clock ?? (() => DateTime.UtcNow);
             foreach (ShopEntry e in Cosmetics)
                 if (e.Price > 0)
                     _shop.Add(new ShopItem(e.Id, e.Name, e.Kind == "paint" ? ShopItemKind.PaintColor : ShopItemKind.Skin, CurrencyType.Soft, e.Price));
@@ -385,17 +391,31 @@ namespace Paintball.Net.Accounts
 
         // ---------------- Bestenliste ----------------
 
+        /// <summary>Top-Spieler nach MMR; das Ergebnis wird pro <paramref name="top"/> für <see cref="LeaderboardCacheDuration"/> zwischengespeichert.</summary>
         public IReadOnlyList<LeaderboardRow> Leaderboard(int top)
         {
-            var rows = new List<LeaderboardRow>();
-            int rank = 0;
-            foreach (PlayerRecord p in _repo.TopByMmr(Math.Clamp(top, 1, 200)))
-                rows.Add(new LeaderboardRow
-                {
-                    Rank = ++rank, Name = p.DisplayName, Mmr = p.Mmr, Level = p.Level,
-                    League = SeasonRanker.GetRankName(p.Mmr), Division = SeasonRanker.GetDivision(p.Mmr), AccountId = p.Id
-                });
-            return rows;
+            int limit = Math.Clamp(top, 1, 200);
+            lock (_leaderboardLock)
+            {
+                DateTime now = _clock();
+                if (_leaderboard.TryGetValue(limit, out var cached) && now - cached.At < LeaderboardCacheDuration) return cached.Rows;
+                var rows = new List<LeaderboardRow>();
+                int rank = 0;
+                foreach (PlayerRecord p in _repo.TopByMmr(limit))
+                    rows.Add(new LeaderboardRow
+                    {
+                        Rank = ++rank, Name = p.DisplayName, Mmr = p.Mmr, Level = p.Level,
+                        League = SeasonRanker.GetRankName(p.Mmr), Division = SeasonRanker.GetDivision(p.Mmr), AccountId = p.Id
+                    });
+                IReadOnlyList<LeaderboardRow> result = rows.AsReadOnly();
+                _leaderboard[limit] = (now, result);
+                return result;
+            }
+        }
+
+        private void InvalidateLeaderboard()
+        {
+            lock (_leaderboardLock) _leaderboard.Clear();
         }
 
         // ---------------- DSGVO ----------------
@@ -428,7 +448,9 @@ namespace Paintball.Net.Accounts
                 _records.Remove(accountId ?? string.Empty);
                 _accounts.Remove(accountId ?? string.Empty);
                 _profiles.Remove(accountId ?? string.Empty);
-                return _repo.Delete(accountId);
+                bool deleted = _repo.Delete(accountId);
+                InvalidateLeaderboard();
+                return deleted;
             }
         }
 

@@ -651,29 +651,38 @@ namespace Paintball.Net.Rooms
                 var personal = new PersonalResult();
                 if (sim != null && Match.Settings.Ranked && !m.Abandoned)
                 {
-                    PlayerAccount account = _server.Accounts.GetAccount(m.AccountId);
-                    int levelBefore = account?.Level ?? 1;
-                    var service = new MatchCompletionService(Match.Stats, account, winner ?? -1, sim.Id, sim.Team);
-                    MatchCompletionResult result = service.Complete(minutes, m.Abandoned, draw: !winner.HasValue);
-                    personal.Rewarded = result.RewardsGranted;
-                    personal.Reason = result.Reason;
-                    personal.Xp = result.XpGained;
-                    personal.MmrChange = result.MmrChange;
-                    if (result.RewardsGranted && account != null)
+                    try
                     {
-                        PlayerMatchStats st = Match.Stats.GetStats(sim.Id);
-                        RewardResult reward = _server.Accounts.ApplyMatch(m.AccountId, new MatchSummary
+                        PlayerAccount account = _server.Accounts.GetAccount(m.AccountId);
+                        int levelBefore = account?.Level ?? 1;
+                        var service = new MatchCompletionService(Match.Stats, account, winner ?? -1, sim.Id, sim.Team);
+                        MatchCompletionResult result = service.Complete(minutes, m.Abandoned, draw: !winner.HasValue);
+                        personal.Rewarded = result.RewardsGranted;
+                        personal.Reason = result.Reason;
+                        personal.Xp = result.XpGained;
+                        personal.MmrChange = result.MmrChange;
+                        if (result.RewardsGranted && account != null)
                         {
-                            Mode = GameModes.Id(Settings.Mode), Map = Settings.MapId, Won = winner.HasValue && sim.Team == winner.Value,
-                            Kills = st.Eliminations, Deaths = st.Deaths, Objective = st.ObjectiveScore,
-                            XpGained = result.XpGained, MmrChange = result.MmrChange
-                        });
-                        personal.Coins = reward.CoinsEarned;
-                        personal.Achievements = reward.NewAchievements;
-                        personal.Xp += reward.AchievementXp;
-                        m.Mmr = account.Mmr;
-                        m.Level = account.Level;
-                        personal.LevelUp = account.Level > levelBefore;
+                            PlayerMatchStats st = Match.Stats.GetStats(sim.Id);
+                            RewardResult reward = _server.Accounts.ApplyMatch(m.AccountId, new MatchSummary
+                            {
+                                Mode = GameModes.Id(Settings.Mode), Map = Settings.MapId, Won = winner.HasValue && sim.Team == winner.Value,
+                                Kills = st.Eliminations, Deaths = st.Deaths, Objective = st.ObjectiveScore,
+                                XpGained = result.XpGained, MmrChange = result.MmrChange
+                            });
+                            personal.Coins = reward.CoinsEarned;
+                            personal.Achievements = reward.NewAchievements;
+                            personal.Xp += reward.AchievementXp;
+                            m.Mmr = account.Mmr;
+                            m.Level = account.Level;
+                            personal.LevelUp = account.Level > levelBefore;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        // Speicherfehler (z. B. Datenbank weg) darf das Matchende der übrigen Mitglieder nicht abbrechen.
+                        // Nur den Typ loggen: die Meldung kann Verbindungsdetails enthalten.
+                        Console.Error.WriteLine($"[Room] Matchergebnis nicht gespeichert: {ex.GetType().Name}");
                     }
                 }
                 else if (!Match.Settings.Ranked)

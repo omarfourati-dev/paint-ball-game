@@ -111,13 +111,14 @@ namespace Paintball.Net.Tests
             r.Run("Loadout: Marker/Kosmetik nur wenn freigeschaltet (FR-35/FR-41)", LoadoutValidated);
             r.Run("Ping: pong mit Serverzeit für RTT/Uhrensync (FR-29)", PingPong);
             r.Run("Konto gelöscht während Match: Verbindung getrennt, Matchende speichert nichts", DeletedDuringMatch);
+            r.Run("Matchende: Speicherfehler bei einem Spieler, Ergebnis erreicht trotzdem alle", MatchEndSurvivesSaveFailure);
         }
 
-        internal static GameServer NewServer(Action<ServerOptions> configure = null)
+        internal static GameServer NewServer(Action<ServerOptions> configure = null, IPlayerRepository repo = null)
         {
             var options = new ServerOptions { QuickMatchWaitSeconds = 2f, ResultsSeconds = 2f, LobbyCountdownSeconds = 1f };
             configure?.Invoke(options);
-            return new GameServer(options, AccountTests.NewStore());
+            return new GameServer(options, AccountTests.NewStore(repo));
         }
 
         internal static void TickFor(GameServer s, float seconds)
@@ -581,6 +582,29 @@ namespace Paintball.Net.Tests
             JsonElement pong = c.Sink.Last("pong").Value;
             Assert.AreEqual(1234.5, pong.GetProperty("c").GetDouble(), "Client-Zeit gespiegelt");
             Assert.IsTrue(pong.TryGetProperty("st", out _), "Serverzeit");
+        }
+
+        private static void MatchEndSurvivesSaveFailure()
+        {
+            var repo = new WrappingRepository();
+            GameServer server = NewServer(repo: repo);
+            var host = new TestClient(server, "Host");
+            host.Send(new { t = "create", mode = "tdm", map = "arena", @private = true, timeLimit = 30 });
+            server.Tick();
+            var guest = new TestClient(server, "Gast");
+            guest.Send(new { t = "join", code = host.RoomCode });
+            guest.Send(new { t = "team", team = 1 });
+            server.Tick();
+            StartMatch(server, host, guest);
+            repo.FailWritesFor = host.AccountId;   // Host wird zuerst ausgewertet
+            TickUntil(server, () =>
+            {
+                host.Move(0f, 0f); guest.Move(0f, 0f);
+                return guest.Sink.Last("end") != null;
+            }, 40f);
+            Assert.IsTrue(host.Sink.Last("end") != null, "Host bekommt sein Ergebnis trotz Speicherfehler");
+            Assert.IsTrue(guest.Sink.Last("end").Value.GetProperty("you").GetProperty("rewarded").GetBoolean(), "Gast normal belohnt");
+            Assert.AreEqual("results", guest.Lobby.GetProperty("state").GetString(), "Raum in der Ergebnisphase");
         }
 
         private static void DeletedDuringMatch()

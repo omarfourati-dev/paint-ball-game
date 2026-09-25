@@ -172,7 +172,25 @@ namespace Paintball.Net.Tests
                 Assert.IsTrue(cs.Contains("Username=zentrades"), "User");
                 Assert.IsTrue(cs.Contains("Password=p@ss"), "Passwort URL-dekodiert");
                 Assert.IsTrue(cs.Contains("Database=paintball"), "Datenbank");
-                Assert.AreEqual("Host=x;Database=y", PostgresPlayerRepository.ToConnectionString("Host=x;Database=y"), "Npgsql-String bleibt");
+                var fromUrl = new Npgsql.NpgsqlConnectionStringBuilder(cs);
+                Assert.AreEqual(3, fromUrl.Timeout, "Verbindungs-Timeout 3 s");
+                Assert.AreEqual(5, fromUrl.CommandTimeout, "Befehls-Timeout 5 s");
+
+                var urlWithValues = new Npgsql.NpgsqlConnectionStringBuilder(PostgresPlayerRepository.ToConnectionString(
+                    "postgresql://u:p@h:5432/db?Timeout=10&Command%20Timeout=20"));
+                Assert.AreEqual(10, urlWithValues.Timeout, "Timeout aus der URL bleibt");
+                Assert.AreEqual(20, urlWithValues.CommandTimeout, "Command Timeout aus der URL bleibt");
+
+                var plain = new Npgsql.NpgsqlConnectionStringBuilder(PostgresPlayerRepository.ToConnectionString("Host=x;Database=y"));
+                Assert.AreEqual("x", plain.Host, "Npgsql-String: Host bleibt");
+                Assert.AreEqual("y", plain.Database, "Npgsql-String: Datenbank bleibt");
+                Assert.AreEqual(3, plain.Timeout, "Npgsql-String: Timeout ergänzt");
+                Assert.AreEqual(5, plain.CommandTimeout, "Npgsql-String: Command Timeout ergänzt");
+
+                var plainWithValues = new Npgsql.NpgsqlConnectionStringBuilder(PostgresPlayerRepository.ToConnectionString(
+                    "Host=x;Database=y;Timeout=12;CommandTimeout=34"));
+                Assert.AreEqual(12, plainWithValues.Timeout, "Npgsql-String: vorhandener Timeout bleibt");
+                Assert.AreEqual(34, plainWithValues.CommandTimeout, "Npgsql-String: vorhandener CommandTimeout bleibt");
             });
         }
     }
