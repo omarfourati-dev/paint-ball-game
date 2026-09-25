@@ -45,7 +45,7 @@ test('Rechtstexte: Impressum mit Pflichtangaben, Datenschutz mit Betroffenenrech
   for (const s of ['Verantwortlich', 'IONOS', "Let's Encrypt", 'Art. 6 Abs. 1 lit. b DSGVO', 'Art. 6 Abs. 1 lit. f DSGVO',
     'Meine Daten exportieren', 'Konto löschen', 'Landesbeauftragten für Datenschutz und Informationsfreiheit Nordrhein-Westfalen'])
     assert.ok(privacy.includes(s), `Datenschutz enthält ${s}`);
-  for (const s of ['Anmeldung mit Google', 'Google Ireland Limited', 'Data Privacy Framework', 'pb_session', '§ 25 Abs. 2 Nr. 2 TDDDG', 'E-Mail-Adresse'])
+  for (const s of ['Anmeldung mit Google', 'Google Ireland Limited', 'Data Privacy Framework', '__Host-pb_session', '§ 25 Abs. 2 Nr. 2 TDDDG', 'E-Mail-Adresse'])
     assert.ok(privacy.includes(s), `Datenschutz enthält ${s}`);
   assert.ok(!privacy.includes('keine Cookies'), 'Aussage „keine Cookies“ entfernt');
   for (const html of [imprint, privacy]) assert.doesNotMatch(html, /<script(?![^>]*\bsrc=)[^>]*>/, 'kein Inline-Skript');

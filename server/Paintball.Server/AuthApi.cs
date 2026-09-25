@@ -13,7 +13,11 @@ namespace Paintball.Server
     /// <summary>Session-Cookie, /api/me, Namenswahl, Abmelden, Dev-Login (Google-OAuth: siehe GoogleAuthApi).</summary>
     public static class AuthApi
     {
-        public const string SessionCookie = "pb_session";
+        /// <summary>__Host- verlangt Secure, Path=/ und verbietet ein Domain-Attribut (RFC 6265bis).</summary>
+        public const string SessionCookie = "__Host-pb_session";
+
+        /// <summary>Alter Cookie-Name vor der Umstellung auf __Host-; wird nur noch gelöscht, nie mehr akzeptiert.</summary>
+        public const string LegacySessionCookie = "pb_session";
 
         /// <summary>Obergrenze für den JSON-Body von /api/me/name.</summary>
         private const long MaxNameBodyBytes = 1024;
@@ -22,14 +26,21 @@ namespace Paintball.Server
             => ctx.Request.Cookies.TryGetValue(SessionCookie, out string v) ? v : null;
 
         public static void SetSession(HttpContext ctx, string token)
-            => ctx.Response.Cookies.Append(SessionCookie, token, new CookieOptions
+        {
+            // Kein Domain-Attribut: das __Host--Präfix verbietet es, sonst verwirft der Browser das Cookie.
+            ctx.Response.Cookies.Append(SessionCookie, token, new CookieOptions
             {
                 HttpOnly = true, Secure = true, SameSite = SameSiteMode.Lax, Path = "/",
                 MaxAge = AccountStore.SessionLifetime, IsEssential = true
             });
+            ctx.Response.Cookies.Delete(LegacySessionCookie, new CookieOptions { Path = "/", Secure = true, HttpOnly = true, SameSite = SameSiteMode.Lax });
+        }
 
         public static void ClearSession(HttpContext ctx)
-            => ctx.Response.Cookies.Delete(SessionCookie, new CookieOptions { HttpOnly = true, Secure = true, SameSite = SameSiteMode.Lax, Path = "/" });
+        {
+            ctx.Response.Cookies.Delete(SessionCookie, new CookieOptions { HttpOnly = true, Secure = true, SameSite = SameSiteMode.Lax, Path = "/" });
+            ctx.Response.Cookies.Delete(LegacySessionCookie, new CookieOptions { Path = "/", Secure = true, HttpOnly = true, SameSite = SameSiteMode.Lax });
+        }
 
         /// <summary>CSRF-Schutz für ändernde Requests: Origin muss zur eigenen Herkunft passen.</summary>
         public static bool SameOrigin(HttpContext ctx)

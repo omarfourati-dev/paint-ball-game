@@ -38,6 +38,7 @@ namespace Paintball.Net.Tests
             r.RunAsync("Proxy: WebSocket über den Proxy mit gleicher Origin", ProxyWebSocket);
             r.RunAsync("Proxy: Container-Healthcheck erreicht /api/health ohne Proxy-Header", ProxyHealthWithoutForwarding);
             r.RunAsync("Auth: Dev-Login nur mit Flag, Cookie HttpOnly/Secure/SameSite=Lax", DevLoginCookie);
+            r.RunAsync("Auth: altes Cookie pb_session wird nicht mehr akzeptiert", LegacySessionCookieRejected);
             r.RunAsync("Auth: /api/me 401 ohne Session, needsName nach erstem Login, Namenswahl mit taken/invalid", MeAndName);
             r.RunAsync("Auth: /ws ohne Cookie 401, ohne Namen 403", WsRequiresSession);
             r.RunAsync("Auth: Abmelden macht Session ungültig", Logout);
@@ -83,7 +84,7 @@ namespace Paintball.Net.Tests
         }
 
         private static bool SetsSession(HttpResponseMessage res)
-            => res.Headers.TryGetValues("Set-Cookie", out var sc) && sc.Any(v => v.StartsWith("pb_session="));
+            => res.Headers.TryGetValues("Set-Cookie", out var sc) && sc.Any(v => v.StartsWith("__Host-pb_session="));
 
         private static async Task GoogleStart()
         {
@@ -139,7 +140,7 @@ namespace Paintball.Net.Tests
             Assert.IsTrue(fake.LastVerifier?.Length == 43, "Verifier 43 Zeichen");
             Assert.AreEqual(expectedChallenge, Challenge(fake.LastVerifier), "Challenge aus Verifier passt zur Start-Weiterleitung");
             Assert.IsTrue(res.Headers.CacheControl?.NoStore == true, "no-store auf der Callback-Antwort");
-            string session = res.Headers.GetValues("Set-Cookie").First(v => v.StartsWith("pb_session="));
+            string session = res.Headers.GetValues("Set-Cookie").First(v => v.StartsWith("__Host-pb_session="));
             session = session.Substring(0, session.IndexOf(';'));
             var meReq = h.Req(HttpMethod.Get, "/api/me", session);
             string suggest = res.Headers.GetValues("Set-Cookie").FirstOrDefault(v => v.StartsWith("pb_suggest="));
@@ -215,7 +216,7 @@ namespace Paintball.Net.Tests
             // Zweiter Login desselben Google-Kontos: der Name wurde inzwischen vergeben (kein Namensbedarf
             // mehr), diesmal liefert Google sogar einen Vornamen – trotzdem muss pb_suggest gelöscht werden,
             // denn die Bedingung ist s.NeedsName, nicht das Vorhandensein eines Vornamens.
-            string session = res.Headers.GetValues("Set-Cookie").First(v => v.StartsWith("pb_session="));
+            string session = res.Headers.GetValues("Set-Cookie").First(v => v.StartsWith("__Host-pb_session="));
             session = session.Substring(0, session.IndexOf(';'));
             HttpResponseMessage named = await h.Http.SendAsync(h.Req(HttpMethod.Post, "/api/me/name", session, "{\"name\":\"Cleo\"}"));
             Assert.AreEqual(HttpStatusCode.OK, named.StatusCode, "Name gesetzt");
@@ -315,12 +316,12 @@ namespace Paintball.Net.Tests
                 return h;
             }
 
-            /// <summary>Meldet sich per Dev-Login an und gibt den Cookie-Header "pb_session=…" zurück.</summary>
+            /// <summary>Meldet sich per Dev-Login an und gibt den Cookie-Header "__Host-pb_session=…" zurück.</summary>
             public async Task<string> LoginAsync(string name)
             {
                 HttpResponseMessage res = await Http.GetAsync("/api/auth/dev?name=" + Uri.EscapeDataString(name));
                 Assert.AreEqual(HttpStatusCode.Found, res.StatusCode, "Dev-Login leitet weiter");
-                string set = res.Headers.GetValues("Set-Cookie").First(v => v.StartsWith("pb_session=", StringComparison.Ordinal));
+                string set = res.Headers.GetValues("Set-Cookie").First(v => v.StartsWith("__Host-pb_session=", StringComparison.Ordinal));
                 return set.Substring(0, set.IndexOf(';'));
             }
 
@@ -597,7 +598,7 @@ namespace Paintball.Net.Tests
                 login.Headers.Add("X-Forwarded-Proto", "https");
                 HttpResponseMessage res = await http.SendAsync(login);
                 Assert.AreEqual(HttpStatusCode.Found, res.StatusCode, "Dev-Login über den Proxy");
-                string set = res.Headers.GetValues("Set-Cookie").First(v => v.StartsWith("pb_session=", StringComparison.Ordinal));
+                string set = res.Headers.GetValues("Set-Cookie").First(v => v.StartsWith("__Host-pb_session=", StringComparison.Ordinal));
 
                 using var ws = new ClientWebSocket();
                 ws.Options.SetRequestHeader("Origin", $"https://localhost:{port}");
@@ -615,23 +616,42 @@ namespace Paintball.Net.Tests
         {
             await using Harness h = await Harness.StartAsync();
             HttpResponseMessage res = await h.Http.GetAsync("/api/auth/dev?name=Tester");
-            string set = res.Headers.GetValues("Set-Cookie").First(v => v.StartsWith("pb_session="));
+            string set = res.Headers.GetValues("Set-Cookie").First(v => v.StartsWith("__Host-pb_session="));
             string lower = set.ToLowerInvariant();
             Assert.IsTrue(lower.Contains("httponly") && lower.Contains("secure") && lower.Contains("samesite=lax") && lower.Contains("path=/"), "Cookie-Attribute");
+            Assert.IsFalse(lower.Contains("domain="), "__Host- verbietet ein Domain-Attribut");
             Assert.AreEqual("/play", res.Headers.Location.OriginalString, "zurück ins Spiel");
+
+            // Das alte Cookie pb_session wird beim Setzen der neuen Session mitgelöscht (leer, abgelaufen).
+            string legacyDelete = res.Headers.GetValues("Set-Cookie").First(v => v.StartsWith("pb_session=", StringComparison.Ordinal));
+            string legacyValue = legacyDelete.Substring("pb_session=".Length, legacyDelete.IndexOf(';') - "pb_session=".Length);
+            Assert.AreEqual("", legacyValue, "altes Cookie: leerer Wert");
+            Assert.IsTrue(legacyDelete.ToLowerInvariant().Contains("expires="), "altes Cookie: abgelaufenes expires");
 
             // Erneuter Login mit altem Cookie beendet die alte Session
             string old = set.Substring(0, set.IndexOf(';'));
             var again = new HttpRequestMessage(HttpMethod.Get, "/api/auth/dev?name=Tester");
             again.Headers.Add("Cookie", old);
             HttpResponseMessage relogin = await h.Http.SendAsync(again);
-            string fresh = relogin.Headers.GetValues("Set-Cookie").First(v => v.StartsWith("pb_session="));
+            string fresh = relogin.Headers.GetValues("Set-Cookie").First(v => v.StartsWith("__Host-pb_session="));
             fresh = fresh.Substring(0, fresh.IndexOf(';'));
             Assert.AreEqual(HttpStatusCode.Unauthorized, (await h.Http.SendAsync(h.Req(HttpMethod.Get, "/api/me", old))).StatusCode, "alte Session nach Re-Login ungültig");
             Assert.AreEqual(HttpStatusCode.OK, (await h.Http.SendAsync(h.Req(HttpMethod.Get, "/api/me", fresh))).StatusCode, "neue Session gültig");
 
             await using Harness prod = await Harness.StartAsync(devLogin: false);
             Assert.AreEqual(HttpStatusCode.NotFound, (await prod.Http.GetAsync("/api/auth/dev?name=X")).StatusCode, "ohne Flag 404");
+        }
+
+        private static async Task LegacySessionCookieRejected()
+        {
+            // Das alte Cookie pb_session darf nach der Umstellung auf __Host-pb_session nicht mehr akzeptiert werden,
+            // selbst mit einem gültigen Token.
+            await using Harness h = await Harness.StartAsync();
+            HttpResponseMessage res = await h.Http.GetAsync("/api/auth/dev?name=Alt");
+            string set = res.Headers.GetValues("Set-Cookie").First(v => v.StartsWith("__Host-pb_session="));
+            string token = set.Substring("__Host-pb_session=".Length, set.IndexOf(';') - "__Host-pb_session=".Length);
+            HttpResponseMessage me = await h.Http.SendAsync(h.Req(HttpMethod.Get, "/api/me", "pb_session=" + token));
+            Assert.AreEqual(HttpStatusCode.Unauthorized, me.StatusCode, "altes Cookie pb_session wird nicht mehr akzeptiert");
         }
 
         private static async Task MeAndName()
