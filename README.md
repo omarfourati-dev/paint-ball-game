@@ -19,7 +19,7 @@ lokal an und leitet direkt zu `/play` weiter (`--dev-login` aktiviert diese Rout
 nie in Produktion verwenden). Einladungslinks haben die Form `/play?join=CODE` (alte Links `/?join=CODE` leiten
 weiter); auch der Dev-Login kennt `&join=CODE`. Freunde im LAN: `--public` starten und
 `https://<deine-IP>:5443/play?join=CODE` teilen. Weitere Optionen:
-`--port 5443 --http-port 5080 --data server-data --origin https://meine-domain.de`.
+`--port 5443 --http-port 5080 --origin https://meine-domain.de`.
 Für einen öffentlichen Server ein echtes Zertifikat über die Kestrel-Konfiguration (`Kestrel:Certificates:Default`) hinterlegen.
 
 Das Spiel ist eine **installierbare PWA** (Manifest + Service Worker, Start unter `/play`): „Als App installieren“ auf der
@@ -86,6 +86,27 @@ Live unter **https://paint-ball-game.omarfourati.de**. Jeder Push auf `main` tes
 `.github/workflows/deploy.yml` (Docker-Image aus dem `Dockerfile`). Der Container läuft hinter Caddy (TLS) und startet
 mit `--behind-proxy`. Beim Docker-Build wird die Cache-Version in `web/sw.js` automatisch durch `pb-v<Zeitstempel>`
 ersetzt; sie muss also nie von Hand erhöht werden.
+
+### Produktion: Voraussetzungen
+
+- **Google-OAuth-Client** vom Typ „Webanwendung“ mit der Weiterleitungs-URI
+  `https://paint-ball-game.omarfourati.de/api/auth/google/callback`.
+- **GitHub-Secrets**: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` und `DB_PASSWORD`. Der
+  Deploy schreibt daraus die `.env` im Deploy-Verzeichnis; die Datei wird nie committet.
+- **Postgres-Rolle `paintball`** im Container `zentrades-postgres`, einmalig angelegt: `NOSUPERUSER`, Besitzerin der
+  Datenbank `paintball`, Passwort aus 48 Hex-Zeichen (keine Sonderzeichen, die in `DATABASE_URL` stören), erzeugt per
+  `openssl rand -hex 24` und per `gh secret set DB_PASSWORD` hinterlegt. Die
+  Datenbank selbst legt der Deploy an, falls sie fehlt.
+
+```bash
+# Einmalig, bereits erledigt. Das Passwort nie ins Repo oder in Logs schreiben:
+#   PW=$(openssl rand -hex 24)                          # 48 Hex-Zeichen
+#   printf %s "$PW" | gh secret set DB_PASSWORD
+#   docker exec zentrades-postgres psql -U zentrades \
+#     -c "CREATE ROLE paintball LOGIN NOSUPERUSER PASSWORD '<Passwort aus PW>';"
+#   docker exec zentrades-postgres psql -U zentrades -c "CREATE DATABASE paintball OWNER paintball;"
+#   unset PW
+```
 
 ### Service Worker zurückrollen (Notfall)
 

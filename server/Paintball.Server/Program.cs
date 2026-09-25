@@ -8,7 +8,7 @@ namespace Paintball.Server
     /// Startpunkt des WSS-Gameservers.
     ///   dotnet run --project server/Paintball.Server
     ///   → https://localhost:5443  (Browser-Client, wss://localhost:5443/ws)
-    /// Optionen: --port 5443 --http-port 5080 --data server-data --public --origin https://example.com
+    /// Optionen: --port 5443 --http-port 5080 --public --origin https://example.com
     ///   --behind-proxy  nur HTTP auf --http-port, TLS terminiert ein Reverse-Proxy (Produktion hinter Caddy)
     ///   --dev-login     aktiviert /api/auth/dev (nur lokale Entwicklung, nie in Produktion)
     /// Umgebung: DATABASE_URL, PUBLIC_URL, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
@@ -25,7 +25,7 @@ namespace Paintball.Server
                 {
                     case "--port": options.HttpsPort = int.Parse(next); i++; break;
                     case "--http-port": options.HttpPort = int.Parse(next); i++; break;
-                    case "--data": options.DataDirectory = next; i++; break;
+                    case "--data": i++; Console.WriteLine("[Start] --data ist veraltet und ohne Wirkung (Konten liegen in Postgres)"); break;
                     case "--web": options.WebRoot = next; i++; break;
                     case "--origin": options.AllowedOrigins.Add(next); i++; break;
                     case "--public": options.ListenAnyIp = true; break;

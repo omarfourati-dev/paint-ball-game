@@ -172,7 +172,6 @@ namespace Paintball.Net.Tests
                 {
                     HttpsPort = 0,
                     HttpPort = 0,
-                    DataDirectory = AccountTests.TempDir(),
                     WebRoot = web,
                     DevLogin = devLogin,
                     GoogleClientId = googleConfigured ? "test-client" : null,
@@ -417,7 +416,6 @@ namespace Paintball.Net.Tests
                 BehindProxy = true,
                 HttpPort = 0,
                 DevLogin = true,
-                DataDirectory = AccountTests.TempDir(),
                 WebRoot = AccountTests.TempDir(),
                 Game = new Paintball.Net.Rooms.ServerOptions { LobbyCountdownSeconds = 0.5f }
             };

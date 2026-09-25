@@ -41,7 +41,6 @@ namespace Paintball.Server
         /// X-Forwarded-Proto/-For werden übernommen, Weiterleitung auf die öffentliche HTTPS-URL ohne Port.
         /// </summary>
         public bool BehindProxy;
-        public string DataDirectory = "server-data";
         public string WebRoot;
         /// <summary>Zusätzlich erlaubte WebSocket-Origins (gleicher Host ist immer erlaubt).</summary>
         public List<string> AllowedOrigins = new();

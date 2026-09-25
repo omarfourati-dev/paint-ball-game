@@ -12,7 +12,6 @@ namespace Paintball.Net.Rooms
 
     public sealed class ServerOptions
     {
-        public string DataDirectory = "server-data";
         public float QuickMatchWaitSeconds = 12f;
         public int QuickMatchMinTeamPlayers = 8;
         public int QuickMatchMinFfaPlayers = 6;
