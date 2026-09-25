@@ -1,13 +1,13 @@
 // Landingpage: Sprache, Live-Daten (Health, Karten, Bestenliste), App-Installation, Service Worker.
 import { t, setLang, getLang, mapName } from './i18n.js';
-import { loadSettings, saveSettings } from './settings.js';
+import { loadSettings, saveSettings, keyLabel } from './settings.js';
 import { installMode, isIos } from './install.js';
 import { registerServiceWorker } from './sw-register.js';
 
 const MODES = [['tdm', '🎯'], ['ffa', '💥'], ['ctf', '🚩'], ['elim', '☠️'], ['koth', '👑'], ['training', '🤖']];
 const FEATURES = [['fair', '⚖️'], ['rooms', '🔑'], ['nop2w', '🛡️'], ['a11y', '♿'], ['input', '🎮'], ['crossplay', '🌍']];
 const KEYS = [['W A S D', 'move'], ['🖱', 'aim'], ['🖱 L', 'fire'], ['R', 'reload'], ['␣', 'jump'],
-  ['C', 'crouch'], ['⇧', 'sprint'], ['Q', 'dash'], ['F', 'heal'], ['Tab', 'score']];
+  ['ControlLeft', 'crouch'], ['⇧', 'sprint'], ['Q', 'dash'], ['F', 'heal'], ['Tab', 'score']];
 const FALLBACK_MAPS = [
   { id: 'warehouse', name: 'Lagerhaus' }, { id: 'forest', name: 'Wald' },
   { id: 'arena', name: 'Arena' }, { id: 'speedball', name: 'Turnierfeld' }
@@ -56,7 +56,7 @@ function renderLists() {
   $('#feature-list').replaceChildren(...FEATURES.map(([id, icon]) => tile(icon, t(`landing.f.${id}`), t(`landing.f.${id}.desc`))));
   $('#key-list').replaceChildren(...KEYS.map(([key, action]) => {
     const li = el('li');
-    li.append(el('kbd', null, key), el('span', null, t(`landing.k.${action}`)));
+    li.append(el('kbd', null, key === 'ControlLeft' ? keyLabel(key, getLang()) : key), el('span', null, t(`landing.k.${action}`)));
     return li;
   }));
 }

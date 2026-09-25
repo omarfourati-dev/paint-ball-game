@@ -31,9 +31,9 @@ async (page) => {
   await p.evaluate(() => { const g = window.__paintball.game; g.yaw += Math.PI - 0.9; g.pitch = -0.1; });
   await p.waitForTimeout(500);
   await p.screenshot({ path: OUT + 'h3-back.png' });
-  await p.keyboard.down('KeyC'); await p.waitForTimeout(700);
+  await p.keyboard.down('ControlLeft'); await p.waitForTimeout(700);
   await p.screenshot({ path: OUT + 'h4-crouch.png' });
-  await p.keyboard.up('KeyC');
+  await p.keyboard.up('ControlLeft');
   await ctx.close();
   return { info, errors: errors.slice(0, 10) };
 }

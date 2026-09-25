@@ -8,7 +8,8 @@ import { ClientGame } from './game.js';
 import { World } from './world.js';
 import * as S from './scene.js';
 import { t, setLang, getLang, phrases, tips } from './i18n.js';
-import { loadSettings, saveSettings, sanitize, rebind, ACTIONS, DEFAULT_KEYS, teamPalette } from './settings.js';
+import { loadSettings, saveSettings, sanitize, rebind, ACTIONS, DEFAULT_KEYS, teamPalette, keyLabel } from './settings.js';
+import { installLeaveGuard, syncKeyboardLock } from './guard.js';
 import { TutorialTracker } from './tutorial.js';
 import { escapeHtml as esc, formatNumber, formatPercent, formatTime, inviteUrl } from './format.js';
 import { MODES, TEAM_MODES } from './protocol.js';
@@ -61,6 +62,8 @@ export class App {
     this.applySettings();
     this.input.onDeviceChange = d => this.onDeviceChange(d);
     this.input.onPointerLockChange = locked => this.onPointerLock(locked);
+    installLeaveGuard(window, () => this.game.active);
+    document.addEventListener('fullscreenchange', () => syncKeyboardLock(document, navigator, this.game.active));
   }
 
   // ---------------- Start ----------------
@@ -563,6 +566,7 @@ export class App {
     this.screen = 'game';
     $('#touch').classList.toggle('hidden', this.input.device !== 'touch');
     this.input.enabled = true;
+    syncKeyboardLock(document, navigator, true);
     if (this.input.device !== 'touch') {
       this.input.requestLock();
       setTimeout(() => { if (!this.input.locked && this.game.active) this.showClickToPlay(); }, 150);
@@ -599,6 +603,7 @@ export class App {
         <h2>❚❚ ${esc(t('pause.title'))}</h2>
         <button class="btn primary big" id="p-resume" data-autofocus>▶ ${esc(t('pause.resume'))}</button>
         <button class="btn" id="p-settings">⚙️ ${esc(t('pause.settings'))}</button>
+        ${document.fullscreenEnabled && this.input.device !== 'touch' ? `<button class="btn" id="p-fullscreen">⛶ ${esc(t(document.fullscreenElement ? 'pause.fullscreenExit' : 'pause.fullscreen'))}</button>` : ''}
         ${others.length ? `<h3>${esc(t('report.title'))}</h3>` + others.map(([id, r]) => `
           <div class="player-row"><span class="name">${esc(r.name)}</span>
             <button class="btn small" data-report="${id}">⚑ ${esc(t('report.toxicity'))}</button>
@@ -611,6 +616,15 @@ export class App {
     o.classList.remove('hidden');
     $('#p-resume').onclick = () => { o.classList.add('hidden'); if (this.input.device === 'touch') return; this.input.requestLock(); };
     $('#p-settings').onclick = () => { o.classList.add('hidden'); this.show('settings'); };
+    const fs = $('#p-fullscreen');
+    if (fs) fs.onclick = async () => {
+      try {
+        if (document.fullscreenElement) await document.exitFullscreen();
+        else await document.documentElement.requestFullscreen();
+      } catch { /* Browser verweigert */ }
+      o.classList.add('hidden');
+      this.input.requestLock();
+    };
     $('#p-leave').onclick = () => { o.classList.add('hidden'); this.net.send({ t: 'leave' }); };
     o.querySelectorAll('[data-report]').forEach(b => b.onclick = () => this.net.send({ t: 'report', player: Number(b.dataset.report), reason: 'toxicity' }));
     o.querySelectorAll('[data-report-cheat]').forEach(b => b.onclick = () => this.net.send({ t: 'report', player: Number(b.dataset.reportCheat), reason: 'cheating' }));
@@ -671,6 +685,7 @@ export class App {
     this.game.stop();
     this.input.enabled = false;
     this.input.releaseLock();
+    syncKeyboardLock(document, navigator, false);
     document.body.classList.remove('in-game');
     $('#touch').classList.add('hidden');
     $('#pause').classList.add('hidden');
@@ -895,7 +910,7 @@ export class App {
     const check = key => `<label class="check"><input type="checkbox" data-set="${key}" ${s[key] ? 'checked' : ''}> ${esc(t(`settings.${key}`))}</label>`;
     const select = (key, values, labelKey = v => `settings.${key}.${v}`) => `
       <label class="field">${esc(t(`settings.${key}`))}<select data-set="${key}">${values.map(v => `<option value="${v}" ${s[key] === v ? 'selected' : ''}>${esc(t(labelKey(v)))}</option>`).join('')}</select></label>`;
-    const keyName = code => code.replace(/^Key/, '').replace(/^Digit/, '').replace('ShiftLeft', 'Shift').replace('Space', '␣');
+    const keyName = code => keyLabel(code, s.lang);
     const pct = v => `${Math.round(v * 100)}%`;
     let body = '';
     if (tab === 'graphics') body = `${select('quality', ['low', 'medium', 'high'])}${select('fpsCap', [0, 30, 60], v => v ? `${v} FPS` : 'settings.fpsCap.0')}${slider('fov', 50, 100, 1, v => `${v}°`)}${check('showFps')}`;

@@ -26,7 +26,7 @@ Das Spiel ist eine **installierbare PWA** (Manifest + Service Worker, Start unte
 Landingpage bzw. „Zum Home-Bildschirm“ auf iPhone/iPad. Gespielt wird immer online; der Service Worker cacht nur
 Programmdateien und Grafiken, nie API oder WebSocket.
 
-**Steuerung:** WASD bewegen · Maus zielen · Linksklick schießen · R nachladen · Leertaste springen · C ducken ·
+**Steuerung:** WASD bewegen · Maus zielen · Linksklick schießen · R nachladen · Leertaste springen · Strg ducken ·
 Shift sprinten · Q Dash · F Heil-Spray · Tab Punktetabelle · T Quick-Chat · B Emotes · G/Mittelklick markieren · Esc Pause.
 Touch (virtueller Stick + Buttons) und Gamepad werden automatisch erkannt; alle Tasten sind neu belegbar.
 

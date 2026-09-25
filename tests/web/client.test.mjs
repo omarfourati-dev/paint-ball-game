@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { STRINGS, t, setLang, phrases, getLang, mapName } from '../../web/js/i18n.js';
-import { DEFAULTS, sanitize, loadSettings, saveSettings, rebind, teamPalette, ACTIONS } from '../../web/js/settings.js';
+import { DEFAULTS, DEFAULT_KEYS, KEYS_VERSION, sanitize, loadSettings, saveSettings, rebind, teamPalette, ACTIONS, keyLabel } from '../../web/js/settings.js';
 import { TutorialTracker, STEPS } from '../../web/js/tutorial.js';
 import { formatTime, connectionQuality, formatNumber, inviteUrl } from '../../web/js/format.js';
 import { aimAngles, aimAssistFactor } from '../../web/js/aim.js';
@@ -163,4 +163,36 @@ test('Landingpage: Fallback-Karte speedball heißt wie in der API „Turnierfeld
   const src = readFileSync(new URL('../../web/js/landing.js', import.meta.url), 'utf8');
   assert.match(src, /\{ id: 'speedball', name: 'Turnierfeld' \}/);
   assert.match(src, /mapName\(m\)/, 'renderMaps nutzt die Übersetzung');
+});
+
+test('Tasten: Ducken liegt auf Strg links, alter Standard C wird einmalig migriert', () => {
+  assert.equal(DEFAULT_KEYS.crouch, 'ControlLeft');
+  assert.equal(DEFAULTS.keysVersion, KEYS_VERSION);
+  const old = sanitize({ keybinds: { ...DEFAULT_KEYS, crouch: 'KeyC' } });
+  assert.equal(old.keybinds.crouch, 'ControlLeft', 'v1 mit C → Strg');
+  assert.equal(old.keysVersion, 2);
+  assert.equal(sanitize({ keybinds: { crouch: 'KeyX' } }).keybinds.crouch, 'KeyX', 'eigene Taste bleibt');
+  const chosen = rebind(old, 'crouch', 'KeyC');
+  assert.equal(sanitize(chosen).keybinds.crouch, 'KeyC', 'nach der Migration bewusst gewähltes C bleibt');
+});
+
+test('Tasten: Migration erzeugt keine Doppelbelegung, wenn Strg schon vergeben ist', () => {
+  const s = sanitize({ keybinds: { crouch: 'KeyC', sprint: 'ControlLeft' } });
+  assert.equal(s.keybinds.crouch, 'KeyC', 'Ducken bleibt auf C');
+  assert.equal(s.keybinds.sprint, 'ControlLeft');
+  assert.equal(s.keysVersion, 2, 'trotzdem als migriert markiert');
+});
+
+test('Tasten: Anzeige „Strg“ bzw. „Ctrl“ in Einstellungen und Tutorial', () => {
+  assert.equal(keyLabel('ControlLeft', 'de'), 'Strg');
+  assert.equal(keyLabel('ControlLeft', 'en'), 'Ctrl');
+  assert.equal(keyLabel('KeyW', 'de'), 'W');
+  assert.equal(keyLabel('Digit3', 'en'), '3');
+  assert.equal(keyLabel('ShiftLeft', 'de'), 'Shift');
+  assert.equal(keyLabel('Space', 'en'), '␣');
+  setLang('de');
+  assert.match(t('tutorial.crouch'), /Strg/);
+  setLang('en');
+  assert.match(t('tutorial.crouch'), /Ctrl/);
+  setLang('de');
 });

@@ -3,9 +3,33 @@
 export const ACTIONS = ['forward', 'back', 'left', 'right', 'jump', 'crouch', 'sprint', 'reload', 'dash', 'use', 'scoreboard', 'chat', 'emote', 'mark'];
 
 export const DEFAULT_KEYS = {
-  forward: 'KeyW', back: 'KeyS', left: 'KeyA', right: 'KeyD', jump: 'Space', crouch: 'KeyC',
+  forward: 'KeyW', back: 'KeyS', left: 'KeyA', right: 'KeyD', jump: 'Space', crouch: 'ControlLeft',
   sprint: 'ShiftLeft', reload: 'KeyR', dash: 'KeyQ', use: 'KeyF', scoreboard: 'Tab', chat: 'KeyT', emote: 'KeyB', mark: 'KeyG'
 };
+
+/** Version der Tastenbelegung: 2 = Ducken auf Strg (Event-Paket). */
+export const KEYS_VERSION = 2;
+
+/** v1 → v2: Ducken vom alten Standard C auf Strg links. Eigene Tasten bleiben; ist Strg schon vergeben, bleibt C. */
+export function migrateKeys(keys) {
+  const taken = ACTIONS.some(a => a !== 'crouch' && keys[a] === 'ControlLeft');
+  if (keys.crouch === 'KeyC' && !taken) keys.crouch = 'ControlLeft';
+  return keys;
+}
+
+const KEY_LABELS = {
+  ControlLeft: { de: 'Strg', en: 'Ctrl' },
+  ControlRight: { de: 'Strg rechts', en: 'Right Ctrl' },
+  ShiftLeft: { de: 'Shift', en: 'Shift' },
+  Space: { de: '␣', en: '␣' }
+};
+
+/** Anzeigename einer Taste (KeyboardEvent.code) in der jeweiligen Sprache. */
+export function keyLabel(code, lang = 'de') {
+  const label = KEY_LABELS[code];
+  if (label) return label[lang === 'en' ? 'en' : 'de'];
+  return String(code).replace(/^Key/, '').replace(/^Digit/, '');
+}
 
 const browserLang = () => {
   const l = (globalThis.navigator?.language || 'de').slice(0, 2);
@@ -33,7 +57,8 @@ export const DEFAULTS = Object.freeze({
   theme: 'dark',
   crosshair: '#ffffff',
   touchScale: 1,
-  keybinds: Object.freeze({ ...DEFAULT_KEYS })
+  keybinds: Object.freeze({ ...DEFAULT_KEYS }),
+  keysVersion: KEYS_VERSION
 });
 
 const clamp = (v, min, max, d) => (typeof v === 'number' && Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : d);
@@ -46,6 +71,7 @@ export function sanitize(raw) {
   if (s.keybinds && typeof s.keybinds === 'object') {
     for (const a of ACTIONS) if (typeof s.keybinds[a] === 'string' && s.keybinds[a].length < 24) keys[a] = s.keybinds[a];
   }
+  if (s.keysVersion !== KEYS_VERSION) migrateKeys(keys);
   return {
     lang: oneOf(s.lang, ['de', 'en'], DEFAULTS.lang),
     sensitivity: clamp(s.sensitivity, 0.1, 5, DEFAULTS.sensitivity),
@@ -67,7 +93,8 @@ export function sanitize(raw) {
     theme: oneOf(s.theme, ['dark', 'light'], DEFAULTS.theme),
     crosshair: typeof s.crosshair === 'string' && /^#[0-9a-f]{6}$/i.test(s.crosshair) ? s.crosshair : DEFAULTS.crosshair,
     touchScale: clamp(s.touchScale, 0.7, 1.5, DEFAULTS.touchScale),
-    keybinds: keys
+    keybinds: keys,
+    keysVersion: KEYS_VERSION
   };
 }
 
