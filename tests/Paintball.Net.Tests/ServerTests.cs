@@ -88,6 +88,8 @@ namespace Paintball.Net.Tests
         {
             r.Run("Server: hello nur mit angemeldetem Spieler, welcome ohne Token (Google-Login)", HelloWelcome);
             r.Run("Server: hello legt kein Konto an, Name aus dem Konto", HelloCreatesNoAccount);
+            r.Run("Server: Nachricht vor hello wird abgelehnt", MessageBeforeHelloRejected);
+            r.Run("Server: Renamed aktualisiert Sitzung und Profil", RenamedUpdatesSessionAndProfile);
             r.Run("Server: Kaputte/zu große/unbekannte Nachrichten crashen nicht (NFR-10)", MalformedMessages);
             r.Run("Server: Flood-Schutz trennt Spammer (NFR-13)", RateLimit);
             r.Run("Lobby: Privater Raum mit Einladungscode, Beitritt, Fehler bei falschem Code (FR-20/FR-24)", PrivateRoomInvite);
@@ -190,6 +192,26 @@ namespace Paintball.Net.Tests
             server.Tick();
             Assert.AreEqual(before + 1, server.Accounts.Count, "hello legt nichts an");
             Assert.AreEqual("Bea", c.Sink.Last("welcome").Value.GetProperty("name").GetString(), "Name bleibt");
+        }
+
+        private static void MessageBeforeHelloRejected()
+        {
+            GameServer server = NewServer();
+            var c = new TestClient(server, "Omar", hello: false);   // gültiger Spieler, aber noch kein hello
+            c.Send(new { t = "quick", mode = "tdm" });
+            server.Tick();
+            Assert.AreEqual("not_authenticated", c.Sink.Last("error").Value.GetProperty("code").GetString(), "vor hello abgelehnt");
+        }
+
+        private static void RenamedUpdatesSessionAndProfile()
+        {
+            GameServer server = NewServer();
+            var c = new TestClient(server, "Omar");
+            server.Accounts.SetName(c.AccountId, "Neu123");
+            server.Renamed(c.AccountId);
+            server.Tick();
+            Assert.AreEqual("Neu123", c.Session.Name, "Sitzung trägt neuen Namen");
+            Assert.AreEqual("Neu123", c.Sink.Last("profile").Value.GetProperty("name").GetString(), "Profil-Nachricht mit neuem Namen");
         }
 
         private static void MalformedMessages()

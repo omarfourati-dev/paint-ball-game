@@ -287,7 +287,10 @@ namespace Paintball.Net.Accounts
                     if (attempt >= _retryDelaysMs.Length)
                     {
                         RecordFailure("[Persistenz] Schreibauftrag nach Wiederholungen verworfen: ", ex);
-                        MarkFailed(job.PlayerId);
+                        // Nur markieren, wenn der Job noch gewollt ist: ein gleichzeitiges Forget/Delete (Epoche erhöht,
+                        // während dieser Versuch noch lief) soll keinen verwaisten Fehlmarkierungs-Eintrag hinterlassen
+                        // (Controller-Review Task 6, Fix Runde 2).
+                        if (StillWanted(job)) MarkFailed(job.PlayerId);
                         return;
                     }
                 }

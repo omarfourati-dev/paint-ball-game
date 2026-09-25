@@ -753,10 +753,11 @@ namespace Paintball.Net.Tests
         private static async Task WsRequiresSession()
         {
             await using Harness h = await Harness.StartAsync();
-            bool rejected = false;
-            try { using ClientWebSocket ws = await h.ConnectAsync($"https://localhost:{h.HttpsPort}"); }
-            catch (WebSocketException) { rejected = true; }
-            Assert.IsTrue(rejected, "ohne Cookie abgelehnt");
+            var noCookie = new ClientWebSocket();
+            noCookie.Options.RemoteCertificateValidationCallback = (_, _, _, _) => true;
+            noCookie.Options.CollectHttpResponseDetails = true;
+            try { await noCookie.ConnectAsync(new Uri($"wss://localhost:{h.HttpsPort}/ws"), CancellationToken.None); } catch (WebSocketException) { }
+            Assert.AreEqual(HttpStatusCode.Unauthorized, noCookie.HttpStatusCode, "ohne Cookie 401");
 
             string noName = await h.LoginAsync("");
             var probe = new ClientWebSocket();

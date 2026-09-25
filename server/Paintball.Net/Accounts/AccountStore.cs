@@ -237,10 +237,12 @@ namespace Paintball.Net.Accounts
             lock (_lock) return TryGetCachedLocked(playerId)?.DisplayName == null;
         }
 
-        /// <summary>3–16 Zeichen, Buchstaben/Ziffern/Leer/_-., nicht toxisch; sonst null.</summary>
+        /// <summary>3–16 Zeichen, Buchstaben/Ziffern/Leer/_-., nicht toxisch; sonst null. Normalisiert zuerst nach NFC,
+        /// damit zerlegte und komponierte Unicode-Formen (z. B. "e" + Akzent vs. "é") als derselbe Name gelten.</summary>
         public static string ValidateName(string name)
         {
-            string trimmed = (name ?? string.Empty).Trim();
+            name = (name ?? string.Empty).Normalize(NormalizationForm.FormC);
+            string trimmed = name.Trim();
             if (trimmed.Length < 3 || trimmed.Length > 16) return null;
             foreach (char c in trimmed)
                 if (!(char.IsLetterOrDigit(c) || c == ' ' || c == '_' || c == '-' || c == '.')) return null;
@@ -277,8 +279,10 @@ namespace Paintball.Net.Accounts
             return r;
         }
 
+        /// <exception cref="ArgumentException">Kein Konto mit dieser Id (auch nicht im Repository) – nie eine Sitzung für eine tote Id.</exception>
         public string CreateSession(string playerId)
         {
+            if (!EnsureLoaded(playerId)) throw new ArgumentException("unbekannter Spieler");
             string token = NewToken();
             _repo.CreateSession(Hash(token), playerId, DateTime.UtcNow.Add(SessionLifetime));
             return token;

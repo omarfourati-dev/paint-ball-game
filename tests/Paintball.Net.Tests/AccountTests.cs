@@ -18,8 +18,10 @@ namespace Paintball.Net.Tests
             r.Run("Konto: Google-Anmeldung legt einmal an, zweiter Login findet dasselbe Konto", SignInFindOrCreate);
             r.Run("Konto: Name 3–16 Zeichen, erlaubte Zeichen, kein Toxisches", NameValidation);
             r.Run("Konto: Name eindeutig ohne Groß-/Kleinschreibung", NameUnique);
+            r.Run("Konto: Name wird nach NFC normalisiert (zerlegte und komponierte Form gelten als gleich)", NameNfcNormalization);
             r.Run("Konto: Namensvorschlag aus Google-Vorname", NameSuggestion);
             r.Run("Session: nur Hash gespeichert, auflösen, abmelden", Sessions);
+            r.Run("Session: für unbekannten Spieler wird keine Session angelegt", CreateSessionUnknownPlayerThrows);
             r.Run("Konto: Fortschritt übersteht Neustart (neuer Store, gleiches Repository)", PersistsAcrossRestart);
             r.Run("Profil: Matchbelohnung XP/Münzen/Errungenschaften/Historie (FR-40/FR-45)", RewardsApplied);
             r.Run("Profil: Marker-Freischaltung durch Level, keine Kaufvorteile (FR-41/NFR-14)", UnlocksByLevel);
@@ -102,6 +104,20 @@ namespace Paintball.Net.Tests
             Assert.IsFalse(store.NeedsName(a), "hat Namen");
         }
 
+        /// <summary>
+        /// "Renée" ist die zerlegte Form (e + kombinierender Akut, NFD), "Renée" die komponierte Form (é, NFC).
+        /// Beide müssen als derselbe Name gelten, sonst ließen sich Namenssperren per Unicode-Trick umgehen.
+        /// </summary>
+        private static void NameNfcNormalization()
+        {
+            Assert.AreEqual("Renée", AccountStore.ValidateName("Renée"), "zerlegte Form wird zu NFC normalisiert");
+
+            AccountStore store = NewStore();
+            string a = store.SignIn("g-nfc-a", "a@b.c").PlayerId, b = store.SignIn("g-nfc-b", "b@b.c").PlayerId;
+            Assert.AreEqual(NameResult.Ok, store.SetName(a, "Renée"), "erster Spieler setzt die komponierte Form");
+            Assert.AreEqual(NameResult.Taken, store.SetName(b, "Renée"), "zweiter Spieler mit der zerlegten Form ist vergeben");
+        }
+
         private static void NameSuggestion()
         {
             Assert.AreEqual("Omar", AccountStore.SuggestName("Omar"), "Vorname");
@@ -121,6 +137,15 @@ namespace Paintball.Net.Tests
             Assert.AreEqual(null, store.PlayerIdForSession("gefälscht"), "gefälscht");
             store.EndSession(token);
             Assert.AreEqual(null, store.PlayerIdForSession(token), "nach Abmelden ungültig");
+        }
+
+        private static void CreateSessionUnknownPlayerThrows()
+        {
+            AccountStore store = NewStore();
+            bool thrown = false;
+            try { store.CreateSession("gibt-es-nicht"); }
+            catch (ArgumentException) { thrown = true; }
+            Assert.IsTrue(thrown, "ArgumentException statt Sitzung für eine tote Id");
         }
 
         private static void PersistsAcrossRestart()

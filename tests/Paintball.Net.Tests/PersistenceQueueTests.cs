@@ -31,6 +31,7 @@ namespace Paintball.Net.Tests
             r.RunAsync("Queue: während DisposeAsync eingereihte Aufträge werden noch geschrieben", EnqueueDuringDispose);
             r.RunAsync("Queue: DisposeAsync verwirft nach Zeitlimit den Rest und zählt ihn", DisposeTimeoutDrops);
             r.RunAsync("Queue: Abbruch während einer Wiederholung zählt als Verlust", AbortDuringRetryCounted);
+            r.RunAsync("Queue: Wiederholungen ausgeschöpft nach gleichzeitigem Forget markiert keinen Fehler (Fix Runde 2)", RetriesExhaustedAfterForgetSkipsMarkFailed);
         }
 
         private static PlayerRecord Snap(string id, int xp) => new PlayerRecord { Id = id, Xp = xp };
@@ -308,6 +309,26 @@ namespace Paintball.Net.Tests
             Assert.AreEqual(1, q.DroppedOnShutdown, "Abbruch in der Wiederholung gezählt");
             Assert.AreEqual(1L, q.Failures, "als Fehler gezählt");
             Assert.AreEqual(0, q.Pending, "nichts offen");
+        }
+
+        /// <summary>
+        /// Controller-Review Task 6, Fix Runde 2: die Wiederholungen-ausgeschöpft-Verzweigung markierte bislang immer,
+        /// selbst wenn ein gleichzeitiger Forget (Konto gelöscht) den Job längst nicht mehr wollte – anders als die
+        /// übrigen Verwerf-Zweige, die vorher prüfen, ob der Job noch zur aktuellen Epoche gehört. Ohne Wiederholungen
+        /// (leeres Delay-Array) ist bereits der erste, blockierte Versuch der "letzte"; Forget läuft während er noch im
+        /// Repository steckt, danach wirft das Repository.
+        /// </summary>
+        private static async Task RetriesExhaustedAfterForgetSkipsMarkFailed()
+        {
+            var repo = RecordingRepository.Paused();
+            repo.FailTimes = 1;   // der einzige Versuch (kein Retry-Budget) schlägt fehl, sobald er weiterlaufen darf
+            await using var q = PersistenceQueue.Background(repo, Array.Empty<int>());
+            q.EnqueueSave(Snap("p", 1));
+            repo.WaitUntilFirstCallBlocks();   // Versuch steckt im Repository
+            q.Forget("p");                     // Konto gelöscht, während der letzte Versuch noch läuft
+            repo.Release();                    // jetzt wirft das Repository
+            await q.FlushAsync(FlushTimeout);
+            Assert.IsFalse(q.HasFailed("p"), "kein verwaister Fehlmarkierungs-Eintrag nach Forget");
         }
     }
 
