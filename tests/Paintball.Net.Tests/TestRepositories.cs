@@ -17,6 +17,8 @@ namespace Paintball.Net.Tests
         public int GetDelayMs;
         private int _getCalls;
         public int GetCalls => System.Threading.Volatile.Read(ref _getCalls);
+        /// <summary>Läuft nach jedem RecordLogin (z. B. um ein Löschen mitten in die Anmeldung zu legen).</summary>
+        public Action<string> OnRecordLogin;
 
         public WrappingRepository(IPlayerRepository inner = null) { _inner = inner ?? new InMemoryPlayerRepository(); }
 
@@ -33,7 +35,7 @@ namespace Paintball.Net.Tests
             return _inner.Get(playerId);
         }
         public PlayerRecord Create(string googleSub, string email) => _inner.Create(googleSub, email);
-        public void RecordLogin(string playerId, string email, DateTime when) => _inner.RecordLogin(playerId, email, when);
+        public void RecordLogin(string playerId, string email, DateTime when) { _inner.RecordLogin(playerId, email, when); OnRecordLogin?.Invoke(playerId); }
         public void SaveProgress(PlayerRecord player) { MaybeFail(player?.Id); _inner.SaveProgress(player); }
         public NameResult TrySetName(string playerId, string name) => _inner.TrySetName(playerId, name);
         public void AddMatch(string playerId, MatchRecord match) { MaybeFail(playerId); _inner.AddMatch(playerId, match); }

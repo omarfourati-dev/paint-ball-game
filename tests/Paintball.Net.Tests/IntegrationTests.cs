@@ -59,6 +59,9 @@ namespace Paintball.Net.Tests
             r.RunAsync("Google: Abbruch ohne pb_oauth-Cookie → invalid_state, keine Session (Anti-Login-CSRF)", GoogleCancelledWithoutCookie);
             r.RunAsync("Google: no-store auch bei Rate-Limit (429) auf der Start-Route", GoogleStartRateLimitNoStore);
             r.RunAsync("Herunterfahren schreibt offene Spielstände", ShutdownFlushesPendingWrites);
+            r.RunAsync("Herunterfahren mit offener WebSocket-Verbindung: 1001 server_restart, alles geschrieben, zügig", ShutdownWithOpenWebSocket);
+            r.RunAsync("Spieltakt: StopAsync kehrt erst zurück, wenn die Takt-Schleife beendet ist", GameLoopStopWaitsForLoop);
+            r.RunAsync("Auth: Dev-Login auf ein gerade gelöschtes Konto → 409 statt 500", DevLoginDeletedDuringSignIn);
         }
 
         private static string HarnessWebRoot;
@@ -806,6 +809,81 @@ namespace Paintball.Net.Tests
                 Assert.AreEqual(50, repo.Get(id).Coins, "letzter Stand gespeichert");
             }
             finally { await h.DisposeAsync(); }   // zweites StopAsync ist harmlos
+        }
+        private static async Task ShutdownWithOpenWebSocket()
+        {
+            var repo = new RecordingRepository { DelayMs = 100 };
+            Harness h = await Harness.StartAsync(repository: repo, backgroundPersistence: true);
+            try
+            {
+                string cookie = await h.LoginAsync("Offen");
+                using ClientWebSocket ws = await h.ConnectAsync($"https://localhost:{h.HttpsPort}", cookie);
+                await SendAsync(ws, new { t = "hello", input = "kbm", crossPlay = true });
+                await ReceiveUntil(ws, "welcome");
+
+                Paintball.Net.Accounts.AccountStore accounts = h.App.Services.GetRequiredService<Paintball.Net.Rooms.GameServer>().Accounts;
+                string id = accounts.PlayerIdForSession(cookie.Substring(cookie.IndexOf('=') + 1));
+                for (int i = 0; i < 5; i++)
+                    accounts.ApplyMatch(id, new Paintball.Net.Accounts.MatchSummary { Mode = "tdm", Map = "arena", Kills = i, XpGained = 100 });
+                Assert.IsTrue(accounts.Queue.Pending > 0, "vor dem Stopp ist noch etwas offen");
+
+                // Client wie ein Browser: liest bis zum Close-Frame und bestätigt ihn.
+                Task<(WebSocketCloseStatus? Status, string Reason)> closed = Task.Run(async () =>
+                {
+                    var buffer = new byte[65536];
+                    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+                    while (true)
+                    {
+                        WebSocketReceiveResult r = await ws.ReceiveAsync(buffer, cts.Token);
+                        if (r.MessageType == WebSocketMessageType.Close)
+                        {
+                            try { await ws.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "bye", CancellationToken.None); } catch (WebSocketException) { }
+                            return (r.CloseStatus, r.CloseStatusDescription);
+                        }
+                    }
+                });
+
+                var watch = System.Diagnostics.Stopwatch.StartNew();
+                await h.App.StopAsync();
+                watch.Stop();
+
+                var (status, reason) = await closed;
+                Console.WriteLine($"       (StopAsync mit offener Verbindung und 10 Aufträgen à 100 ms: {watch.Elapsed.TotalSeconds:F1} s)");
+                Assert.AreEqual((WebSocketCloseStatus?)WebSocketCloseStatus.EndpointUnavailable, status, "Server schließt mit 1001");
+                Assert.AreEqual("server_restart", reason, "Grund server_restart");
+                Assert.IsTrue(watch.Elapsed < TimeSpan.FromSeconds(15), $"StopAsync zügig ({watch.Elapsed.TotalSeconds:F1} s)");
+                Assert.AreEqual(5, repo.CallsFor(id).Count(c => c.Op == "match"), "alle 5 Matches geschrieben");
+                Assert.AreEqual(0, accounts.Queue.Pending, "nichts mehr offen");
+                Assert.AreEqual(0L, accounts.Queue.Failures, "nichts verworfen");
+            }
+            finally { await h.DisposeAsync(); }
+        }
+
+        private static async Task GameLoopStopWaitsForLoop()
+        {
+            var game = new Paintball.Net.Rooms.GameServer(new Paintball.Net.Rooms.ServerOptions(), AccountTests.NewStore());
+            for (int i = 0; i < 20; i++)
+            {
+                var loop = new GameLoopService(game);
+                await loop.StartAsync(CancellationToken.None);
+                await Task.Delay(40);
+                // Abgelaufenes Stopp-Budget des Hosts: BackgroundService.StopAsync würde sofort zurückkehren.
+                await loop.StopAsync(new CancellationToken(true));
+                Assert.IsTrue(loop.LoopExited, $"Takt-Schleife beendet, bevor StopAsync zurückkehrt (Lauf {i + 1})");
+                loop.Dispose();
+            }
+        }
+
+        private static async Task DevLoginDeletedDuringSignIn()
+        {
+            var repo = new WrappingRepository();
+            await using Harness h = await Harness.StartAsync(repository: repo);
+            await h.LoginAsync("Geist");                                    // legt an (kein RecordLogin)
+            Paintball.Net.Accounts.AccountStore accounts = h.App.Services.GetRequiredService<Paintball.Net.Rooms.GameServer>().Accounts;
+            repo.OnRecordLogin = pid => accounts.Delete(pid);              // DSGVO-Löschung mitten in der zweiten Anmeldung
+            HttpResponseMessage res = await h.Http.GetAsync("/api/auth/dev?name=Geist");
+            Assert.AreEqual(HttpStatusCode.Conflict, res.StatusCode, "409 statt 500");
+            Assert.IsFalse(SetsSession(res), "keine Session für ein gelöschtes Konto");
         }
     }
 }

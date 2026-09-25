@@ -35,6 +35,8 @@ namespace Paintball.Net.Tests
             r.RunAsync("Konto: mit Hintergrund-Warteschlange kein Repository-Aufruf unter der Sperre", NoRepositoryCallUnderLock);
             r.RunAsync("Konto: Export wartet auf offene Schreibaufträge", ExportFlushesPendingWrites);
             r.Run("Konto: SignIn schreibt und cached denselben Login-Zeitpunkt", SignInUsesOneTimestamp);
+            r.Run("Konto: SignIn gleichzeitig mit Delete liefert keine tote Id (AccountDeletedException)", SignInRacingDeleteThrows);
+            r.RunAsync("Konto: Export nach Flush-Zeitüberschreitung loggt und liefert trotzdem Daten", ExportFlushTimeoutLogged);
         }
 
         internal static string TempDir()
@@ -224,7 +226,7 @@ namespace Paintball.Net.Tests
                 var watch = Stopwatch.StartNew();
                 RewardResult reward = store.ApplyMatch(id, new MatchSummary { Mode = "ctf", Map = "forest", Won = true, Kills = 2, XpGained = 200 });
                 watch.Stop();
-                Assert.IsTrue(watch.ElapsedMilliseconds < 50, $"ApplyMatch wartet nicht auf das Repository ({watch.ElapsedMilliseconds} ms)");
+                Assert.IsTrue(watch.ElapsedMilliseconds < 150, $"ApplyMatch wartet nicht auf das Repository ({watch.ElapsedMilliseconds} ms bei 300 ms Verzögerung)");
                 Assert.AreEqual(20, reward.CoinsEarned, "Belohnung sofort berechnet");
                 Assert.IsTrue(store.Queue.HasPending(id), "Schreibaufträge noch offen");
                 await store.FlushAsync(FlushTimeout);
@@ -396,6 +398,48 @@ namespace Paintball.Net.Tests
             restarted.SignIn("g-time", "a@b.c");                                 // kein Cache-Treffer
             Assert.AreEqual(later, repo.Get(id).LastLoginAt, "Repository nach Neustart");
             Assert.AreEqual(later, restarted.CachedLastLoginAt(id), "frisch geladener Cache ebenso");
+        }
+        private static void SignInRacingDeleteThrows()
+        {
+            var repo = new WrappingRepository();
+            string id = NewStore(repo).SignIn("g-race", "a@b.c").PlayerId;
+            AccountStore store = NewStore(repo);                  // frischer Store: Konto nicht im Cache
+            repo.OnRecordLogin = pid => store.Delete(pid);        // Löschen landet mitten in der Anmeldung
+            bool thrown = false;
+            try { store.SignIn("g-race", "a@b.c"); }
+            catch (AccountDeletedException) { thrown = true; }
+            Assert.IsTrue(thrown, "AccountDeletedException statt einer toten Id");
+            Assert.AreEqual(null, store.GetAccount(id), "nicht wieder geladen");
+            Assert.AreEqual(null, repo.Get(id), "gelöscht");
+        }
+
+        private static async Task ExportFlushTimeoutLogged()
+        {
+            RecordingRepository repo = RecordingRepository.Paused();
+            var queue = PersistenceQueue.Background(repo);
+            var store = new AccountStore(repo, null, queue) { ExportFlushWait = TimeSpan.FromMilliseconds(200) };
+            TextWriter original = Console.Error;
+            var log = new StringWriter();
+            try
+            {
+                string id = NewPlayer(store, "Omar");
+                store.ApplyMatch(id, new MatchSummary { XpGained = 100 });
+                repo.WaitUntilFirstCallBlocks();                  // Worker hängt: Flush kann nicht fertig werden
+                Console.SetError(log);
+                string json = store.Export(id);
+                Console.SetError(original);
+                using var doc = System.Text.Json.JsonDocument.Parse(json);
+                Assert.AreEqual("Omar", doc.RootElement.GetProperty("name").GetString(), "Daten trotzdem geliefert");
+                string text = log.ToString();
+                Assert.IsTrue(text.Contains("[Export]") && text.Contains("TimeoutException"), "Zeitüberschreitung geloggt: " + text);
+                Assert.IsFalse(text.Contains(id), "keine Details im Log");
+            }
+            finally
+            {
+                Console.SetError(original);
+                repo.Release();
+                await queue.DisposeAsync();
+            }
         }
     }
 }

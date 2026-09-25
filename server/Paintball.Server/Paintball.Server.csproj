@@ -13,6 +13,11 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Tests prüfen interne Dienste wie GameLoopService direkt. -->
+    <InternalsVisibleTo Include="Paintball.Net.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\Paintball.Net\Paintball.Net.csproj" />
   </ItemGroup>
 

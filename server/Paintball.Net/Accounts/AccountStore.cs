@@ -31,6 +31,12 @@ namespace Paintball.Net.Accounts
         public int Coins => Wallet.SoftBalance;
     }
 
+    /// <summary>Das Konto wurde gelöscht, während es geladen oder angemeldet wurde.</summary>
+    public sealed class AccountDeletedException : Exception
+    {
+        public AccountDeletedException() : base("Konto wurde gelöscht") { }
+    }
+
     public sealed class SignInResult
     {
         public string PlayerId;
@@ -161,6 +167,9 @@ namespace Paintball.Net.Accounts
         /// <summary>Warteschlange, über die der Store schreibt (Host leert sie beim Herunterfahren).</summary>
         public PersistenceQueue Queue => _queue;
 
+        /// <summary>Wartezeit von <see cref="Export"/> auf die Warteschlange (Tests setzen sie kürzer).</summary>
+        internal TimeSpan ExportFlushWait { get; set; } = ExportFlushTimeout;
+
         /// <summary>Wartet auf alle bis jetzt eingereihten Schreibaufträge, höchstens <paramref name="timeout"/>.</summary>
         public Task FlushAsync(TimeSpan timeout) => _queue.FlushAsync(timeout);
 
@@ -180,6 +189,7 @@ namespace Paintball.Net.Accounts
 
         // ---------------- Anmeldung, Name, Sessions ----------------
 
+        /// <exception cref="AccountDeletedException">Das Konto wurde während der Anmeldung gelöscht.</exception>
         public SignInResult SignIn(string googleSub, string email)
         {
             if (string.IsNullOrWhiteSpace(googleSub)) throw new ArgumentException("googleSub fehlt");
@@ -209,7 +219,8 @@ namespace Paintball.Net.Accounts
                         return Result(cached);
                     }
                     if (matches != null)
-                        return Result(InstallLocked(rec, matches) ?? rec);   // null nur bei gleichzeitigem Löschen (Grabstein)
+                        // null nur bei gleichzeitigem Löschen (Grabstein): nie eine tote Id zurückgeben.
+                        return Result(InstallLocked(rec, matches) ?? throw new AccountDeletedException());
                 }
                 matches = _repo.RecentMatches(rec.Id, 20);   // außerhalb der Sperre, danach erneut prüfen
             }
@@ -473,7 +484,7 @@ namespace Paintball.Net.Accounts
         // ---------------- DSGVO ----------------
 
         /// <summary>
-        /// Auskunft (DSGVO): reiht den aktuellen Stand ein, wartet höchstens <see cref="ExportFlushTimeout"/> auf die Warteschlange
+        /// Auskunft (DSGVO): reiht den aktuellen Stand ein, wartet höchstens <see cref="ExportFlushTimeout"/> auf die Warteschlange (sonst Log-Zeile)
         /// (blockierend – nur aus HTTP-Threads aufrufen, nie aus dem Spieltakt) und liest dann alles außerhalb der Sperre aus dem Repository.
         /// </summary>
         public string Export(string accountId)
@@ -484,7 +495,9 @@ namespace Paintball.Net.Accounts
                 if (TryGetCachedLocked(accountId) == null) return "{}";
                 SaveLocked(accountId);
             }
-            _queue.FlushAsync(ExportFlushTimeout).GetAwaiter().GetResult();
+            // Die Warteschlange wirft bei Zeitüberschreitung nicht; hier selbst begrenzen, damit sie nicht stumm bleibt.
+            if (!_queue.FlushAsync(Timeout.InfiniteTimeSpan).Wait(ExportFlushWait))
+                Console.Error.WriteLine("[Export] TimeoutException: Warteschlange nicht rechtzeitig leer, Export mit dem bisher gespeicherten Stand");
             PlayerRecord rec = _repo.Get(accountId);
             if (rec == null) return "{}";   // inzwischen gelöscht
             var matches = _repo.RecentMatches(accountId, int.MaxValue);

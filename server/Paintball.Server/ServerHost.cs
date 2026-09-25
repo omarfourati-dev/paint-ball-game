@@ -69,6 +69,13 @@ namespace Paintball.Server
     {
         public const string Version = "1.0.0-mvp";
         public const int ProtocolVersion = 1;
+        /// <summary>
+        /// Stopp-Budget des Hosts. Passt samt Leeren der Warteschlange (10 s) in die 45 s von <c>docker stop -t 45</c>
+        /// bzw. <c>stop_grace_period</c>; offene WebSockets werden beim Stoppen sofort geschlossen und blockieren es nicht.
+        /// </summary>
+        public static readonly TimeSpan ShutdownTimeout = TimeSpan.FromSeconds(30);
+        /// <summary>So lange darf ein Client nach dem 1001-Close noch antworten, dann wird die Verbindung abgebrochen.</summary>
+        public static readonly TimeSpan RestartCloseGrace = TimeSpan.FromSeconds(3);
 
         public static WebApplication Build(string[] args, ServerHostOptions options)
         {
@@ -81,6 +88,7 @@ namespace Paintball.Server
             });
             builder.Logging.SetMinimumLevel(LogLevel.Warning);
             builder.Logging.AddFilter("Paintball", LogLevel.Information);
+            builder.Services.Configure<HostOptions>(o => o.ShutdownTimeout = ShutdownTimeout);
 
             builder.WebHost.ConfigureKestrel(k =>
             {
@@ -180,7 +188,15 @@ namespace Paintball.Server
                 if (accounts.NeedsName(playerId)) { ctx.Response.StatusCode = 403; return; }
                 using WebSocket socket = await ctx.WebSockets.AcceptWebSocketAsync();
                 var connection = new WsConnection(socket, game.Options.MaxMessageBytes);
-                await connection.RunAsync(game, ctx.Connection.RemoteIpAddress?.ToString(), playerId, ctx.RequestAborted);
+                // Herunterfahren (Deploy): Verbindung sofort mit 1001 "server_restart" schließen, damit Kestrel nicht bis zum
+                // Stopp-Budget auf offene Sockets wartet und die Warteschlange rechtzeitig geleert wird. Der Client verbindet neu.
+                using var stop = CancellationTokenSource.CreateLinkedTokenSource(ctx.RequestAborted);
+                using CancellationTokenRegistration onStopping = app.Lifetime.ApplicationStopping.Register(() =>
+                {
+                    connection.Close("server_restart", WebSocketCloseStatus.EndpointUnavailable);
+                    try { stop.CancelAfter(RestartCloseGrace); } catch (ObjectDisposedException) { }
+                });
+                await connection.RunAsync(game, ctx.Connection.RemoteIpAddress?.ToString(), playerId, stop.Token);
             });
 
             MapApi(app, game, accounts);
@@ -374,6 +390,24 @@ namespace Paintball.Server
     {
         private readonly GameServer _game;
         public GameLoopService(GameServer game) { _game = game; }
+        /// <summary>Höchstens so lange wartet StopAsync zusätzlich auf das Ende der Takt-Schleife (ein Takt dauert Millisekunden).</summary>
+        private static readonly TimeSpan LoopExitWait = TimeSpan.FromSeconds(5);
+        internal bool LoopExited => ExecuteTask?.IsCompleted == true;
+
+        /// <summary>
+        /// Kehrt erst zurück, wenn die Takt-Schleife beendet ist – auch wenn das Stopp-Budget des Hosts schon abgelaufen ist
+        /// (BackgroundService.StopAsync kehrt dann sofort zurück). So überlappt das Leeren der Warteschlange nie den letzten Takt.
+        /// </summary>
+        public override async Task StopAsync(CancellationToken cancellationToken)
+        {
+            try { await base.StopAsync(cancellationToken); }
+            finally
+            {
+                Task loop = ExecuteTask;
+                if (loop != null && !loop.IsCompleted && await Task.WhenAny(loop, Task.Delay(LoopExitWait)) != loop)
+                    Console.Error.WriteLine("[GameLoop] Takt-Schleife nach dem Stopp nicht beendet");
+            }
+        }
 
         protected override Task ExecuteAsync(CancellationToken stoppingToken)
         {
@@ -454,6 +488,7 @@ namespace Paintball.Server
             SingleReader = true
         });
         private string _closeReason;
+        private WebSocketCloseStatus _closeStatus = WebSocketCloseStatus.PolicyViolation;
 
         public WsConnection(WebSocket socket, int maxMessageBytes)
         {
@@ -463,9 +498,17 @@ namespace Paintball.Server
 
         public void Send(string json) => _outbox.Writer.TryWrite(json);
 
-        public void Close(string reason)
+        public void Close(string reason) => Close(reason, WebSocketCloseStatus.PolicyViolation);
+
+        /// <summary>Schließt nach dem Senden der ausstehenden Nachrichten; der erste Grund gewinnt.</summary>
+        public void Close(string reason, WebSocketCloseStatus status)
         {
-            _closeReason = reason;
+            lock (_outbox)
+            {
+                if (_closeReason != null) return;
+                _closeStatus = status;
+                _closeReason = reason;
+            }
             _outbox.Writer.TryComplete();
         }
 
@@ -519,8 +562,11 @@ namespace Paintball.Server
                     if (_socket.State != WebSocketState.Open) break;
                     await _socket.SendAsync(Encoding.UTF8.GetBytes(json), WebSocketMessageType.Text, true, ct);
                 }
-                if (_closeReason != null && _socket.State == WebSocketState.Open)
-                    await _socket.CloseAsync(WebSocketCloseStatus.PolicyViolation, _closeReason, ct);
+                string reason;
+                WebSocketCloseStatus status;
+                lock (_outbox) { reason = _closeReason; status = _closeStatus; }
+                if (reason != null && _socket.State == WebSocketState.Open)
+                    await _socket.CloseAsync(status, reason, ct);
             }
             catch (WebSocketException) { }
             catch (OperationCanceledException) { }

@@ -39,6 +39,12 @@ test('closeAction: Rate-Limit und sonstige Server-Kicks → kicked', () => {
   assert.equal(closeAction({ code: 1008, reason: 'irgendwas' }), 'kicked');
 });
 
+test('closeAction: Server-Neustart (1001, Grund server_restart oder leer) → reconnect, nicht kicked', () => {
+  assert.equal(closeAction({ code: 1001, reason: 'server_restart' }), 'reconnect', 'Deploy: nach dem Neustart wiederverbinden');
+  assert.equal(closeAction({ code: 1001, reason: '' }), 'reconnect');
+  assert.equal(closeAction({ code: 1001 }), 'reconnect');
+});
+
 test('closeAction: Netzwerkabbrüche und normale Schließungen → reconnect', () => {
   assert.equal(closeAction({ code: 1006, reason: '' }), 'reconnect');
   assert.equal(closeAction({ code: 1000, reason: 'bye' }), 'reconnect');

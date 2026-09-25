@@ -137,7 +137,9 @@ namespace Paintball.Server
                 accounts.EndSession(SessionToken(ctx)); // Re-Login: altes Token nicht gültig lassen
                 string name = ctx.Request.Query["name"].ToString();
                 string sub = "dev:" + (string.IsNullOrEmpty(name) ? Guid.NewGuid().ToString("N") : name.ToLowerInvariant());
-                SignInResult s = accounts.SignIn(sub, "dev@localhost");
+                SignInResult s;
+                try { s = accounts.SignIn(sub, "dev@localhost"); }
+                catch (AccountDeletedException) { return Results.Conflict(); }   // gleichzeitig gelöscht
                 if (s.NeedsName && !string.IsNullOrEmpty(name)) accounts.SetName(s.PlayerId, name);
                 SetSession(ctx, accounts.CreateSession(s.PlayerId));
                 string join = ctx.Request.Query["join"].ToString();

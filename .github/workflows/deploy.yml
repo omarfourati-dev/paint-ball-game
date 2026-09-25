@@ -72,7 +72,11 @@ jobs:
         run: docker compose build --no-cache
 
       - name: Stop old container
-        run: docker rm -f paintball 2>/dev/null || true
+        # Erst SIGTERM mit 45 s Frist: der Server schließt die WebSockets (1001 server_restart), stoppt den Spieltakt
+        # und schreibt die Warteschlange weg. "docker rm -f" allein wäre ein SIGKILL und verlöre offene Spielstände.
+        run: |
+          docker stop -t 45 paintball 2>/dev/null || true
+          docker rm -f paintball 2>/dev/null || true
 
       - name: Start service
         working-directory: ${{ env.DEPLOY_DIR }}
