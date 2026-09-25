@@ -173,7 +173,9 @@ namespace Paintball.Server
             });
 
             MapApi(app, game, accounts);
-            AuthApi.Map(app, game, accounts, options, new RateLimiter(limit: 20, window: TimeSpan.FromMinutes(1)));
+            var authLimiter = new RateLimiter(limit: 20, window: TimeSpan.FromMinutes(1)); // gemeinsam für alle Auth-Routen
+            AuthApi.Map(app, game, accounts, options, authLimiter);
+            GoogleAuthApi.Map(app, accounts, options, authLimiter);
 
             if (Directory.Exists(webRoot))
             {
