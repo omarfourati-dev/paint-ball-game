@@ -42,6 +42,8 @@ namespace Paintball.Net.Tests
             r.RunAsync("Auth: /ws ohne Cookie 401, ohne Namen 403", WsRequiresSession);
             r.RunAsync("Auth: Abmelden macht Session ungültig", Logout);
             r.RunAsync("Auth: POST ohne gleiche Origin wird abgelehnt", CsrfOrigin);
+            r.RunAsync("Auth: Rate-Limit 20/min/IP auf /api/auth/logout, pro Server-Instanz", LogoutRateLimit);
+            r.Run("Auth: RateLimiter – Fenster läuft ab, IPs getrennt, alte Einträge werden entfernt", RateLimiterWindow);
         }
 
         private static string HarnessWebRoot;
@@ -393,6 +395,16 @@ namespace Paintball.Net.Tests
             Assert.IsTrue(lower.Contains("httponly") && lower.Contains("secure") && lower.Contains("samesite=lax") && lower.Contains("path=/"), "Cookie-Attribute");
             Assert.AreEqual("/play", res.Headers.Location.OriginalString, "zurück ins Spiel");
 
+            // Erneuter Login mit altem Cookie beendet die alte Session
+            string old = set.Substring(0, set.IndexOf(';'));
+            var again = new HttpRequestMessage(HttpMethod.Get, "/api/auth/dev?name=Tester");
+            again.Headers.Add("Cookie", old);
+            HttpResponseMessage relogin = await h.Http.SendAsync(again);
+            string fresh = relogin.Headers.GetValues("Set-Cookie").First(v => v.StartsWith("pb_session="));
+            fresh = fresh.Substring(0, fresh.IndexOf(';'));
+            Assert.AreEqual(HttpStatusCode.Unauthorized, (await h.Http.SendAsync(h.Req(HttpMethod.Get, "/api/me", old))).StatusCode, "alte Session nach Re-Login ungültig");
+            Assert.AreEqual(HttpStatusCode.OK, (await h.Http.SendAsync(h.Req(HttpMethod.Get, "/api/me", fresh))).StatusCode, "neue Session gültig");
+
             await using Harness prod = await Harness.StartAsync(devLogin: false);
             Assert.AreEqual(HttpStatusCode.NotFound, (await prod.Http.GetAsync("/api/auth/dev?name=X")).StatusCode, "ohne Flag 404");
         }
@@ -450,6 +462,29 @@ namespace Paintball.Net.Tests
             req.Headers.Add("Origin", "https://evil.example");
             Assert.AreEqual(HttpStatusCode.Forbidden, (await h.Http.SendAsync(req)).StatusCode, "fremde Origin");
             Assert.AreEqual(HttpStatusCode.OK, (await h.Http.SendAsync(h.Req(HttpMethod.Get, "/api/me", cookie))).StatusCode, "Konto noch da");
+        }
+
+        private static void RateLimiterWindow()
+        {
+            DateTime now = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+            var limiter = new RateLimiter(limit: 2, window: TimeSpan.FromMinutes(1), clock: () => now);
+            Assert.IsFalse(limiter.Exceeded("a") || limiter.Exceeded("a"), "2 erlaubt");
+            Assert.IsTrue(limiter.Exceeded("a"), "3. begrenzt");
+            Assert.IsFalse(limiter.Exceeded("b"), "andere IP unabhängig");
+            now = now.AddMinutes(1);
+            Assert.IsFalse(limiter.Exceeded("a"), "neues Fenster");
+            Assert.AreEqual(1, limiter.Tracked, "abgelaufener Eintrag b entfernt");
+        }
+
+        private static async Task LogoutRateLimit()
+        {
+            await using Harness h = await Harness.StartAsync();
+            for (int i = 1; i <= 20; i++)
+                Assert.AreEqual(HttpStatusCode.NoContent, (await h.Http.SendAsync(h.Req(HttpMethod.Post, "/api/auth/logout", null))).StatusCode, $"Abmelden {i} erlaubt");
+            Assert.AreEqual((HttpStatusCode)429, (await h.Http.SendAsync(h.Req(HttpMethod.Post, "/api/auth/logout", null))).StatusCode, "21. Anfrage begrenzt");
+
+            await using Harness other = await Harness.StartAsync();
+            Assert.AreEqual(HttpStatusCode.NoContent, (await other.Http.SendAsync(other.Req(HttpMethod.Post, "/api/auth/logout", null))).StatusCode, "frische Instanz unbeeinflusst");
         }
     }
 }

@@ -173,7 +173,7 @@ namespace Paintball.Server
             });
 
             MapApi(app, game, accounts);
-            AuthApi.Map(app, game, accounts, options);
+            AuthApi.Map(app, game, accounts, options, new RateLimiter(limit: 20, window: TimeSpan.FromMinutes(1)));
 
             if (Directory.Exists(webRoot))
             {

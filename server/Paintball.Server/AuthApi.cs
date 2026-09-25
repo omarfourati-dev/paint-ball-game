@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Builder;
@@ -40,24 +39,13 @@ namespace Paintball.Server
             return string.Equals(uri.Authority, ctx.Request.Host.Value, StringComparison.OrdinalIgnoreCase);
         }
 
-        private static readonly ConcurrentDictionary<string, (DateTime Window, int Count)> Hits = new();
-
-        /// <summary>20 Anfragen pro Minute und IP.</summary>
-        public static bool RateLimited(HttpContext ctx)
-        {
-            string ip = ctx.Connection.RemoteIpAddress?.ToString() ?? "?";
-            DateTime now = DateTime.UtcNow;
-            var entry = Hits.AddOrUpdate(ip, _ => (now, 1), (_, e) => now - e.Window > TimeSpan.FromMinutes(1) ? (now, 1) : (e.Window, e.Count + 1));
-            if (Hits.Count > 10000) Hits.Clear();
-            return entry.Count > 20;
-        }
-
         private static string PlayerId(HttpContext ctx, AccountStore accounts) => accounts.PlayerIdForSession(SessionToken(ctx));
 
         /// <summary>Persönliche Antworten nie zwischenspeichern (Browser, Proxys).</summary>
         private static void NoStore(HttpContext ctx) => ctx.Response.Headers.CacheControl = "no-store";
 
-        public static void Map(WebApplication app, GameServer game, AccountStore accounts, ServerHostOptions options)
+        /// <param name="limiter">Pro Host eine Instanz (20/min/IP); auch für die Google-Routen (Task 6).</param>
+        public static void Map(WebApplication app, GameServer game, AccountStore accounts, ServerHostOptions options, RateLimiter limiter)
         {
             app.MapGet("/api/me", (HttpContext ctx) =>
             {
@@ -78,7 +66,7 @@ namespace Paintball.Server
             app.MapPost("/api/me/name", async (HttpContext ctx) =>
             {
                 NoStore(ctx);
-                if (RateLimited(ctx)) return Results.StatusCode(429);
+                if (limiter.Exceeded(ctx)) return Results.StatusCode(429);
                 if (!SameOrigin(ctx)) return Results.StatusCode(403);
                 string id = PlayerId(ctx, accounts);
                 if (id == null) return Results.Unauthorized();
@@ -102,6 +90,7 @@ namespace Paintball.Server
 
             app.MapPost("/api/auth/logout", (HttpContext ctx) =>
             {
+                if (limiter.Exceeded(ctx)) return Results.StatusCode(429);
                 if (!SameOrigin(ctx)) return Results.StatusCode(403);
                 string token = SessionToken(ctx);
                 string id = accounts.PlayerIdForSession(token);
@@ -123,15 +112,18 @@ namespace Paintball.Server
                 if (!SameOrigin(ctx)) return Results.StatusCode(403);
                 string id = PlayerId(ctx, accounts);
                 if (id == null) return Results.Unauthorized();
-                game.KickAccount(id, "deleted");
+                // Erst löschen (Sessions ungültig), dann kicken: kein /ws-Handshake mehr dazwischen.
                 accounts.Delete(id);
+                game.KickAccount(id, "deleted");
                 ClearSession(ctx);
                 return Results.NoContent();
             });
 
+            // Bewusst ohne Rate-Limit: existiert nur mit --dev-login (nie in Produktion), die Tests melden sich darüber oft an.
             app.MapGet("/api/auth/dev", (HttpContext ctx) =>
             {
                 if (!options.DevLogin) return Results.NotFound();
+                accounts.EndSession(SessionToken(ctx)); // Re-Login: altes Token nicht gültig lassen
                 string name = ctx.Request.Query["name"].ToString();
                 string sub = "dev:" + (string.IsNullOrEmpty(name) ? Guid.NewGuid().ToString("N") : name.ToLowerInvariant());
                 SignInResult s = accounts.SignIn(sub, "dev@localhost");
