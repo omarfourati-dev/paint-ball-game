@@ -1,14 +1,51 @@
 // Startablauf und Hilfsfunktionen des Google-Logins im Client.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { bootStep, loginUrl, authErrorKey, nameErrorKey, nextConnectState, LEGACY_KEYS } from '../../web/js/auth.js';
+import { bootStep, loginUrl, authErrorKey, nameErrorKey, nextConnectState, closeAction, retryDelay, LEGACY_KEYS } from '../../web/js/auth.js';
 import { STRINGS } from '../../web/js/i18n.js';
 
-test('Start: 401 → Anmeldung, needsName → Namenswahl, sonst Spiel', () => {
+test('Start: nur 401 → Anmeldung, needsName → Namenswahl, 200 → Spiel, sonst erneut versuchen', () => {
   assert.equal(bootStep(401, null), 'login');
   assert.equal(bootStep(200, { needsName: true }), 'name');
   assert.equal(bootStep(200, { needsName: false, name: 'Omar' }), 'play');
-  assert.equal(bootStep(500, null), 'login', 'Serverfehler → erneut anmelden lassen');
+  assert.equal(bootStep(500, null), 'retry', 'Serverfehler (z. B. während eines Deploys) → erneut versuchen');
+  assert.equal(bootStep(502, null), 'retry');
+  assert.equal(bootStep(503, null), 'retry');
+  assert.equal(bootStep(429, null), 'retry', 'Rate-Limit → erneut versuchen, nicht abmelden');
+  assert.equal(bootStep(0, null), 'retry', 'Netzwerkfehler → erneut versuchen');
+  assert.equal(bootStep(403, null), 'retry');
+  assert.equal(bootStep(200, null), 'retry', '200 ohne lesbaren Körper → erneut versuchen');
+});
+
+test('retryDelay: Backoff 2, 4, 8, danach 15 Sekunden', () => {
+  assert.deepEqual([0, 1, 2, 3, 4, 10].map(retryDelay), [2, 4, 8, 15, 15, 15]);
+});
+
+test('closeAction: Abmelden/Löschen/abgelaufene Sitzung → logout', () => {
+  assert.equal(closeAction({ code: 1008, reason: 'logout' }), 'logout');
+  assert.equal(closeAction({ code: 1008, reason: 'deleted' }), 'logout');
+  assert.equal(closeAction({ code: 1008, reason: 'unauthorized' }), 'logout');
+  assert.equal(closeAction({ code: 1000, reason: 'logout' }), 'logout', 'Grund zählt, nicht der Code');
+});
+
+test('closeAction: anderer Tab oder anderes Gerät → replaced', () => {
+  assert.equal(closeAction({ code: 1008, reason: 'replaced' }), 'replaced');
+  assert.equal(closeAction({ code: 1000, reason: 'replaced' }), 'replaced');
+});
+
+test('closeAction: Rate-Limit und sonstige Server-Kicks → kicked', () => {
+  assert.equal(closeAction({ code: 1008, reason: 'rate_limited' }), 'kicked');
+  assert.equal(closeAction({ code: 1000, reason: 'rate_limited' }), 'kicked');
+  assert.equal(closeAction({ code: 1008, reason: 'irgendwas' }), 'kicked');
+});
+
+test('closeAction: Netzwerkabbrüche und normale Schließungen → reconnect', () => {
+  assert.equal(closeAction({ code: 1006, reason: '' }), 'reconnect');
+  assert.equal(closeAction({ code: 1000, reason: 'bye' }), 'reconnect');
+  assert.equal(closeAction({ code: 1001, reason: '' }), 'reconnect');
+  assert.equal(closeAction({ code: 1008, reason: '' }), 'reconnect', '1008 ohne Grund → wie Abbruch behandeln');
+  assert.equal(closeAction({ code: 1011 }), 'reconnect');
+  assert.equal(closeAction({}), 'reconnect');
 });
 
 test('Login-Link übernimmt nur gültige Einladungscodes', () => {
@@ -36,7 +73,8 @@ test('Alte Local-Storage-Schlüssel werden aufgeräumt', () => {
 test('Anmelde-Texte in DE und EN', () => {
   for (const k of ['auth.title', 'auth.text', 'auth.google', 'auth.error.not_configured', 'auth.error.invalid_state',
     'auth.error.oauth_failed', 'name.title', 'name.label', 'name.go', 'name.hint', 'name.error.taken', 'name.error.invalid',
-    'name.error.generic', 'settings.logout', 'settings.rename']) {
+    'name.error.generic', 'settings.logout', 'settings.rename', 'conn.replaced', 'conn.resume', 'conn.kicked',
+    'conn.reconnect']) {
     assert.ok(STRINGS.de[k], `DE fehlt: ${k}`);
     assert.ok(STRINGS.en[k], `EN fehlt: ${k}`);
   }

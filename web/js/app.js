@@ -12,7 +12,7 @@ import { loadSettings, saveSettings, sanitize, rebind, ACTIONS, DEFAULT_KEYS, te
 import { TutorialTracker } from './tutorial.js';
 import { escapeHtml as esc, formatNumber, formatPercent, formatTime, inviteUrl } from './format.js';
 import { MODES, TEAM_MODES } from './protocol.js';
-import { bootStep, loginUrl, authErrorKey, nameErrorKey, nextConnectState, LEGACY_KEYS } from './auth.js';
+import { bootStep, loginUrl, authErrorKey, nameErrorKey, nextConnectState, closeAction, retryDelay, LEGACY_KEYS } from './auth.js';
 
 const MODE_ICON = { tdm: '⚔️', ffa: '💥', ctf: '🚩', elim: '☠️', koth: '👑', training: '🎯' };
 const MAP_IDS = ['speedball', 'warehouse', 'forest', 'arena'];
@@ -92,13 +92,20 @@ export class App {
     this.backdrop = { map: this.maps.get('speedball') ?? this.maps.get(MAP_IDS[1]) };
     this.backdrop.world = World.fromMap(this.backdrop.map, 0);
     this.renderLoading(t('loading.connecting'), 0.6);
-    let status = 0, me = null;
-    try {
-      const res = await fetch('/api/me', { cache: 'no-store', credentials: 'same-origin' });
-      status = res.status;
-      if (res.ok) me = await res.json();
-    } catch { status = 0; }
-    const step = bootStep(status, me);
+    let status = 0, me = null, step, retries = 0;
+    while (true) {
+      status = 0; me = null;
+      try {
+        const res = await fetch('/api/me', { cache: 'no-store', credentials: 'same-origin' });
+        status = res.status;
+        if (res.ok) me = await res.json();
+      } catch { status = 0; me = null; }
+      step = bootStep(status, me);
+      if (step !== 'retry') break;
+      const wait = retryDelay(retries++);
+      this.renderLoading(t('loading.failed', { s: wait }), 0.6);
+      await new Promise(r => setTimeout(r, wait * 1000));
+    }
     if (step === 'login') { this.renderLogin(); this.show('login'); return; }
     if (step === 'name') { this.suggestedName = me.suggestedName || ''; this.renderChooseName(); this.show('name'); return; }
     this.connect();
@@ -119,12 +126,15 @@ export class App {
     n.on('open', () => { this.welcomedThisConnection = false; this.hello(); });
     n.on('close', ev => {
       this.updateConnChip();
-      if (ev.code === 1008 || ev.reason === 'deleted' || ev.reason === 'logout') {
+      const action = closeAction(ev);
+      if (action !== 'reconnect') {
         this.leaveGameView();
         this.net?.close();
         this.net = null;
         this.game.net = null;
-        location.href = '/';
+        if (action === 'logout') { location.href = '/'; return; }
+        this.renderConnNotice(action);
+        this.show('conn');
         return;
       }
       const wasWelcomed = this.welcomedThisConnection;
@@ -143,8 +153,7 @@ export class App {
           }
         }).catch(() => {});
       }
-      if (ev.reason === 'replaced') this.toast(t('hud.disconnected'), true);
-      else if (this.game.active) this.toast(t('hud.disconnected'), true);
+      if (this.game.active) this.toast(t('hud.disconnected'), true);
     });
     n.on('welcome', m => this.onWelcome(m));
     n.on('profile', m => { this.profile = m; this.refreshScreen(); });
@@ -184,7 +193,7 @@ export class App {
     this.updateConnChip();
     if (this.game.active || this.screen === 'lobby' || this.screen === 'results') return;
     if (this.pendingJoin) { this.net.send({ t: 'join', code: this.pendingJoin }); this.pendingJoin = null; }
-    if (this.screen === 'loading' || this.screen === 'login' || this.screen === 'name') this.show('menu');
+    if (['loading', 'login', 'name', 'conn'].includes(this.screen)) this.show('menu');
     else this.refreshScreen();
   }
 
@@ -244,6 +253,7 @@ export class App {
       case 'settings': this.renderSettings(); break;
       case 'login': this.renderLogin(); break;
       case 'name': this.renderChooseName(); break;
+      case 'conn': this.renderConnNotice(this.connNotice); break;
     }
   }
 
@@ -275,6 +285,26 @@ export class App {
           <span class="muted small"><a href="/datenschutz">${esc(t('landing.privacy'))}</a> · <a href="/impressum">${esc(t('landing.imprint'))}</a></span>
         </div>
       </div>`;
+  }
+
+  /** Hinweis nach Server-Kick oder Übernahme durch einen anderen Tab; verbindet nur auf Knopfdruck neu. */
+  renderConnNotice(action) {
+    this.connNotice = action;
+    const replaced = action === 'replaced';
+    $('#screen-conn').innerHTML = `
+      <div class="wrap center" style="min-height:90vh;justify-content:center;align-items:center">
+        <div class="logo">Paint-Ball<small>${esc(t('app.subtitle'))}</small></div>
+        <div class="card" style="width:min(460px,92vw)" role="alert">
+          <p>${esc(t(replaced ? 'conn.replaced' : 'conn.kicked'))}</p>
+          <button class="btn primary big" type="button" id="btn-conn-retry" data-autofocus>${esc(t(replaced ? 'conn.resume' : 'conn.reconnect'))}</button>
+        </div>
+      </div>`;
+    $('#btn-conn-retry').addEventListener('click', () => {
+      $('#btn-conn-retry').disabled = true;
+      this.renderLoading(t('loading.connecting'), 0.6);
+      this.show('loading');
+      this.connect();
+    });
   }
 
   renderChooseName(suggested = this.suggestedName || '') {

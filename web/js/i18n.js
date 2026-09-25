@@ -419,7 +419,11 @@ export const STRINGS = {
     'name.error.invalid': 'Ungültiger Name: 3–16 Zeichen, nur Buchstaben, Ziffern, Leerzeichen, _ - .',
     'name.error.generic': 'Der Name konnte nicht gespeichert werden. Bitte versuche es noch einmal.',
     'settings.logout': 'Abmelden',
-    'settings.rename': 'Namen ändern'
+    'settings.rename': 'Namen ändern',
+    'conn.replaced': 'Du spielst jetzt in einem anderen Tab oder auf einem anderen Gerät.',
+    'conn.resume': 'Hier weiterspielen',
+    'conn.kicked': 'Verbindung vom Server getrennt.',
+    'conn.reconnect': 'Erneut verbinden'
   },
   en: {
     'app.subtitle': 'Fast paint battles in your browser',
@@ -802,7 +806,11 @@ export const STRINGS = {
     'name.error.invalid': 'Invalid name: 3–16 characters, only letters, digits, spaces, _ - .',
     'name.error.generic': 'The name could not be saved. Please try again.',
     'settings.logout': 'Sign out',
-    'settings.rename': 'Change name'
+    'settings.rename': 'Change name',
+    'conn.replaced': 'You are now playing in another tab or on another device.',
+    'conn.resume': 'Play here',
+    'conn.kicked': 'Disconnected by the server.',
+    'conn.reconnect': 'Reconnect'
   }
 };
 
