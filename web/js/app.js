@@ -18,7 +18,7 @@ import { bootStep, loginUrl, authErrorKey, nameErrorKey, nextConnectState, close
 import { track } from './track.js';
 
 const MODE_ICON = { tdm: '⚔️', ffa: '💥', ctf: '🚩', elim: '☠️', koth: '👑', training: '🎯' };
-const MAP_IDS = ['speedball', 'warehouse', 'forest', 'arena'];
+const MAP_IDS = ['speedball', 'warehouse', 'forest', 'arena', 'pizzeria'];
 
 function safeStorage() {
   try {

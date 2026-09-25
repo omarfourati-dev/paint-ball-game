@@ -50,7 +50,7 @@ test('SEO: JSON-LD gültig – Spiel kostenlos, Browser, Mehrspieler, Herausgebe
   assert.equal(game.offers.priceCurrency, 'EUR');
   assert.ok([].concat(game.playMode).includes('MultiPlayer'));
   assert.ok(game.genre.length > 0 && game.applicationCategory);
-  assert.equal(game.numberOfPlayers.maxValue, 12, 'Lagerhaus: MaxPlayers 12 (MapCatalog)');
+  assert.equal(game.numberOfPlayers.maxValue, 20, 'Pizzeria: MaxPlayers 20 (MapCatalog)');
   const person = byType('Person');
   assert.equal(person.url, 'https://omarfourati.de');
   assert.equal(game.publisher['@id'], person['@id']);

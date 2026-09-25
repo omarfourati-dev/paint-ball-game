@@ -30,6 +30,12 @@ export const THEMES = {
     skyAmb: [0.55, 0.45, 0.55], groundAmb: [0.35, 0.28, 0.22], shadowTint: [0.75, 0.6, 0.9], fog: [55, 190], clouds: 0.3,
     ground: [1, 1, 1], groundMat: MAT.SAND, wall: hexToRgb('#7c3aed'), wallMat: MAT.METAL, exposure: 1.0, sunIntensity: 3.2,
     cover: ['#06b6d4', '#f97316', '#ec4899', '#22c55e'].map(hexToRgb), coverMat: MAT.NYLON, ink: [0.1, 0.04, 0.12]
+  },
+  pizzeria: {
+    zenith: hexToRgb('#f4a259'), horizon: hexToRgb('#fde7c8'), sunDir: norm([0.35, -0.8, 0.45]), sunColor: [1.0, 0.9, 0.78],
+    skyAmb: [0.55, 0.46, 0.4], groundAmb: [0.34, 0.28, 0.24], shadowTint: [0.7, 0.55, 0.5], fog: [60, 200], clouds: 0.2,
+    ground: hexToRgb('#f3ead8'), groundMat: MAT.PLAIN, wall: [1, 1, 1], wallMat: MAT.BRICK, exposure: 1.0, sunIntensity: 3.0,
+    ink: [0.1, 0.05, 0.04]
   }
 };
 
@@ -221,6 +227,79 @@ function drawSpeedballDecor(r, world, nowS) {
   }
 }
 
+// ---------------- Pizzeria (Event-Karte) – nur einfache Formen, Farben prozedural ----------------
+
+const TILE_DARK = hexToRgb('#3a2f2a');
+const EMBER = hexToRgb('#ff7a1a');
+const CARDBOARD = hexToRgb('#c9a46b');
+const TOMATO = hexToRgb('#d62828');
+
+function drawPizzeriaFloor(r, hx, hz) {
+  const tile = 2.5;
+  const nx = Math.round((hx * 2) / tile), nz = Math.round((hz * 2) / tile);
+  for (let ix = 0; ix < nx; ix++) for (let iz = 0; iz < nz; iz++) {
+    if ((ix + iz) % 2 === 0) continue;
+    r.draw('cube', [-hx + (ix + 0.5) * tile, 0.004, -hz + (iz + 0.5) * tile], { scale: [tile, 0.008, tile], color: TILE_DARK, shadow: false, mat: MAT.PLAIN });
+  }
+}
+
+/** Gemauerter Holzofen: Sockel aus Backstein, Kuppel, glühende Öffnung zu beiden Teams, Kamin. */
+function drawOven(r, c, s) {
+  const base = s[1] * 0.55;
+  r.draw('cube', [c[0], base / 2, c[2]], { scale: [s[0], base, s[2]], color: [1, 1, 1], mat: MAT.BRICK, outline: INK });
+  r.draw('sphere', [c[0], base, c[2]], { scale: [s[0] * 0.95, (s[1] - base) * 2, s[2] * 0.95], color: hexToRgb('#c8553d'), mat: MAT.PLAIN, outline: INK });
+  for (const side of [-1, 1])
+    r.draw('pillow', [c[0], base * 0.5, c[2] + side * (s[2] / 2 + 0.02)], { scale: [s[0] * 0.32, base * 0.6, 0.1], color: EMBER, emissive: 0.85, shadow: false });
+  r.draw('cylinder', [c[0], s[1] + 0.5, c[2]], { scale: [0.35, 1.0, 0.35], color: [1, 1, 1], mat: MAT.BRICK });
+}
+
+/** Theke: Holzkorpus mit heller Arbeitsplatte. */
+function drawCounter(r, c, s) {
+  r.draw('cube', [c[0], (s[1] - 0.08) / 2, c[2]], { scale: [s[0], s[1] - 0.08, s[2]], color: [1, 1, 1], mat: MAT.WOOD, outline: INK });
+  r.draw('cube', [c[0], s[1] - 0.04, c[2]], { scale: [s[0] + 0.1, 0.08, s[2] + 0.1], color: hexToRgb('#e8e2d6'), mat: MAT.CONCRETE });
+}
+
+/** Tisch mit rot-weißer Karodecke und vier Beinen. */
+function drawTable(r, c, s) {
+  const top = s[1], n = 4;
+  r.draw('cube', [c[0], top - 0.03, c[2]], { scale: [s[0], 0.06, s[2]], color: TOMATO, mat: MAT.PLAIN, outline: INK });
+  for (let i = 0; i < n; i++) for (let k = 0; k < n; k++) {
+    if ((i + k) % 2) continue;
+    r.draw('cube', [c[0] - s[0] / 2 + (i + 0.5) * (s[0] / n), top + 0.001, c[2] - s[2] / 2 + (k + 0.5) * (s[2] / n)],
+      { scale: [s[0] / n, 0.004, s[2] / n], color: WHITE, shadow: false });
+  }
+  for (const dx of [-1, 1]) for (const dz of [-1, 1])
+    r.draw('cube', [c[0] + dx * (s[0] / 2 - 0.1), (top - 0.06) / 2, c[2] + dz * (s[2] / 2 - 0.1)], { scale: [0.08, top - 0.06, 0.08], color: DARK, mat: MAT.WOOD });
+}
+
+/** Stapel Pizzakartons (Nachschubpunkt) mit grüner Nachschub-Markierung obenauf. */
+function drawPizzaBoxes(r, c, s) {
+  const h = 0.07, count = Math.max(1, Math.round(s[1] / h));
+  for (let k = 0; k < count; k++) {
+    const jx = (hash(c[0], c[2], k) - 0.5) * 0.08, jz = (hash(c[2], c[0], k) - 0.5) * 0.08;
+    r.draw('cube', [c[0] + jx, h / 2 + k * h, c[2] + jz], { scale: [s[0] * 0.92, h * 0.94, s[2] * 0.92], color: k % 5 === 4 ? TOMATO : CARDBOARD, mat: MAT.PLAIN, yaw: (hash(c[0], k, c[2]) - 0.5) * 0.2 });
+  }
+  r.draw('cube', [c[0], s[1] + 0.02, c[2]], { scale: [s[0] * 0.5, 0.03, s[2] * 0.12], color: RESUPPLY, emissive: 0.7, shadow: false });
+  r.draw('cube', [c[0], s[1] + 0.02, c[2]], { scale: [s[0] * 0.12, 0.03, s[2] * 0.5], color: RESUPPLY, emissive: 0.7, shadow: false });
+}
+
+/** Zwei gestapelte Mehlsäcke mit blauem Streifen. */
+function drawFlour(r, c, s) {
+  for (let k = 0; k < 2; k++)
+    r.draw('pillow', [c[0], s[1] * (0.25 + k * 0.5), c[2]], { scale: [s[0] * (1 - k * 0.1), s[1] * 0.5, s[2] * (1 - k * 0.1)], color: hexToRgb('#e9ddc4'), mat: MAT.JERSEY });
+  r.draw('pillow', [c[0], s[1] * 0.25, c[2]], { scale: [s[0] * 1.01, s[1] * 0.08, s[2] * 1.01], color: hexToRgb('#3a6ea5'), mat: MAT.JERSEY, shadow: false });
+}
+
+/** Kühlschrank: weißer Metallkorpus, Türfuge, Griff zur Kartenmitte. */
+function drawFridge(r, c, s) {
+  const toCenter = c[2] < 0 ? 1 : -1;
+  r.draw('cube', [c[0], s[1] / 2, c[2]], { scale: s, color: hexToRgb('#eef2f5'), mat: MAT.PLAIN, outline: INK });
+  r.draw('cube', [c[0], s[1] * 0.62, c[2]], { scale: [s[0] * 1.01, 0.02, s[2] * 1.01], color: DARK, shadow: false });
+  r.draw('cube', [c[0] + s[0] * 0.3, s[1] * 0.75, c[2] + toCenter * (s[2] / 2 + 0.03)], { scale: [0.04, 0.35, 0.04], color: DARK, mat: MAT.METAL });
+}
+
+export const PIZZERIA_KINDS = { oven: drawOven, counter: drawCounter, table: drawTable, pizzabox: drawPizzaBoxes, flour: drawFlour, fridge: drawFridge };
+
 // ---------------- Welt ----------------
 
 export function drawWorld(r, map, world, time) {
@@ -232,6 +311,7 @@ export function drawWorld(r, map, world, time) {
   } else {
     r.draw('cube', [0, -0.5, 0], { scale: [map.sizeX + 80, 1, map.sizeZ + 80], color: theme.ground, mat: theme.groundMat, shadow: false });
   }
+  if (map.id === 'pizzeria') drawPizzeriaFloor(r, hx, hz);
   if (map.id === 'warehouse') {
     // Industrie-Deko an den Wänden (außerhalb der Laufwege)
     for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
@@ -254,6 +334,7 @@ export function drawWorld(r, map, world, time) {
     if (kind === 'podrack') { drawPodRack(r, c, s, c[2] < 0 ? 0 : 1); return; }
     if (kind === 'tires') { drawTires(r, c, s); return; }
     if (BUNKER[kind]) { drawBunker(r, kind, c, s); return; }
+    if (PIZZERIA_KINDS[kind]) { PIZZERIA_KINDS[kind](r, c, s); return; }
     if (flags & 2) {
       r.draw('cube', c, { scale: s, color: RESUPPLY, mat: MAT.WOOD, outline: INK });
       r.draw('cube', [c[0], b.max[1] + 0.01, c[2]], { scale: [s[0] * 0.7, 0.03, s[2] * 0.2], color: WHITE, emissive: 0.6, shadow: false });

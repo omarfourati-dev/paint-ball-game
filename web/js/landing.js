@@ -11,7 +11,8 @@ const KEYS = [['W A S D', 'move'], ['🖱', 'aim'], ['🖱 L', 'fire'], ['R', 'r
   ['ControlLeft', 'crouch'], ['⇧', 'sprint'], ['Q', 'dash'], ['F', 'heal'], ['Tab', 'score']];
 const FALLBACK_MAPS = [
   { id: 'warehouse', name: 'Lagerhaus' }, { id: 'forest', name: 'Wald' },
-  { id: 'arena', name: 'Arena' }, { id: 'speedball', name: 'Turnierfeld' }
+  { id: 'arena', name: 'Arena' }, { id: 'speedball', name: 'Turnierfeld' },
+  { id: 'pizzeria', name: 'Pizzeria' }
 ];
 
 const $ = sel => document.querySelector(sel);
