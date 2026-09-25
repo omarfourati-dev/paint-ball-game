@@ -26,6 +26,8 @@ namespace Paintball.Net.Tests
             r.RunAsync("HTTPS: Health-Endpoint und Security-Header (NFR-06/NFR-11)", HealthAndHeaders);
             r.RunAsync("Health: Datenbank nicht erreichbar → 503 mit db=error", HealthDatabaseUnavailable);
             r.RunAsync("Health: persistence-Kennzahlen und degraded", HealthPersistenceMetricsAndDegraded);
+            r.RunAsync("Metrics: /metrics im Prometheus-Textformat mit allen Kennzahlen", MetricsEndpoint);
+            r.RunAsync("Proxy: /metrics intern ohne Umleitung erreichbar, über den Proxy 404", ProxyMetricsInternalOnly);
             r.RunAsync("HTTPS: Kartendaten aus Core-MapCatalog für den Client (FR-53)", MapsApi);
             r.RunAsync("WSS: Fremde Origin wird abgewiesen (CSWSH-Schutz)", ForeignOriginRejected);
             r.RunAsync("HTTP: Weiterleitung auf HTTPS (NFR-11)", HttpRedirectsToHttps);
@@ -489,6 +491,62 @@ namespace Paintball.Net.Tests
             JsonElement degradedBody = JsonDocument.Parse(await degradedRes.Content.ReadAsStringAsync()).RootElement;
             Assert.AreEqual("degraded", degradedBody.GetProperty("status").GetString(), "Status degraded");
             Assert.IsTrue(degradedBody.GetProperty("persistence").GetProperty("failures").GetInt64() >= 1, "persistence.failures >= 1");
+        }
+
+        private static readonly string[] MetricNames =
+        {
+            "paintball_sessions", "paintball_rooms", "paintball_matches_running",
+            "paintball_tick_ms", "paintball_tick_max_ms",
+            "paintball_persistence_pending", "paintball_persistence_failures_total",
+            "paintball_logins_total", "paintball_matches_started_total", "paintball_matches_finished_total",
+            "paintball_reconnects_total", "paintball_messages_rejected_total", "paintball_afk_kicks_total", "paintball_flood_kicks_total"
+        };
+
+        private static async Task MetricsEndpoint()
+        {
+            await using Harness h = await Harness.StartAsync();
+            await h.LoginAsync("Metriken");
+            HttpResponseMessage res = await h.Http.GetAsync("/metrics");
+            Assert.AreEqual(HttpStatusCode.OK, res.StatusCode, "Metrics 200");
+            string type = res.Content.Headers.ContentType?.ToString() ?? "";
+            Assert.IsTrue(type.StartsWith("text/plain; version=0.0.4", StringComparison.Ordinal), "Content-Type Prometheus 0.0.4: " + type);
+            string text = await res.Content.ReadAsStringAsync();
+            var values = new Dictionary<string, double>();
+            foreach (string line in text.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (line.StartsWith("#", StringComparison.Ordinal)) continue;
+                string[] parts = line.Split(' ');
+                Assert.AreEqual(2, parts.Length, "Zeile 'name wert': " + line);
+                Assert.IsTrue(double.TryParse(parts[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double v),
+                    "Wert numerisch: " + line);
+                values[parts[0]] = v;
+            }
+            foreach (string name in MetricNames)
+            {
+                Assert.IsTrue(values.ContainsKey(name), "Kennzahl vorhanden: " + name);
+                Assert.IsTrue(text.Contains("# TYPE " + name + " "), "TYPE-Zeile: " + name);
+            }
+            Assert.IsTrue(text.Contains("# TYPE paintball_logins_total counter"), "Zähler als counter");
+            Assert.IsTrue(text.Contains("# TYPE paintball_sessions gauge"), "Momentwert als gauge");
+            Assert.AreEqual(0.0, values["paintball_persistence_pending"], "nichts offen");
+        }
+
+        private static async Task ProxyMetricsInternalOnly()
+        {
+            var (app, port) = await StartProxyModeAsync();
+            try
+            {
+                using var http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false });
+                HttpResponseMessage direct = await http.GetAsync($"http://localhost:{port}/metrics");
+                Assert.AreEqual(HttpStatusCode.OK, direct.StatusCode, "Prometheus im Docker-Netz: 200 ohne Umleitung");
+                Assert.IsTrue((await direct.Content.ReadAsStringAsync()).Contains("paintball_sessions "), "Inhalt");
+                var viaProxy = new HttpRequestMessage(HttpMethod.Get, $"http://localhost:{port}/metrics");
+                viaProxy.Headers.Add("X-Forwarded-Proto", "https");
+                viaProxy.Headers.Add("X-Forwarded-For", "203.0.113.7");
+                HttpResponseMessage proxied = await http.SendAsync(viaProxy);
+                Assert.AreEqual(HttpStatusCode.NotFound, proxied.StatusCode, "über den Proxy nicht öffentlich");
+            }
+            finally { await app.StopAsync(); await app.DisposeAsync(); }
         }
 
         private static async Task ServesModels()

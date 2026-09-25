@@ -59,3 +59,6 @@ sie sehr nah sind, gerade geschossen haben, die Flagge tragen oder ein Radar-Imp
 
 `GET /api/health` (Status, Metriken), `GET /api/maps` (Kartengeometrie aus Core `MapCatalog`), `GET /api/config`,
 `GET /api/leaderboard?top=50`, `GET /api/me/export` und `DELETE /api/me` (DSGVO, `Authorization: Bearer <token>`).
+
+`GET /metrics`: Kennzahlen im Prometheus-Textformat 0.0.4 (`paintball_*`) für Prometheus im Docker-Netz `web`. Nicht öffentlich:
+Caddy antwortet dafür mit 404, und hinter dem Proxy lehnt der Server Anfragen über den Proxy (`X-Forwarded-Proto: https`) ab.

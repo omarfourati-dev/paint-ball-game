@@ -166,8 +166,9 @@ namespace Paintball.Server
             string csp = ads.ContentSecurityPolicy();
             app.Use(async (ctx, next) =>
             {
-                // HTTP → HTTPS (NFR-11); hinter dem Proxy bleibt /api/health für den Container-Healthcheck erreichbar
-                bool internalProbe = options.BehindProxy && ctx.Request.Path == "/api/health";
+                // HTTP → HTTPS (NFR-11); hinter dem Proxy bleiben /api/health (Container-Healthcheck) und /metrics (Prometheus
+                // im Docker-Netz) ohne Umleitung erreichbar
+                bool internalProbe = options.BehindProxy && (ctx.Request.Path == "/api/health" || ctx.Request.Path == "/metrics");
                 if (!ctx.Request.IsHttps && !internalProbe)
                 {
                     string host = ctx.Request.Host.Host;
@@ -210,6 +211,7 @@ namespace Paintball.Server
 
             MapApi(app, game, accounts);
             MapAds(app, ads);
+            MapMetrics(app, game, accounts, options);
             var authLimiter = new RateLimiter(limit: 20, window: TimeSpan.FromMinutes(1)); // gemeinsam für alle Auth-Routen
             AuthApi.Map(app, game, accounts, options, authLimiter);
             GoogleAuthApi.Map(app, accounts, options, authLimiter);
@@ -296,6 +298,66 @@ namespace Paintball.Server
                 ctx.Response.Headers.CacheControl = "public, max-age=3600";
                 return Results.Text(ads.AdsTxt, "text/plain; charset=utf-8");
             });
+        }
+
+        /// <summary>Prometheus-Textformat 0.0.4, von Hand geschrieben (keine zusätzliche Abhängigkeit).</summary>
+        public const string MetricsContentType = "text/plain; version=0.0.4; charset=utf-8";
+
+        /// <summary>
+        /// /metrics für Prometheus im Docker-Netz <c>web</c>. Nicht öffentlich: Caddy antwortet dafür mit 404, und hinter dem
+        /// Proxy lehnt der Server zusätzlich jede Anfrage ab, die über den Proxy kam (X-Forwarded-Proto https).
+        /// </summary>
+        private static void MapMetrics(WebApplication app, GameServer game, AccountStore accounts, ServerHostOptions options)
+        {
+            app.MapGet("/metrics", (HttpContext ctx) =>
+            {
+                if (options.BehindProxy && ctx.Request.IsHttps) return Results.NotFound();
+                ctx.Response.Headers.CacheControl = "no-store";
+                return Results.Text(MetricsText(game, accounts), MetricsContentType);
+            });
+        }
+
+        internal static string MetricsText(GameServer game, AccountStore accounts)
+        {
+            ServerMetrics m = game.Metrics;
+            var sb = new StringBuilder(2048);
+            void Metric(string name, string type, string help, double value)
+            {
+                sb.Append("# HELP ").Append(name).Append(' ').Append(help).Append('\n');
+                sb.Append("# TYPE ").Append(name).Append(' ').Append(type).Append('\n');
+                sb.Append(name).Append(' ').Append(value.ToString("R", System.Globalization.CultureInfo.InvariantCulture)).Append('\n');
+            }
+            Metric("paintball_sessions", "gauge", "Verbundene Sitzungen", game.SessionCount);
+            Metric("paintball_rooms", "gauge", "Offene Räume", RetryOnConcurrentChange(() => game.Rooms.Count));
+            Metric("paintball_matches_running", "gauge", "Räume mit laufendem Match",
+                RetryOnConcurrentChange(() => game.Rooms.Count(r => r.State == RoomState.Match)));
+            Metric("paintball_tick_ms", "gauge", "Dauer des letzten Spieltakts in Millisekunden", m.LastTickMs);
+            Metric("paintball_tick_max_ms", "gauge", "Gleitendes Maximum der Spieltakt-Dauer in Millisekunden", m.MaxTickMs);
+            Metric("paintball_persistence_pending", "gauge", "Offene Schreibaufträge", accounts.Queue.Pending);
+            Metric("paintball_persistence_failures_total", "counter", "Endgültig gescheiterte Schreibaufträge", accounts.Queue.Failures);
+            Metric("paintball_logins_total", "counter", "Anmeldungen am Spielserver", Interlocked.Read(ref m.Logins));
+            Metric("paintball_matches_started_total", "counter", "Gestartete Matches", Interlocked.Read(ref m.MatchesStarted));
+            Metric("paintball_matches_finished_total", "counter", "Beendete Matches", Interlocked.Read(ref m.MatchesFinished));
+            Metric("paintball_reconnects_total", "counter", "Wiederverbindungen", Interlocked.Read(ref m.Reconnects));
+            Metric("paintball_messages_in_total", "counter", "Empfangene Nachrichten", Interlocked.Read(ref m.MessagesIn));
+            Metric("paintball_messages_rejected_total", "counter", "Abgelehnte Nachrichten", Interlocked.Read(ref m.MessagesRejected));
+            Metric("paintball_afk_kicks_total", "counter", "Wegen Inaktivität entfernte Spieler", Interlocked.Read(ref m.AfkKicks));
+            Metric("paintball_flood_kicks_total", "counter", "Wegen Nachrichtenflut entfernte Spieler", Interlocked.Read(ref m.FloodKicks));
+            return sb.ToString();
+        }
+
+        /// <summary>
+        /// Die Räume gehören dem Spieltakt-Thread (einfaches Dictionary). Wird beim Aufzählen gleichzeitig ein Raum angelegt oder
+        /// entfernt, wirft die Aufzählung – dann einfach noch einmal versuchen; im Notfall NaN statt eines 500ers.
+        /// </summary>
+        private static double RetryOnConcurrentChange(Func<int> count)
+        {
+            for (int i = 0; i < 3; i++)
+            {
+                try { return count(); }
+                catch (InvalidOperationException) { }
+            }
+            return double.NaN;
         }
 
         private static void MapApi(WebApplication app, GameServer game, AccountStore accounts)
