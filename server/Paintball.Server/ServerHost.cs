@@ -58,6 +58,8 @@ namespace Paintball.Server
         public IGoogleOAuthClient Google;
         /// <summary>Nur für Tests: Vorrang vor DatabaseUrl.</summary>
         public IPlayerRepository Repository;
+        /// <summary>Spielstände über die Hintergrund-Warteschlange schreiben (Produktion); false = synchron (Tests).</summary>
+        public bool BackgroundPersistence;
     }
 
     /// <summary>
@@ -119,9 +121,13 @@ namespace Paintball.Server
                 pg.EnsureSchema();
                 repo = pg;
             }
-            var accounts = new AccountStore(repo);
+            PersistenceQueue queue = options.BackgroundPersistence ? PersistenceQueue.Background(repo) : PersistenceQueue.Inline(repo);
+            var accounts = new AccountStore(repo, null, queue);
             var game = new GameServer(options.Game, accounts);
             builder.Services.AddSingleton(game);
+            // Hosted Services stoppen in umgekehrter Registrierungsreihenfolge: Der Dienst, der die Warteschlange leert, wird
+            // ZUERST registriert, damit er ZULETZT stoppt – nach dem Spieltakt, der bis dahin noch Matchergebnisse einreiht.
+            builder.Services.AddHostedService(_ => new PersistenceDrainService(queue));
             if (options.RunGameLoop)
             {
                 builder.Services.AddHostedService(_ => new GameLoopService(game));
@@ -390,6 +396,25 @@ namespace Paintball.Server
                     if (now - next > 250) next = now; // Nach Hängern nicht nachholen
                 }
             }, stoppingToken, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+        }
+    }
+
+    /// <summary>
+    /// Leert beim Herunterfahren die <see cref="PersistenceQueue"/> (Budget 10 s, siehe <see cref="PersistenceQueue.DisposeAsync"/>).
+    /// Muss als erster Hosted Service registriert sein, damit er als letzter stoppt.
+    /// </summary>
+    internal sealed class PersistenceDrainService : IHostedService
+    {
+        private readonly PersistenceQueue _queue;
+        public PersistenceDrainService(PersistenceQueue queue) { _queue = queue; }
+
+        public Task StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public async Task StopAsync(CancellationToken cancellationToken)
+        {
+            int pending = _queue.Pending;
+            if (pending > 0) Console.WriteLine($"[Persistenz] Herunterfahren: {pending} offene Schreibaufträge werden geschrieben");
+            await _queue.DisposeAsync();
         }
     }
 

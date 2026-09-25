@@ -58,6 +58,7 @@ namespace Paintball.Net.Tests
             r.RunAsync("Google: Cookie mit fehlerhaftem Verifier (Länge/Zeichen) → invalid_state", GoogleMalformedVerifier);
             r.RunAsync("Google: Abbruch ohne pb_oauth-Cookie → invalid_state, keine Session (Anti-Login-CSRF)", GoogleCancelledWithoutCookie);
             r.RunAsync("Google: no-store auch bei Rate-Limit (429) auf der Start-Route", GoogleStartRateLimitNoStore);
+            r.RunAsync("Herunterfahren schreibt offene Spielstände", ShutdownFlushesPendingWrites);
         }
 
         private static string HarnessWebRoot;
@@ -308,7 +309,7 @@ namespace Paintball.Net.Tests
             public int HttpPort;
             public HttpClient Http;
 
-            public static async Task<Harness> StartAsync(bool devLogin = true, IGoogleOAuthClient google = null, bool googleConfigured = true, Paintball.Net.Accounts.IPlayerRepository repository = null)
+            public static async Task<Harness> StartAsync(bool devLogin = true, IGoogleOAuthClient google = null, bool googleConfigured = true, Paintball.Net.Accounts.IPlayerRepository repository = null, bool backgroundPersistence = false)
             {
                 string web = AccountTests.TempDir();
                 HarnessWebRoot = web;
@@ -328,6 +329,7 @@ namespace Paintball.Net.Tests
                     Google = google ?? new FakeGoogle(), // der echte Client wird in Tests nie aufgerufen
                     PublicUrl = null,
                     Repository = repository,
+                    BackgroundPersistence = backgroundPersistence,
                     Game = new Paintball.Net.Rooms.ServerOptions { LobbyCountdownSeconds = 0.5f }
                 };
                 WebApplication app = ServerHost.Build(Array.Empty<string>(), options);
@@ -773,6 +775,37 @@ namespace Paintball.Net.Tests
 
             await using Harness other = await Harness.StartAsync();
             Assert.AreEqual(HttpStatusCode.NoContent, (await other.Http.SendAsync(other.Req(HttpMethod.Post, "/api/auth/logout", null))).StatusCode, "frische Instanz unbeeinflusst");
+        }
+        private static async Task ShutdownFlushesPendingWrites()
+        {
+            var repo = new RecordingRepository { DelayMs = 100 };
+            Harness h = await Harness.StartAsync(repository: repo, backgroundPersistence: true);
+            try
+            {
+                // Reihenfolge: Hosted Services stoppen in umgekehrter Registrierungsreihenfolge – der Dienst, der die
+                // Warteschlange leert, muss VOR dem Spieltakt registriert sein, damit er NACH ihm stoppt.
+                List<string> services = h.App.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>().Select(s => s.GetType().Name).ToList();
+                int drain = services.IndexOf("PersistenceDrainService"), loop = services.IndexOf("GameLoopService");
+                Assert.IsTrue(drain >= 0 && loop >= 0, "beide Dienste registriert: " + string.Join(", ", services));
+                Assert.IsTrue(drain < loop, "Warteschlangen-Dienst vor dem Spieltakt registriert (stoppt zuletzt): " + string.Join(", ", services));
+
+                string cookie = await h.LoginAsync("Shutdown");
+                Paintball.Net.Rooms.GameServer game = h.App.Services.GetRequiredService<Paintball.Net.Rooms.GameServer>();
+                Paintball.Net.Accounts.AccountStore accounts = game.Accounts;
+                string id = accounts.PlayerIdForSession(cookie.Substring(cookie.IndexOf('=') + 1));
+                Assert.IsTrue(id != null, "Spieler per Dev-Login angelegt");
+                for (int i = 0; i < 5; i++)
+                    accounts.ApplyMatch(id, new Paintball.Net.Accounts.MatchSummary { Mode = "tdm", Map = "arena", Kills = i, XpGained = 100 });
+                Assert.IsTrue(accounts.Queue.Pending > 0, "vor dem Stopp ist noch etwas offen (sonst prüft der Test nichts)");
+
+                await h.App.StopAsync();
+
+                Assert.AreEqual(5, repo.CallsFor(id).Count(c => c.Op == "match"), "alle 5 AddMatch-Aufrufe geschrieben");
+                Assert.AreEqual(0, accounts.Queue.Pending, "nichts mehr offen");
+                Assert.AreEqual(0L, accounts.Queue.Failures, "nichts verworfen");
+                Assert.AreEqual(50, repo.Get(id).Coins, "letzter Stand gespeichert");
+            }
+            finally { await h.DisposeAsync(); }   // zweites StopAsync ist harmlos
         }
     }
 }

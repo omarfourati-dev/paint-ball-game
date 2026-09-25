@@ -4,6 +4,8 @@ using System.Globalization;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using Paintball.Core.Economy;
 using Paintball.Core.Progression;
 using Paintball.Core.Ranking;
@@ -83,6 +85,17 @@ namespace Paintball.Net.Accounts
     /// eindeutige Anzeigenamen, Sessions nur als SHA-256-Hash (NFR-11), Export/Löschung (NFR-12).
     /// Hält geladene Spieler als Core-<see cref="PlayerAccount"/> plus <see cref="PlayerProfile"/> im Speicher
     /// und nutzt ShopCatalog, AchievementsCatalog und SeasonRanker. Thread-sicher.
+    /// <para>
+    /// Sperren und I/O (Spec 2.2): Unter <c>_lock</c> wird nur der Speicherstand gelesen und verändert. Geschrieben wird über die
+    /// <see cref="PersistenceQueue"/> (Kopie des Stands); gelesen (erstes Laden, Anmeldung, Namenswahl, Export, Löschen) wird
+    /// außerhalb der Sperre. Mit der Hintergrund-Warteschlange (Produktion) macht der Store deshalb nie Datenbank-I/O unter
+    /// der Sperre; mit der Inline-Warteschlange (Tests) schreibt das Einreihen synchron.
+    /// </para>
+    /// <para>
+    /// Erstes Laden in zwei Hälften: Datensatz außerhalb der Sperre lesen, dann unter der Sperre einsetzen – nur wenn noch kein
+    /// Eintrag da ist und kein Grabstein besteht. Gleichzeitige erste Zugriffe ergeben so genau eine Instanz.
+    /// Gelöschte Konten bekommen für <see cref="TombstoneLifetime"/> einen Grabstein: kein erneutes Laden, kein Einreihen.
+    /// </para>
     /// </summary>
     public sealed class AccountStore
     {
@@ -125,6 +138,11 @@ namespace Paintball.Net.Accounts
         private readonly Dictionary<string, PlayerAccount> _accounts = new();
         private readonly Dictionary<string, PlayerProfile> _profiles = new();
         private readonly Dictionary<string, PlayerRecord> _records = new();
+        /// <summary>Grabsteine gelöschter Konten: Id → Ablaufzeit (nach <see cref="_clock"/>).</summary>
+        private readonly Dictionary<string, DateTime> _deleted = new();
+        /// <summary>Letzter Zugriff je geladenem Konto (für die Verdrängung in Task 6).</summary>
+        private readonly Dictionary<string, DateTime> _lastAccess = new();
+        private readonly PersistenceQueue _queue;
         private readonly ShopCatalog _shop = new();
         private readonly Func<DateTime> _clock;
         private readonly object _leaderboardLock = new();
@@ -132,13 +150,25 @@ namespace Paintball.Net.Accounts
         /// <summary>So lange wird die Bestenliste zwischengespeichert: aus vielen leaderboard-Nachrichten wird höchstens eine Abfrage.</summary>
         public static readonly TimeSpan LeaderboardCacheDuration = TimeSpan.FromSeconds(10);
         public static readonly TimeSpan SessionLifetime = TimeSpan.FromDays(30);
+        /// <summary>So lange bleibt ein gelöschtes Konto gesperrt (kein Laden, kein Schreiben).</summary>
+        public static readonly TimeSpan TombstoneLifetime = TimeSpan.FromHours(1);
+        /// <summary>So lange wartet <see cref="Export"/> höchstens auf offene Schreibaufträge.</summary>
+        public static readonly TimeSpan ExportFlushTimeout = TimeSpan.FromSeconds(5);
 
         public IReadOnlyList<ShopEntry> Shop => Cosmetics;
         public static IReadOnlyList<AchievementDef> AchievementDefinitions => AchievementDefs;
 
-        public AccountStore(IPlayerRepository repository, Func<DateTime> clock = null)
+        /// <summary>Warteschlange, über die der Store schreibt (Host leert sie beim Herunterfahren).</summary>
+        public PersistenceQueue Queue => _queue;
+
+        /// <summary>Wartet auf alle bis jetzt eingereihten Schreibaufträge, höchstens <paramref name="timeout"/>.</summary>
+        public Task FlushAsync(TimeSpan timeout) => _queue.FlushAsync(timeout);
+
+        /// <param name="queue">Standard: <see cref="PersistenceQueue.Inline"/> über <paramref name="repository"/>.</param>
+        public AccountStore(IPlayerRepository repository, Func<DateTime> clock = null, PersistenceQueue queue = null)
         {
             _repo = repository ?? throw new ArgumentNullException(nameof(repository));
+            _queue = queue ?? PersistenceQueue.Inline(repository);
             _clock = clock ?? (() => DateTime.UtcNow);
             foreach (ShopEntry e in Cosmetics)
                 if (e.Price > 0)
@@ -153,32 +183,44 @@ namespace Paintball.Net.Accounts
         public SignInResult SignIn(string googleSub, string email)
         {
             if (string.IsNullOrWhiteSpace(googleSub)) throw new ArgumentException("googleSub fehlt");
-            lock (_lock)
+            // Datenbank außerhalb der Sperre; ein Zeitpunkt für Repository und Cache.
+            DateTime now = _clock();
+            PlayerRecord rec = _repo.FindBySub(googleSub);
+            bool isNew = rec == null;
+            if (isNew) rec = _repo.Create(googleSub, email);
+            else
             {
-                PlayerRecord rec = _repo.FindBySub(googleSub);
-                bool isNew = rec == null;
-                if (isNew) rec = _repo.Create(googleSub, email);
-                else _repo.RecordLogin(rec.Id, email, DateTime.UtcNow);
-                if (!isNew && _records.TryGetValue(rec.Id, out PlayerRecord cached))
-                {
-                    // Bereits geladen: In-Memory-Stand behalten (Account-Objekte können schon referenziert sein),
-                    // nur die Login-Daten auffrischen.
-                    cached.Email = email;
-                    cached.LastLoginAt = rec.LastLoginAt;
-                    rec = cached;
-                }
-                else
-                {
-                    rec.Email = email;
-                    Cache(rec);
-                }
-                return new SignInResult { PlayerId = rec.Id, IsNew = isNew, NeedsName = rec.DisplayName == null };
+                _repo.RecordLogin(rec.Id, email, now);
+                rec.LastLoginAt = now;
             }
+            rec.Email = email;
+            // Ein neues Konto hat keine Matches; sonst werden sie nur gelesen, wenn das Konto nicht schon im Cache liegt.
+            IReadOnlyList<MatchRecord> matches = isNew ? Array.Empty<MatchRecord>() : null;
+            while (true)
+            {
+                lock (_lock)
+                {
+                    if (TryGetCachedLocked(rec.Id) is PlayerRecord cached)
+                    {
+                        // Bereits geladen: In-Memory-Stand behalten (Account-Objekte können schon referenziert sein und
+                        // ungespeicherten Fortschritt tragen), nur die Login-Daten auffrischen.
+                        cached.Email = email;
+                        cached.LastLoginAt = rec.LastLoginAt;
+                        return Result(cached);
+                    }
+                    if (matches != null)
+                        return Result(InstallLocked(rec, matches) ?? rec);   // null nur bei gleichzeitigem Löschen (Grabstein)
+                }
+                matches = _repo.RecentMatches(rec.Id, 20);   // außerhalb der Sperre, danach erneut prüfen
+            }
+
+            SignInResult Result(PlayerRecord r) => new SignInResult { PlayerId = r.Id, IsNew = isNew, NeedsName = r.DisplayName == null };
         }
 
         public bool NeedsName(string playerId)
         {
-            lock (_lock) return Load(playerId)?.DisplayName == null;
+            if (!EnsureLoaded(playerId)) return true;
+            lock (_lock) return TryGetCachedLocked(playerId)?.DisplayName == null;
         }
 
         /// <summary>3–16 Zeichen, Buchstaben/Ziffern/Leer/_-., nicht toxisch; sonst null.</summary>
@@ -204,17 +246,21 @@ namespace Paintball.Net.Accounts
         {
             string clean = ValidateName(name);
             if (clean == null) return NameResult.Invalid;
-            lock (_lock)
+            if (!EnsureLoaded(playerId)) return NameResult.Invalid;
+            // Außerhalb der Sperre: der eindeutige Index der Datenbank entscheidet über "vergeben".
+            NameResult r = _repo.TrySetName(playerId, clean);
+            if (r == NameResult.Ok)
             {
-                if (Load(playerId) == null) return NameResult.Invalid;
-                NameResult r = _repo.TrySetName(playerId, clean);
-                if (r == NameResult.Ok)
+                lock (_lock)
                 {
-                    _records[playerId].DisplayName = clean;
-                    _accounts[playerId].SetDisplayName(clean);
+                    if (TryGetCachedLocked(playerId) is PlayerRecord rec)
+                    {
+                        rec.DisplayName = clean;
+                        _accounts[playerId].SetDisplayName(clean);
+                    }
                 }
-                return r;
             }
+            return r;
         }
 
         public string CreateSession(string playerId)
@@ -228,7 +274,7 @@ namespace Paintball.Net.Accounts
         {
             if (string.IsNullOrEmpty(token) || token.Length > 128) return null;
             string id = _repo.PlayerIdForSession(Hash(token), DateTime.UtcNow);
-            lock (_lock) return id != null && Load(id) != null ? id : null;
+            return id != null && EnsureLoaded(id) ? id : null;
         }
 
         public void EndSession(string token)
@@ -240,12 +286,14 @@ namespace Paintball.Net.Accounts
 
         public PlayerAccount GetAccount(string accountId)
         {
-            lock (_lock) return Load(accountId) != null ? _accounts[accountId] : null;
+            if (!EnsureLoaded(accountId)) return null;
+            lock (_lock) return TryGetCachedLocked(accountId) != null ? _accounts[accountId] : null;
         }
 
         public PlayerProfile GetProfile(string accountId)
         {
-            lock (_lock) return Load(accountId) != null ? _profiles[accountId] : null;
+            if (!EnsureLoaded(accountId)) return null;
+            lock (_lock) return TryGetCachedLocked(accountId) != null ? _profiles[accountId] : null;
         }
 
         // ---------------- Progression ----------------
@@ -269,10 +317,11 @@ namespace Paintball.Net.Accounts
 
         public bool Owns(string accountId, string cosmeticId)
         {
+            ShopEntry entry = Array.Find(Cosmetics, c => c.Id == cosmeticId);
+            if (entry == null || !EnsureLoaded(accountId)) return false;
             lock (_lock)
             {
-                ShopEntry entry = Array.Find(Cosmetics, c => c.Id == cosmeticId);
-                if (entry == null || Load(accountId) == null) return false;
+                if (TryGetCachedLocked(accountId) == null) return false;
                 if (entry.Price == 0) return _accounts[accountId].Level >= entry.UnlockLevel;
                 return _profiles[accountId].Owned.Contains(cosmeticId);
             }
@@ -283,10 +332,11 @@ namespace Paintball.Net.Accounts
 
         public bool TryBuy(string accountId, string itemId, out string error)
         {
+            error = null;
+            if (!EnsureLoaded(accountId)) { error = "unknown_account"; return false; }
             lock (_lock)
             {
-                error = null;
-                if (Load(accountId) == null) { error = "unknown_account"; return false; }
+                if (TryGetCachedLocked(accountId) == null) { error = "unknown_account"; return false; }
                 PlayerProfile profile = _profiles[accountId];
                 if (!_shop.TryGet(itemId ?? string.Empty, out ShopItem item)) { error = "unknown_item"; return false; }
                 if (profile.Owned.Contains(itemId)) { error = "already_owned"; return false; }
@@ -299,10 +349,10 @@ namespace Paintball.Net.Accounts
 
         public bool TryEquipCosmetic(string accountId, string cosmeticId)
         {
-            if (!Owns(accountId, cosmeticId)) return false;
+            if (!Owns(accountId, cosmeticId)) return false;   // lädt bei Bedarf
             lock (_lock)
             {
-                if (Load(accountId) == null) return false;
+                if (TryGetCachedLocked(accountId) == null) return false;
                 PlayerProfile profile = _profiles[accountId];
                 if (cosmeticId.StartsWith("paint_", StringComparison.Ordinal)) profile.Paint = cosmeticId;
                 else profile.Accent = cosmeticId;
@@ -313,10 +363,10 @@ namespace Paintball.Net.Accounts
 
         public bool TryEquipMarker(string accountId, string markerId)
         {
-            if (!CanUseMarker(accountId, markerId)) return false;
+            if (!CanUseMarker(accountId, markerId)) return false;   // lädt bei Bedarf
             lock (_lock)
             {
-                if (Load(accountId) == null) return false;
+                if (TryGetCachedLocked(accountId) == null) return false;
                 _profiles[accountId].Marker = markerId.ToLowerInvariant();
                 SaveLocked(accountId);
                 return true;
@@ -326,10 +376,11 @@ namespace Paintball.Net.Accounts
         /// <summary>Wendet ein validiertes Matchergebnis an: Münzen, Zähler, Errungenschaften, Historie (FR-40/FR-45).</summary>
         public RewardResult ApplyMatch(string accountId, MatchSummary summary)
         {
+            var result = new RewardResult();
+            if (!EnsureLoaded(accountId)) return result;
             lock (_lock)
             {
-                var result = new RewardResult();
-                if (Load(accountId) == null) return result;
+                if (TryGetCachedLocked(accountId) == null) return result;
                 PlayerProfile profile = _profiles[accountId];
                 PlayerAccount account = _accounts[accountId];
 
@@ -358,7 +409,7 @@ namespace Paintball.Net.Accounts
                 };
                 profile.History.Insert(0, FormatHistory(match));
                 if (profile.History.Count > 20) profile.History.RemoveRange(20, profile.History.Count - 20);
-                _repo.AddMatch(accountId, match);
+                _queue.EnqueueMatch(accountId, match);   // vor dem Save: Reihenfolge wie bisher
 
                 SaveLocked(accountId);
                 return result;
@@ -378,10 +429,11 @@ namespace Paintball.Net.Accounts
 
         public IReadOnlyList<(AchievementDef Def, int Progress, bool Unlocked)> AchievementStatus(string accountId)
         {
+            var list = new List<(AchievementDef, int, bool)>();
+            if (!EnsureLoaded(accountId)) return list;
             lock (_lock)
             {
-                var list = new List<(AchievementDef, int, bool)>();
-                if (Load(accountId) == null) return list;
+                if (TryGetCachedLocked(accountId) == null) return list;
                 AchievementsCatalog catalog = BuildAchievements(_profiles[accountId]);
                 foreach (AchievementDef def in AchievementDefs)
                     list.Add((def, catalog.ProgressOf(def.Id), catalog.IsUnlocked(def.Id)));
@@ -420,53 +472,126 @@ namespace Paintball.Net.Accounts
 
         // ---------------- DSGVO ----------------
 
+        /// <summary>
+        /// Auskunft (DSGVO): reiht den aktuellen Stand ein, wartet höchstens <see cref="ExportFlushTimeout"/> auf die Warteschlange
+        /// (blockierend – nur aus HTTP-Threads aufrufen, nie aus dem Spieltakt) und liest dann alles außerhalb der Sperre aus dem Repository.
+        /// </summary>
         public string Export(string accountId)
         {
+            if (!EnsureLoaded(accountId)) return "{}";
             lock (_lock)
             {
-                PlayerRecord rec = Load(accountId);
-                if (rec == null) return "{}";
+                if (TryGetCachedLocked(accountId) == null) return "{}";
                 SaveLocked(accountId);
-                var matches = _repo.RecentMatches(accountId, int.MaxValue);
-                return System.Text.Json.JsonSerializer.Serialize(new
-                {
-                    id = rec.Id, googleAccountId = rec.GoogleSub, email = rec.Email, name = rec.DisplayName,
-                    createdAt = rec.CreatedAt, lastLoginAt = rec.LastLoginAt,
-                    level = rec.Level, xp = rec.Xp, mmr = rec.Mmr, matches = rec.Matches, wins = rec.Wins,
-                    eliminations = rec.Eliminations, deaths = rec.Deaths, accuracy = rec.Accuracy, coins = rec.Coins,
-                    paint = rec.Paint, accent = rec.Accent, marker = rec.Marker,
-                    owned = rec.Items, achievements = rec.Achievements,
-                    history = matches.Select(m => new { m.Mode, m.Map, m.Won, m.Kills, m.Deaths, m.Objective, m.XpGained, m.MmrChange, m.PlayedAt })
-                }, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
             }
+            _queue.FlushAsync(ExportFlushTimeout).GetAwaiter().GetResult();
+            PlayerRecord rec = _repo.Get(accountId);
+            if (rec == null) return "{}";   // inzwischen gelöscht
+            var matches = _repo.RecentMatches(accountId, int.MaxValue);
+            return System.Text.Json.JsonSerializer.Serialize(new
+            {
+                id = rec.Id, googleAccountId = rec.GoogleSub, email = rec.Email, name = rec.DisplayName,
+                createdAt = rec.CreatedAt, lastLoginAt = rec.LastLoginAt,
+                level = rec.Level, xp = rec.Xp, mmr = rec.Mmr, matches = rec.Matches, wins = rec.Wins,
+                eliminations = rec.Eliminations, deaths = rec.Deaths, accuracy = rec.Accuracy, coins = rec.Coins,
+                paint = rec.Paint, accent = rec.Accent, marker = rec.Marker,
+                owned = rec.Items, achievements = rec.Achievements,
+                history = matches.Select(m => new { m.Mode, m.Map, m.Won, m.Kills, m.Deaths, m.Objective, m.XpGained, m.MmrChange, m.PlayedAt })
+            }, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
         }
 
+        /// <summary>
+        /// Löschung (DSGVO): Unter der Sperre Grabstein setzen, Cache leeren und offene Schreibaufträge vergessen; danach
+        /// außerhalb der Sperre aus dem Repository löschen. Der Grabstein verhindert, dass ein gleichzeitiges Laden oder ein
+        /// späteres Einreihen das Konto wieder anlegt.
+        /// </summary>
         public bool Delete(string accountId)
         {
+            if (string.IsNullOrEmpty(accountId)) return false;
             lock (_lock)
             {
-                _records.Remove(accountId ?? string.Empty);
-                _accounts.Remove(accountId ?? string.Empty);
-                _profiles.Remove(accountId ?? string.Empty);
-                bool deleted = _repo.Delete(accountId);
-                InvalidateLeaderboard();
-                return deleted;
+                DateTime now = _clock();
+                PruneTombstonesLocked(now);
+                _deleted[accountId] = now + TombstoneLifetime;
+                RemoveCachedLocked(accountId);
+                _queue.Forget(accountId);
             }
+            bool deleted = _repo.Delete(accountId);
+            InvalidateLeaderboard();
+            return deleted;
         }
 
-        // ---------------- Persistenz ----------------
+        // ---------------- Laden und Persistenz ----------------
 
-        /// <summary>Lädt einen Spieler bei Bedarf aus dem Repository in den Speicher (unter _lock aufrufen).</summary>
-        private PlayerRecord Load(string id)
+        /// <summary>
+        /// Sorgt dafür, dass der Spieler im Cache liegt: Cache-Treffer unter der Sperre, sonst außerhalb der Sperre aus dem
+        /// Repository lesen und unter der Sperre einsetzen. false, wenn es ihn nicht gibt oder er gelöscht wurde.
+        /// Aufrufer prüfen danach unter der Sperre noch einmal mit <see cref="TryGetCachedLocked"/> (Löschen dazwischen).
+        /// </summary>
+        private bool EnsureLoaded(string id)
         {
-            if (string.IsNullOrEmpty(id)) return null;
-            if (_records.TryGetValue(id, out PlayerRecord cached)) return cached;
+            if (string.IsNullOrEmpty(id)) return false;
+            lock (_lock)
+            {
+                if (IsTombstonedLocked(id)) return false;
+                if (TryGetCachedLocked(id) != null) return true;
+            }
+            (PlayerRecord rec, IReadOnlyList<MatchRecord> matches) = LoadFromRepository(id);
+            if (rec == null) return false;
+            lock (_lock) return InstallLocked(rec, matches) != null;
+        }
+
+        /// <summary>Liest Datensatz und letzte Matches (außerhalb der Sperre aufrufen).</summary>
+        private (PlayerRecord Rec, IReadOnlyList<MatchRecord> Matches) LoadFromRepository(string id)
+        {
             PlayerRecord rec = _repo.Get(id);
-            if (rec != null) Cache(rec);
+            return rec == null ? (null, null) : (rec, _repo.RecentMatches(id, 20));
+        }
+
+        /// <summary>Gecachter Datensatz oder null (auch bei Grabstein); merkt den Zugriff (unter _lock).</summary>
+        private PlayerRecord TryGetCachedLocked(string id)
+        {
+            if (string.IsNullOrEmpty(id) || IsTombstonedLocked(id) || !_records.TryGetValue(id, out PlayerRecord rec)) return null;
+            _lastAccess[id] = _clock();
             return rec;
         }
 
-        private void Cache(PlayerRecord rec)
+        /// <summary>
+        /// Setzt einen außerhalb der Sperre gelesenen Datensatz ein (unter _lock). Liegt schon ein Eintrag vor, gewinnt dieser
+        /// (genau eine Instanz, ungespeicherter Fortschritt bleibt); bei Grabstein null.
+        /// </summary>
+        private PlayerRecord InstallLocked(PlayerRecord rec, IReadOnlyList<MatchRecord> matches)
+        {
+            if (IsTombstonedLocked(rec.Id)) return null;
+            if (TryGetCachedLocked(rec.Id) is PlayerRecord existing) return existing;
+            Cache(rec, matches);
+            _lastAccess[rec.Id] = _clock();
+            return rec;
+        }
+
+        private bool IsTombstonedLocked(string id)
+        {
+            if (!_deleted.TryGetValue(id, out DateTime until)) return false;
+            if (_clock() < until) return true;
+            _deleted.Remove(id);
+            return false;
+        }
+
+        private void PruneTombstonesLocked(DateTime now)
+        {
+            if (_deleted.Count == 0) return;
+            foreach (string id in _deleted.Where(d => d.Value <= now).Select(d => d.Key).ToList()) _deleted.Remove(id);
+        }
+
+        private void RemoveCachedLocked(string id)
+        {
+            _records.Remove(id);
+            _accounts.Remove(id);
+            _profiles.Remove(id);
+            _lastAccess.Remove(id);
+        }
+
+        private void Cache(PlayerRecord rec, IReadOnlyList<MatchRecord> matches)
         {
             string data = string.Join("\n",
                 "playerId=" + rec.Id,
@@ -488,7 +613,7 @@ namespace Paintball.Net.Accounts
                 TotalKills = rec.AchKills, TotalWins = rec.AchWins, TotalMatches = rec.AchMatches, TotalObjective = rec.AchObjective
             };
             if (rec.Coins > 0) profile.Wallet.Earn(CurrencyType.Soft, rec.Coins);
-            foreach (MatchRecord m in _repo.RecentMatches(rec.Id, 20)) profile.History.Add(FormatHistory(m));
+            foreach (MatchRecord m in matches ?? Array.Empty<MatchRecord>()) profile.History.Add(FormatHistory(m));
             _records[rec.Id] = rec;
             _accounts[rec.Id] = account;
             _profiles[rec.Id] = profile;
@@ -499,7 +624,10 @@ namespace Paintball.Net.Accounts
             m.Kills.ToString(CultureInfo.InvariantCulture), m.Deaths.ToString(CultureInfo.InvariantCulture),
             m.XpGained.ToString(CultureInfo.InvariantCulture), m.MmrChange.ToString(CultureInfo.InvariantCulture));
 
-        /// <summary>Schreibt den Speicherstand zurück (unter _lock aufrufen). Gelöschte Spieler werden ignoriert.</summary>
+        /// <summary>
+        /// Übernimmt den Speicherstand in den gecachten Datensatz und reiht eine Kopie ein (unter _lock aufrufen; kein
+        /// Repository-Aufruf). Gelöschte oder nicht geladene Spieler werden ignoriert.
+        /// </summary>
         private void SaveLocked(string accountId)
         {
             if (accountId == null || !_records.TryGetValue(accountId, out PlayerRecord rec)) return;
@@ -510,12 +638,33 @@ namespace Paintball.Net.Accounts
             rec.AchKills = p.TotalKills; rec.AchWins = p.TotalWins; rec.AchMatches = p.TotalMatches; rec.AchObjective = p.TotalObjective;
             rec.Paint = p.Paint; rec.Accent = p.Accent; rec.Marker = p.Marker;
             rec.Items = new HashSet<string>(p.Owned); rec.Achievements = new HashSet<string>(p.Achievements);
-            _repo.SaveProgress(rec);
+            if (IsTombstonedLocked(accountId)) return;
+            _queue.EnqueueSave(CopyRecord(rec));   // die Warteschlange behält den Snapshot: nie den Cache-Datensatz übergeben
         }
+
+        private static PlayerRecord CopyRecord(PlayerRecord p) => new PlayerRecord
+        {
+            Id = p.Id, GoogleSub = p.GoogleSub, Email = p.Email, DisplayName = p.DisplayName,
+            Level = p.Level, Xp = p.Xp, Mmr = p.Mmr, Matches = p.Matches, Wins = p.Wins, Eliminations = p.Eliminations, Deaths = p.Deaths,
+            Accuracy = p.Accuracy, Coins = p.Coins, AchKills = p.AchKills, AchWins = p.AchWins, AchMatches = p.AchMatches, AchObjective = p.AchObjective,
+            Paint = p.Paint, Accent = p.Accent, Marker = p.Marker, CreatedAt = p.CreatedAt, LastLoginAt = p.LastLoginAt,
+            Items = new HashSet<string>(p.Items), Achievements = new HashSet<string>(p.Achievements)
+        };
 
         public void Save(string accountId)
         {
             lock (_lock) SaveLocked(accountId);
+        }
+
+        // ---- Test-Hooks ----
+
+        /// <summary>Hält der aufrufende Thread gerade die Store-Sperre? (Tests prüfen damit „kein I/O unter der Sperre“.)</summary>
+        internal bool LockHeldByCurrentThread => Monitor.IsEntered(_lock);
+
+        /// <summary>LastLoginAt des gecachten Datensatzes oder null.</summary>
+        internal DateTime? CachedLastLoginAt(string id)
+        {
+            lock (_lock) return id != null && _records.TryGetValue(id, out PlayerRecord r) ? r.LastLoginAt : null;
         }
 
         private static string NewToken()

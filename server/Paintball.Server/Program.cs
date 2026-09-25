@@ -18,6 +18,7 @@ namespace Paintball.Server
         public static void Main(string[] args)
         {
             var options = new ServerHostOptions();
+            options.BackgroundPersistence = true;   // Produktion: kein Datenbank-I/O im Spieltakt, Flush beim Herunterfahren
             for (int i = 0; i < args.Length; i++)
             {
                 string next = i + 1 < args.Length ? args[i + 1] : null;

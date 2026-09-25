@@ -159,6 +159,61 @@ namespace Paintball.Net.Tests
                 }
                 finally { repo.Delete(p.Id); }
             });
+
+            r.RunAsync($"Repo[{label}]: AccountStore über Inline- und Hintergrund-Warteschlange schreibt dasselbe", async () =>
+            {
+                IPlayerRepository repo = factory();
+                var background = PersistenceQueue.Background(repo);
+                AccountStore inlineStore = new AccountStore(repo);
+                AccountStore backgroundStore = new AccountStore(repo, null, background);
+                string tag = Guid.NewGuid().ToString("N").Substring(0, 6);
+                string a = null, b = null, gone = null;
+                try
+                {
+                    a = PlayScenario(inlineStore, "I" + tag);
+                    b = PlayScenario(backgroundStore, "B" + tag);
+                    gone = PlayScenario(backgroundStore, "D" + tag);
+                    Assert.IsTrue(backgroundStore.Delete(gone), "mit offenen Aufträgen gelöscht");
+                    await backgroundStore.FlushAsync(TimeSpan.FromSeconds(10));
+
+                    PlayerRecord x = repo.Get(a), y = repo.Get(b);
+                    Assert.AreEqual(x.Level, y.Level, "Level"); Assert.AreEqual(x.Xp, y.Xp, "XP"); Assert.AreEqual(x.Mmr, y.Mmr, "MMR");
+                    Assert.AreEqual(x.Coins, y.Coins, "Münzen");
+                    Assert.AreEqual(x.AchKills, y.AchKills, "Zähler Treffer"); Assert.AreEqual(x.AchWins, y.AchWins, "Zähler Siege");
+                    Assert.AreEqual(x.AchMatches, y.AchMatches, "Zähler Matches"); Assert.AreEqual(x.AchObjective, y.AchObjective, "Zähler Ziel");
+                    Assert.AreEqual(x.Paint, y.Paint, "Farbe"); Assert.AreEqual(x.Accent, y.Accent, "Akzent"); Assert.AreEqual(x.Marker, y.Marker, "Marker");
+                    Assert.AreEqual(string.Join(",", x.Items.OrderBy(i => i)), string.Join(",", y.Items.OrderBy(i => i)), "Items");
+                    Assert.AreEqual(string.Join(",", x.Achievements.OrderBy(i => i)), string.Join(",", y.Achievements.OrderBy(i => i)), "Errungenschaften");
+                    string Matches(string id) => string.Join(";", repo.RecentMatches(id, 20).Select(m => $"{m.Mode}/{m.Map}/{m.Won}/{m.Kills}/{m.XpGained}").OrderBy(m => m, StringComparer.Ordinal));
+                    Assert.AreEqual(Matches(a), Matches(b), "Matches");
+                    Assert.AreEqual(3, repo.RecentMatches(b, 20).Count, "drei Matches");
+                    Assert.AreEqual(null, repo.Get(gone), "gelöschtes Konto bleibt weg");
+                    Assert.AreEqual(0, repo.RecentMatches(gone, 20).Count, "keine Matches des gelöschten Kontos");
+                    Assert.AreEqual(0L, background.Failures, "keine Schreibfehler");
+                }
+                finally
+                {
+                    await background.DisposeAsync();
+                    if (a != null) repo.Delete(a);
+                    if (b != null) repo.Delete(b);
+                    if (gone != null) repo.Delete(gone);
+                }
+            });
+        }
+
+        /// <summary>Gleicher Ablauf für jeden Store: Anmelden, Name, drei Matches, Kauf, Ausrüsten, Speichern.</summary>
+        private static string PlayScenario(AccountStore store, string name)
+        {
+            string id = store.SignIn("sub-" + Guid.NewGuid().ToString("N"), name + "@x.de").PlayerId;
+            Assert.AreEqual(NameResult.Ok, store.SetName(id, name), "Name frei");
+            store.ApplyMatch(id, new MatchSummary { Mode = "tdm", Map = "arena", Won = true, Kills = 4, XpGained = 900 });
+            store.ApplyMatch(id, new MatchSummary { Mode = "ctf", Map = "forest", Won = false, Kills = 1, Objective = 3, XpGained = 600 });
+            Assert.IsTrue(store.TryBuy(id, "paint_violet", out string err), "gekauft: " + err);
+            Assert.IsTrue(store.TryEquipCosmetic(id, "paint_violet"), "Farbe ausgerüstet");
+            store.ApplyMatch(id, new MatchSummary { Mode = "koth", Map = "arena", Won = true, Kills = 2, XpGained = 300 });
+            store.GetAccount(id).UpdateMmr(1234, 1f);
+            store.Save(id);
+            return id;
         }
 
         /// <summary>Prüft die URL-Umwandlung von PostgresPlayerRepository.ToConnectionString; unabhängig von RegisterFor, damit sie nicht doppelt läuft.</summary>
