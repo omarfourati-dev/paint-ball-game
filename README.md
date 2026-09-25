@@ -61,8 +61,8 @@ node --test tests/web/*.test.mjs                  # Client: Prediction-Golden, N
 ```
 
 Browser-End-to-End (Playwright, Server mit `--dev-login` muss laufen): `tests/e2e/e2e-a-solo.js`,
-`tests/e2e/e2e-b-multiplayer.js`, `tests/e2e/e2e-visual-closeup.js`, `tests/e2e/e2e-visual-humans.js` und
-`tests/e2e/e2e-landing-shots.js`.
+`tests/e2e/e2e-b-multiplayer.js`, `tests/e2e/e2e-visual-closeup.js`, `tests/e2e/e2e-visual-humans.js`,
+`tests/e2e/e2e-landing-shots.js` und `tests/e2e/e2e-event-controls.js`.
 
 ## Struktur
 
