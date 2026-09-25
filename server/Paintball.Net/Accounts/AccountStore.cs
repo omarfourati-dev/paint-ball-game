@@ -541,11 +541,13 @@ namespace Paintball.Net.Accounts
 
         /// <summary>
         /// Entfernt aus dem Cache, wer seit <paramref name="idle"/> nicht mehr zugegriffen wurde (<see cref="_lastAccess"/>)
-        /// – außer online (<paramref name="isOnline"/>) oder mit noch offenen Schreibaufträgen
-        /// (<see cref="PersistenceQueue.HasPending"/>): beides würde ein gleichzeitig laufender Tick noch verwenden.
-        /// Läuft komplett unter <see cref="_lock"/>, damit Prüfung und Entfernen atomar bleiben. Entfernte Konten werden
-        /// beim nächsten Zugriff normal über <see cref="EnsureLoaded"/> aus dem Repository nachgeladen. Räumt nebenbei
-        /// abgelaufene Grabsteine auf (<see cref="TombstoneCount"/>). Gibt die Anzahl entfernter Cache-Einträge zurück.
+        /// – außer online (<paramref name="isOnline"/>), mit noch offenen Schreibaufträgen (<see cref="PersistenceQueue.HasPending"/>)
+        /// oder mit einem zuletzt gescheiterten Schreibversuch (<see cref="PersistenceQueue.HasFailed"/>, Fix Runde 1):
+        /// alle drei würden sonst ungespeicherten Fortschritt verlieren oder von einem gleichzeitig laufenden Tick noch
+        /// gebraucht. Läuft komplett unter <see cref="_lock"/>, damit Prüfung und Entfernen atomar bleiben. Entfernte
+        /// Konten werden beim nächsten Zugriff normal über <see cref="EnsureLoaded"/> aus dem Repository nachgeladen.
+        /// Räumt nebenbei abgelaufene Grabsteine auf (<see cref="TombstoneCount"/>). Gibt die Anzahl entfernter
+        /// Cache-Einträge zurück.
         /// </summary>
         public int Evict(Func<string, bool> isOnline, TimeSpan idle)
         {
@@ -555,7 +557,7 @@ namespace Paintball.Net.Accounts
                 DateTime now = _clock();
                 PruneTombstonesLocked(now);
                 List<string> stale = _lastAccess
-                    .Where(kv => now - kv.Value > idle && !isOnline(kv.Key) && !_queue.HasPending(kv.Key))
+                    .Where(kv => now - kv.Value > idle && !isOnline(kv.Key) && !_queue.HasPending(kv.Key) && !_queue.HasFailed(kv.Key))
                     .Select(kv => kv.Key)
                     .ToList();
                 foreach (string id in stale) RemoveCachedLocked(id);

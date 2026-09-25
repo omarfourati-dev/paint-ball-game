@@ -39,6 +39,8 @@ namespace Paintball.Net.Tests
             r.RunAsync("Konto: Export nach Flush-Zeitüberschreitung loggt und liefert trotzdem Daten", ExportFlushTimeoutLogged);
             r.RunAsync("Cache: Einträge ohne Zugriff werden nach idle entfernt, Online-Spieler und offene Schreibaufträge nicht", EvictSkipsOnlineAndPending);
             r.Run("Cache: abgelaufene Grabsteine werden entfernt", EvictRemovesExpiredTombstones);
+            r.RunAsync("Cache: Verdrängung übergeht Konten mit zuletzt gescheitertem Schreibversuch (Fix Runde 1)", EvictSkipsPlayerWithFailedWrite);
+            r.RunAsync("Cache: erneuter erfolgreicher Schreibversuch löscht die Fehlmarkierung, Verdrängung greift wieder (Fix Runde 1)", EvictResumesAfterSuccessfulWrite);
         }
 
         internal static string TempDir()
@@ -484,6 +486,66 @@ namespace Paintball.Net.Tests
             store.Evict(_ => false, TimeSpan.FromMinutes(30));
 
             Assert.AreEqual(0, store.TombstoneCount, "abgelaufener Grabstein nach Evict entfernt");
+        }
+
+        /// <summary>
+        /// Fix Runde 1: hat die Warteschlange die Wiederholungen für einen Spieler ausgeschöpft (Job verworfen), wird
+        /// <see cref="PersistenceQueue.HasPending"/> wieder false – ohne die Fehlmarkierung würde <see cref="AccountStore.Evict"/>
+        /// den Cache-Eintrag dann entfernen und den ungespeicherten Fortschritt endgültig verlieren.
+        /// </summary>
+        private static async Task EvictSkipsPlayerWithFailedWrite()
+        {
+            var repo = new RecordingRepository { FailTimes = int.MaxValue };   // SaveProgress/AddMatch werfen immer
+            DateTime now = new DateTime(2026, 9, 25, 12, 0, 0, DateTimeKind.Utc);
+            var store = new AccountStore(repo, () => now, PersistenceQueue.Background(repo, new[] { 1, 1, 1 }));
+            try
+            {
+                string id = NewPlayer(store, "Omar");
+                store.ApplyMatch(id, new MatchSummary { XpGained = 10 });
+                await store.FlushAsync(FlushTimeout);
+                Assert.IsTrue(store.Queue.Failures > 0, "Schreibauftrag nach Wiederholungen verworfen");
+                Assert.IsFalse(store.Queue.HasPending(id), "nichts mehr offen (verworfen, nicht mehr in Bearbeitung)");
+
+                now = now.AddMinutes(31);
+                int removed = store.Evict(_ => false, TimeSpan.FromMinutes(30));
+
+                Assert.AreEqual(0, removed, "gescheiterter Schreibversuch verhindert die Verdrängung");
+                Assert.AreEqual(1, store.CachedCount, "weiterhin im Cache – kein Datenverlust");
+            }
+            finally { await store.Queue.DisposeAsync(); }
+        }
+
+        /// <summary>
+        /// Fix Runde 1: nach einem erfolgreichen Schreiben ist die Fehlmarkierung wieder weg, und eine spätere Verdrängung
+        /// funktioniert wie gewohnt.
+        /// </summary>
+        private static async Task EvictResumesAfterSuccessfulWrite()
+        {
+            var repo = new WrappingRepository();
+            DateTime now = new DateTime(2026, 9, 25, 12, 0, 0, DateTimeKind.Utc);
+            var store = new AccountStore(repo, () => now, PersistenceQueue.Background(repo, new[] { 1, 1, 1 }));
+            try
+            {
+                string id = NewPlayer(store, "Omar");
+                repo.FailWritesFor = id;
+                store.ApplyMatch(id, new MatchSummary { XpGained = 10 });
+                await store.FlushAsync(FlushTimeout);
+                Assert.IsTrue(store.Queue.Failures > 0, "erster Schreibversuch scheitert (Repository nicht erreichbar)");
+
+                now = now.AddMinutes(31);
+                Assert.AreEqual(0, store.Evict(_ => false, TimeSpan.FromMinutes(30)), "wegen Fehlmarkierung noch nicht verdrängt");
+
+                repo.FailWritesFor = null;   // Repository wieder erreichbar
+                store.ApplyMatch(id, new MatchSummary { XpGained = 20 });   // neuer, diesmal erfolgreicher Schreibauftrag
+                await store.FlushAsync(FlushTimeout);
+
+                now = now.AddMinutes(31);   // wieder über die Idle-Grenze seit dem letzten Zugriff
+                int removed = store.Evict(_ => false, TimeSpan.FromMinutes(30));
+
+                Assert.AreEqual(1, removed, "Fehlmarkierung nach erfolgreichem Schreiben gelöscht, Verdrängung greift wieder");
+                Assert.AreEqual(0, store.CachedCount, "Cache leer");
+            }
+            finally { await store.Queue.DisposeAsync(); }
         }
     }
 }

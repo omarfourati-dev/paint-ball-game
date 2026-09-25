@@ -113,6 +113,7 @@ namespace Paintball.Net.Tests
             r.Run("Konto gelöscht während Match: Verbindung getrennt, Matchende speichert nichts", DeletedDuringMatch);
             r.Run("Matchende: Speicherfehler bei einem Spieler, Ergebnis erreicht trotzdem alle", MatchEndSurvivesSaveFailure);
             r.Run("Server: IsOnline", ServerIsOnline);
+            r.Run("Verdrängung: getrenntes Raum-Mitglied in der Reconnect-Gnadenfrist bleibt im Cache (Fix Runde 1)", EvictSkipsDisconnectedRoomMember);
         }
 
         internal static GameServer NewServer(Action<ServerOptions> configure = null, IPlayerRepository repo = null)
@@ -634,6 +635,40 @@ namespace Paintball.Net.Tests
             server.Disconnect(client.Session);
             server.Tick();
             Assert.IsFalse(server.IsOnline(client.AccountId), "nach Disconnect und Tick nicht mehr online");
+        }
+
+        /// <summary>
+        /// Fix Runde 1 (Controller-Review): ein Raum-Mitglied in der Reconnect-Gnadenfrist hat keine Sitzung mehr, ist
+        /// aber weiterhin Mitglied des Raums. Würde es verdrängt, griffe <see cref="Room.FinishMatch"/> beim Matchende
+        /// über <c>GetAccount</c>/<c>EnsureLoaded</c> synchron auf die Datenbank zu (Spieltakt-Thread). <see cref="GameServer.IsOnline"/>
+        /// muss solche Mitglieder deshalb unabhängig von der Sitzung als online zählen – in jeder Raumphase.
+        /// </summary>
+        private static void EvictSkipsDisconnectedRoomMember()
+        {
+            DateTime now = new DateTime(2026, 9, 25, 12, 0, 0, DateTimeKind.Utc);
+            var accounts = new AccountStore(new InMemoryPlayerRepository(), () => now);
+            var server = new GameServer(new ServerOptions { QuickMatchWaitSeconds = 2f, ResultsSeconds = 2f, LobbyCountdownSeconds = 1f }, accounts);
+
+            var host = new TestClient(server, "Host");
+            host.Send(new { t = "create", mode = "tdm", map = "arena", @private = true, timeLimit = 30 });
+            server.Tick();
+            var guest = new TestClient(server, "Gast");
+            guest.Send(new { t = "join", code = host.RoomCode });
+            server.Tick();
+            Assert.AreEqual(2, accounts.CachedCount, "Host und Gast geladen");
+
+            // Nur im laufenden Match gewährt Room.OnDisconnected eine Reconnect-Gnadenfrist (Member bleibt, Session weg) –
+            // in der Lobby würde das Verlassen den Member sofort entfernen (Room.Remove), das ist hier nicht der Fall.
+            StartMatch(server, host, guest);
+            server.Disconnect(guest.Session);
+            server.Tick();
+            Assert.IsTrue(server.IsOnline(guest.AccountId), "Raum-Mitglied ohne Sitzung zählt während der Gnadenfrist als online");
+
+            now = now.AddMinutes(31);
+            int removed = accounts.Evict(server.IsOnline, TimeSpan.FromMinutes(30));
+
+            Assert.AreEqual(0, removed, "kein Raum-Mitglied verdrängt, obwohl die Sitzung fehlt");
+            Assert.AreEqual(2, accounts.CachedCount, "Host und Gast bleiben im Cache");
         }
     }
 }

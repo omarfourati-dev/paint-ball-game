@@ -50,10 +50,17 @@ namespace Paintball.Net.Rooms
         private int _nextSessionId = 1;
         private int _mapRotation;
         /// <summary>
-        /// Schnappschuss der Konten mit authentifizierter Sitzung (ob in einem Raum oder nicht), im Tick neu gebaut und
-        /// nie in-place verändert – nur als Ganzes ersetzt (Task 6: <see cref="IsOnline"/> ist so threadsicher lesbar).
+        /// Schnappschuss der Konten, die als „online“ gelten – authentifizierte Sitzung ODER (Fix Runde 1) nicht-Bot-Mitglied
+        /// irgendeines Raums in jeder Phase (auch getrennt in der Reconnect-Gnadenfrist: ein solches Mitglied hat keine
+        /// Sitzung mehr, aber <see cref="Room.FinishMatch"/> greift beim Matchende trotzdem auf sein Konto zu). Im Tick neu
+        /// gebaut und nie in-place verändert – nur als Ganzes ersetzt (Task 6: <see cref="IsOnline"/> ist so threadsicher lesbar).
         /// </summary>
         private volatile HashSet<string> _onlineSnapshot = new();
+        /// <summary>Erzwingt den nächsten Tick eine Neuberechnung von <see cref="_onlineSnapshot"/> (Fix Runde 1, Minor).</summary>
+        private bool _onlineDirty = true;
+        /// <summary>Spätestens zu diesem Spielzeitpunkt wird <see cref="_onlineSnapshot"/> neu gebaut, auch ohne <see cref="_onlineDirty"/>
+        /// (fängt Raum-Beitritte/-Austritte ab, die keine Sitzungsänderung sind, z. B. Ablauf der Reconnect-Gnadenfrist).</summary>
+        private float _nextOnlineBuild;
 
         public ServerOptions Options { get; }
         public AccountStore Accounts { get; }
@@ -150,11 +157,21 @@ namespace Paintball.Net.Rooms
                 catch (Exception ex) { Console.Error.WriteLine("[GameServer] Nachricht fehlgeschlagen: " + ex.Message); }
             }
 
-            // Schnappschuss neu bauen statt in-place zu ändern: andere Threads (Wartungsdienst) lesen ihn gefahrlos mit.
-            var online = new HashSet<string>();
-            foreach (Session s in _sessions.Values)
-                if (s.Authenticated && s.AccountId != null) online.Add(s.AccountId);
-            _onlineSnapshot = online;
+            // Nur neu bauen, wenn sich etwas geändert haben könnte (Sitzung), oder spätestens einmal pro Sekunde (fängt
+            // Raum-Mitgliedschaftsänderungen ohne Sitzungsänderung ab, z. B. Ablauf der Reconnect-Gnadenfrist). Immer als
+            // Ganzes ersetzt, nie in-place verändert: andere Threads (Wartungsdienst) lesen ihn so gefahrlos mit.
+            if (_onlineDirty || Time >= _nextOnlineBuild)
+            {
+                var online = new HashSet<string>();
+                foreach (Session s in _sessions.Values)
+                    if (s.Authenticated && s.AccountId != null) online.Add(s.AccountId);
+                foreach (Room room in _rooms.Values)
+                    foreach (Member m in room.Members)
+                        if (!m.IsBot && m.AccountId != null) online.Add(m.AccountId);
+                _onlineSnapshot = online;
+                _onlineDirty = false;
+                _nextOnlineBuild = Time + 1f;
+            }
 
             foreach (Session s in _sessions.Values.ToList())
             {
@@ -187,6 +204,7 @@ namespace Paintball.Net.Rooms
             if (s.Closed && !_sessions.ContainsKey(s.Id)) return;
             s.Closed = true;
             _sessions.Remove(s.Id);
+            _onlineDirty = true;   // Sitzung weg – der Online-Schnappschuss muss neu gebaut werden (Fix Runde 1)
             if (s.Room != null && s.Member != null) s.Room.OnDisconnected(s.Member, Time);
             s.Room = null;
             s.Member = null;
@@ -271,6 +289,7 @@ namespace Paintball.Net.Rooms
             }
 
             s.Authenticated = true;
+            _onlineDirty = true;   // neu authentifiziert – der Online-Schnappschuss muss neu gebaut werden (Fix Runde 1)
             s.Name = account.DisplayName;
             s.Input = msg.Str("input", 8, "kbm") switch { "touch" => "touch", "pad" => "pad", _ => "kbm" };
             s.CrossPlay = msg.Bool("crossPlay", true);

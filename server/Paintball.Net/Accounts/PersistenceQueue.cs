@@ -49,6 +49,13 @@ namespace Paintball.Net.Accounts
         private readonly int[] _retryDelaysMs;
         private readonly object _gate = new();
         private readonly Dictionary<string, PlayerState> _players = new();
+        /// <summary>
+        /// Spieler, deren letzter Schreibversuch verworfen wurde (Wiederholungen ausgeschöpft, Herunterfahren-Zeitlimit
+        /// oder ein interner Fehler) – überlebt das Entfernen aus <see cref="_players"/>, sobald nichts mehr offen ist.
+        /// Der nächste erfolgreiche Schreibauftrag desselben Spielers löscht die Markierung (Task 6 Fix Runde 1:
+        /// <see cref="AccountStore.Evict"/> darf so keinen ungespeicherten Fortschritt verlieren).
+        /// </summary>
+        private readonly HashSet<string> _failedPlayers = new();
         private readonly Queue<(long Target, TaskCompletionSource Done)> _flushWaiters = new();
         private readonly Channel<Job> _channel = Channel.CreateUnbounded<Job>(new UnboundedChannelOptions { SingleReader = true });
         private readonly CancellationTokenSource _abort = new();
@@ -89,10 +96,18 @@ namespace Paintball.Net.Accounts
             lock (_gate) return _players.ContainsKey(playerId);
         }
 
+        /// <summary>War der letzte Schreibversuch dieses Spielers erfolglos (Wiederholungen ausgeschöpft oder verworfen)?
+        /// Ein erfolgreicher Schreibauftrag danach löscht die Markierung wieder.</summary>
+        public bool HasFailed(string playerId)
+        {
+            if (playerId == null) return false;
+            lock (_gate) return _failedPlayers.Contains(playerId);
+        }
+
         public void EnqueueSave(PlayerRecord snapshot)
         {
             if (snapshot?.Id == null) throw new ArgumentException("Snapshot mit Spieler-Id erwartet", nameof(snapshot));
-            if (_inline) { ExecuteInline(() => _repo.SaveProgress(snapshot)); return; }
+            if (_inline) { ExecuteInline(snapshot.Id, () => _repo.SaveProgress(snapshot)); return; }
             lock (_gate)
             {
                 if (!_closed)
@@ -103,14 +118,14 @@ namespace Paintball.Net.Accounts
                     return;
                 }
             }
-            ExecuteAfterClose(() => _repo.SaveProgress(snapshot));
+            ExecuteAfterClose(snapshot.Id, () => _repo.SaveProgress(snapshot));
         }
 
         public void EnqueueMatch(string playerId, MatchRecord match)
         {
             if (playerId == null) throw new ArgumentNullException(nameof(playerId));
             if (match == null) throw new ArgumentNullException(nameof(match));
-            if (_inline) { ExecuteInline(() => _repo.AddMatch(playerId, match)); return; }
+            if (_inline) { ExecuteInline(playerId, () => _repo.AddMatch(playerId, match)); return; }
             lock (_gate)
             {
                 if (!_closed)
@@ -121,7 +136,7 @@ namespace Paintball.Net.Accounts
                     return;
                 }
             }
-            ExecuteAfterClose(() => _repo.AddMatch(playerId, match));
+            ExecuteAfterClose(playerId, () => _repo.AddMatch(playerId, match));
         }
 
         /// <summary>
@@ -134,6 +149,7 @@ namespace Paintball.Net.Accounts
             if (playerId == null || _inline) return;
             lock (_gate)
             {
+                _failedPlayers.Remove(playerId);   // Konto gelöscht: eine frühere Fehlmarkierung wäre irreführend
                 if (!_players.TryGetValue(playerId, out PlayerState state)) return;   // nichts offen, kein Zustand nötig
                 state.Epoch++;
                 state.QueuedSave = null;
@@ -232,12 +248,13 @@ namespace Paintball.Net.Accounts
                             write = snap != null ? () => _repo.SaveProgress(snap) : () => _repo.AddMatch(job.PlayerId, match);
                         }
                     }
-                    if (dropped) CountShutdownDrop();
+                    if (dropped) { CountShutdownDrop(); MarkFailed(job.PlayerId); }
                     else if (write != null) await ExecuteWithRetryAsync(job, write).ConfigureAwait(false);
                 }
                 catch (Exception ex)
                 {
                     RecordFailure("[Persistenz] Interner Fehler im Worker: ", ex);
+                    MarkFailed(job.PlayerId);
                 }
                 finally
                 {
@@ -264,28 +281,30 @@ namespace Paintball.Net.Accounts
         {
             for (int attempt = 0; ; attempt++)
             {
-                try { write(); return; }
+                try { write(); ClearFailed(job.PlayerId); return; }
                 catch (Exception ex)
                 {
                     if (attempt >= _retryDelaysMs.Length)
                     {
                         RecordFailure("[Persistenz] Schreibauftrag nach Wiederholungen verworfen: ", ex);
+                        MarkFailed(job.PlayerId);
                         return;
                     }
                 }
                 try { await Task.Delay(_retryDelaysMs[attempt], _abort.Token).ConfigureAwait(false); }
-                catch (OperationCanceledException) { CountShutdownDrop(); return; }
-                if (_abort.IsCancellationRequested) { CountShutdownDrop(); return; }   // Herunterfahren: Verlust, nie stumm
+                catch (OperationCanceledException) { CountShutdownDrop(); MarkFailed(job.PlayerId); return; }
+                if (_abort.IsCancellationRequested) { CountShutdownDrop(); MarkFailed(job.PlayerId); return; }   // Herunterfahren: Verlust, nie stumm
                 if (!StillWanted(job)) return;   // inzwischen vergessen (Konto gelöscht): gewollt, kein Fehler
             }
         }
 
-        private void ExecuteInline(Action write)
+        private void ExecuteInline(string playerId, Action write)
         {
-            try { write(); }
+            try { write(); ClearFailed(playerId); }
             catch (Exception ex)
             {
                 RecordFailure("[Persistenz] Schreibauftrag fehlgeschlagen: ", ex);
+                MarkFailed(playerId);
                 throw;
             }
         }
@@ -294,14 +313,18 @@ namespace Paintball.Net.Accounts
         /// Nach DisposeAsync: synchron schreiben, Fehler zählen, aber nicht werfen (Aufrufer erwarten Hintergrund-Semantik).
         /// Wartet vorher auf den Worker, damit kein Schreibaufruf neben einem noch laufenden Worker-Aufruf liegt (Reihenfolge pro Spieler).
         /// </summary>
-        private void ExecuteAfterClose(Action write)
+        private void ExecuteAfterClose(string playerId, Action write)
         {
             if (!_worker.IsCompleted)
             {
                 try { _worker.Wait(); } catch (AggregateException) { }   // Worker fängt selbst alles; nur zur Sicherheit
             }
-            try { write(); }
-            catch (Exception ex) { RecordFailure("[Persistenz] Schreibauftrag nach dem Herunterfahren fehlgeschlagen: ", ex); }
+            try { write(); ClearFailed(playerId); }
+            catch (Exception ex)
+            {
+                RecordFailure("[Persistenz] Schreibauftrag nach dem Herunterfahren fehlgeschlagen: ", ex);
+                MarkFailed(playerId);
+            }
         }
 
         /// <summary>Beim Herunterfahren nach Zeitlimit verworfen: zählt als Fehler, geloggt wird einmal gesammelt in DisposeAsync.</summary>
@@ -317,6 +340,16 @@ namespace Paintball.Net.Accounts
             Interlocked.Increment(ref _failures);
             lock (_gate) _lastErrorAt = DateTime.UtcNow;
             Console.Error.WriteLine(prefix + ex.GetType().Name);   // nur der Typ: Meldungen können Verbindungsdaten enthalten
+        }
+
+        private void MarkFailed(string playerId)
+        {
+            if (playerId != null) lock (_gate) _failedPlayers.Add(playerId);
+        }
+
+        private void ClearFailed(string playerId)
+        {
+            if (playerId != null) lock (_gate) _failedPlayers.Remove(playerId);
         }
     }
 }
