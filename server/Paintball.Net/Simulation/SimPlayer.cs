@@ -54,6 +54,15 @@ namespace Paintball.Net.Simulation
         /// <summary>Semi-Abzug gespannt: wird durch einen Frame ohne Feuer gespannt und durch einen Schuss entspannt.</summary>
         public bool TriggerArmed = true;
 
+        /// <summary>Feuer war im zuletzt verarbeiteten Frame gedrückt (Erkennung der steigenden Flanke).</summary>
+        public bool FireWasDown;
+
+        /// <summary>Semi: ein Druck während der Abklingzeit, der feuert, sobald die Waffe bereit ist (höchstens einer).</summary>
+        public bool PendingShot;
+
+        /// <summary>Spielzeit, zu der <see cref="PendingShot"/> gesetzt wurde.</summary>
+        public float PendingShotSince;
+
         public int LastProcessedSeq;
         public int LastQueuedSeq;
         public int ShotsFired;

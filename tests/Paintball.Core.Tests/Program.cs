@@ -46,6 +46,7 @@ namespace Paintball.Core.Tests
             Run("Marker: Feuerrate & Cooldown", Marker_FireRateAndCooldown);
             Run("Marker: Magazin leer loest Auto-Reload aus, Reserve wird verbraucht", Marker_ReloadConsumesReserve);
             Run("Marker: Unterbrechbares Nachladen (FR-08)", Marker_InterruptibleReload);
+            Run("Marker: Leeres Magazin – gehaltenes oder gepulstes Feuer bricht das Nachladen nicht ab (Event, Auto und Semi)", Marker_ReloadSurvivesFireWhenEmpty);
             Run("Marker: Kein Nachladen wenn Reserve leer / Nachschubstation (FR-06)", Marker_NoAmmoAndResupply);
             Run("Trefferpunkte: Eliminierung nach definierter Trefferzahl (FR-05)", HitPoints_Elimination);
             Run("Schaden: Trefferzonen-Multiplikatoren (FR-05)", Damage_ZoneMultipliers);
@@ -259,6 +260,41 @@ namespace Paintball.Core.Tests
             // Schusswunsch bricht den unterbrechbaren Reload ab (FR-08)
             Check.AreEqual(FireStatus.Fired, marker.TryFire(0.5f).Status, "Schuss bricht Reload ab");
             Check.AreEqual(MarkerState.Ready, marker.State, "Leeres Magazin bereit fuer Auto-Reload");
+        }
+
+        private static void Marker_ReloadSurvivesFireWhenEmpty()
+        {
+            const float dt = 1f / 30f;
+            foreach (FireMode mode in new[] { FireMode.Auto, FireMode.Semi })
+            {
+                foreach (int every in new[] { 1, 2 })   // 1 = gehalten (jeder Tick), 2 = gepulst (jeder zweite Tick)
+                {
+                    MarkerSpecs specs = TestSpecs();
+                    specs.FireMode = mode;
+                    specs.ReloadSeconds = 2.4f;
+                    var marker = new MarkerStateMachine(specs);
+                    float t = 0f;
+                    while (marker.AmmoInMagazine > 0) { marker.TryFire(t); t += 0.11f; }
+
+                    float reloadStart = -1f;
+                    int tick = 0;
+                    while (t < 10f)
+                    {
+                        marker.Update(t);
+                        if (marker.AmmoInReserve < specs.ReserveAmmo) break;   // Nachladen abgeschlossen
+                        if (tick++ % every == 0)
+                        {
+                            FireResult r = marker.TryFire(t);
+                            if (reloadStart < 0f && marker.State == MarkerState.Reloading) reloadStart = t;
+                            Check.IsTrue(r.Status != FireStatus.Fired || marker.AmmoInReserve < specs.ReserveAmmo, $"{mode}/{every}: kein Schuss aus leerem Magazin");
+                        }
+                        t += dt;
+                    }
+                    Check.IsTrue(reloadStart >= 0f, $"{mode}/{every}: Nachladen startet automatisch");
+                    Check.AreEqual(specs.MagazineSize, marker.AmmoInMagazine, $"{mode}/{every}: Magazin nach dem Nachladen voll");
+                    Check.AreClose(specs.ReloadSeconds, t - reloadStart, 2f * dt + 1e-3f, $"{mode}/{every}: fertig nach ReloadSeconds (war {t - reloadStart:0.00} s)");
+                }
+            }
         }
 
         private static void Marker_NoAmmoAndResupply()

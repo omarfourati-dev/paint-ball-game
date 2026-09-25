@@ -285,6 +285,8 @@ namespace Paintball.Net.Simulation
             MoveInput move = Movement.Sanitize(f.Move);
             p.Yaw = move.Yaw;
             p.Pitch = move.Pitch;
+            bool pressed = f.Fire && !p.FireWasDown;
+            p.FireWasDown = f.Fire;
             if (!f.Fire) p.TriggerArmed = true;   // Semi: Loslassen spannt den Abzug (auch tot/in der Pause)
             if (!running || !p.Alive) return;
 
@@ -306,14 +308,39 @@ namespace Paintball.Net.Simulation
                 Emit(new NoticeEvent { PlayerId = p.Id, Key = "notice.healed" });
             }
 
-            bool semi = p.Specs.FireMode == FireMode.Semi;
-            if (f.Fire && (!semi || p.TriggerArmed) && TryFire(p, f, move) && semi) p.TriggerArmed = false;
+            if (p.Specs.FireMode != FireMode.Semi)
+            {
+                if (f.Fire) TryFire(p, f, move);
+                return;
+            }
+
+            // Semi (E1): gespannter Abzug feuert bei gehaltenem Feuer, sobald die Waffe bereit ist. Ein kurzer Tipp
+            // während der Abklingzeit wird als PendingShot gepuffert – höchstens einer, verfällt beim Nachladen
+            // und nach PendingShotWindow.
+            if (p.PendingShot && (p.Marker.State == MarkerState.Reloading || Time - p.PendingShotSince > PendingShotWindow))
+                p.PendingShot = false;
+            if (!(f.Fire && p.TriggerArmed) && !p.PendingShot) return;
+
+            FireStatus status = TryFire(p, f, move);
+            if (status == FireStatus.Fired)
+            {
+                p.TriggerArmed = !f.Fire;   // noch gedrückt: erst Loslassen spannt wieder
+                p.PendingShot = false;
+            }
+            else if (status == FireStatus.OnCooldown && pressed && !p.PendingShot)
+            {
+                p.PendingShot = true;
+                p.PendingShotSince = Time;
+            }
         }
 
-        private bool TryFire(SimPlayer p, PlayerInputFrame f, MoveInput move)
+        /// <summary>Semi: so lange wartet ein gepufferter Druck höchstens auf die Waffe.</summary>
+        public const float PendingShotWindow = 0.5f;
+
+        private FireStatus TryFire(SimPlayer p, PlayerInputFrame f, MoveInput move)
         {
             FireResult result = p.Marker.TryFire(Time);
-            if (!result.Success) return false;
+            if (!result.Success) return result.Status;
 
             float aimYaw = f.AimYaw, aimPitch = f.AimPitch;
             if (!float.IsFinite(aimYaw) || !float.IsFinite(aimPitch)
@@ -359,7 +386,7 @@ namespace Paintball.Net.Simulation
             p.ShotsFired++;
             p.LastShotTime = Time;
             if (p.ProtectedUntil > Time) p.ProtectedUntil = Time; // Schießen beendet den Spawn-Schutz
-            return true;
+            return FireStatus.Fired;
         }
 
         private static Vector3[] Repeat(Vector3 dir, int count)
@@ -522,6 +549,7 @@ namespace Paintball.Net.Simulation
             PlaceAtSpawn(p);
             p.Hp.Revive();
             p.Marker = new MarkerStateMachine(p.Specs);
+            p.PendingShot = false;
             p.PowerUps = new ActivePowerUps();
             p.HealUsed = false;
             p.DashUntil = 0f;

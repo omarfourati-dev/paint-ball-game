@@ -197,7 +197,7 @@ namespace Paintball.Net.Rooms
                 Mmr = 800 + (int)(BotSkill * 400f),
                 Team = SmallerTeam(),
                 Marker = new[] { MarkerCatalog.Standard, MarkerCatalog.Rapid, MarkerCatalog.Precision, MarkerCatalog.Shotgun }[_botNameIndex % 4],
-                Paint = new[] { "#22d3ee", "#a3e635", "#fb923c", "#a855f7" }[_botNameIndex % 4],
+                Paint = new[] { "#22d3ee", "#a3e635", "#fb923c", "#a855f7" }[(_botNameIndex + _botNameIndex / 4) % 4],   // entkoppelt vom Marker: jede Farbe mit jedem Marker
                 Accent = "#f8fafc"
             };
             Members.Add(bot);

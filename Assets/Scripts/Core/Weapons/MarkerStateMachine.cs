@@ -73,8 +73,9 @@ namespace Paintball.Core.Weapons
             switch (State)
             {
                 case MarkerState.Reloading:
-                    // Schusswunsch bricht ein unterbrechbares Nachladen ab (FR-08).
-                    if (_specs.ReloadInterruptible)
+                    // Schusswunsch bricht ein unterbrechbares Nachladen ab (FR-08) – aber nur, wenn noch
+                    // Munition im Magazin ist. Sonst liefe das Nachladen bei gehaltenem Feuer nie durch.
+                    if (_specs.ReloadInterruptible && AmmoInMagazine > 0)
                     {
                         State = MarkerState.Ready;
                         goto case MarkerState.Ready;

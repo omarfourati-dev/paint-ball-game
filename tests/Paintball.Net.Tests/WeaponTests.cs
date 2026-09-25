@@ -29,6 +29,10 @@ namespace Paintball.Net.Tests
             r.Run("Waffen: Schrot auf 25 m – höchstens 2 Treffer", ShotgunBalancingLongRange);
             r.Run("Waffen: Schrot-Statistik bleibt gültig (Treffer ≤ Schüsse, Validierung ok)", ShotgunStatsStayValid);
             r.Run("Waffen: shot-Event trägt den Pellet-Index pi nur bei Schrot", ShotEventCarriesPelletIndex);
+            r.Run("Waffen: leeres Magazin – Nachladen läuft trotz gehaltenem/gepulstem Feuer durch (Auto und Semi)", ReloadCompletesWhileFiring);
+            r.Run("Waffen: Semi – kurzer Tipp während der Abklingzeit feuert genau einmal, sobald bereit", SemiTapDuringCooldownBuffered);
+            r.Run("Waffen: Semi – zwei Tipps während der Abklingzeit ergeben nur einen weiteren Schuss", SemiTwoTapsDuringCooldownFireOnce);
+            r.Run("Waffen: Semi – gepufferter Tipp verfällt nach mehr als 0,5 s Wartezeit", SemiBufferedTapExpires);
         }
 
         private static (GameMatch m, SimPlayer a, SimPlayer b) Duel(string marker, float distance, float spreadScale = 0f, int seed = 42)
@@ -173,6 +177,71 @@ namespace Paintball.Net.Tests
             Assert.AreEqual(6, st.ShotsFired, "jedes Pellet zählt als Schuss");
             Assert.IsTrue(st.Hits >= 5 && st.Hits <= st.ShotsFired, $"Treffer {st.Hits} ≤ Schüsse {st.ShotsFired}");
             Assert.IsTrue(MatchIntegrityValidator.Validate(st, 1.0).IsValid, "Match-Validierung akzeptiert Schrot (Belohnung bleibt)");
+        }
+
+        /// <summary>Spielt ein Feuer-Muster (true = gedrückt) Tick für Tick ab.</summary>
+        private static void Play(GameMatch m, SimPlayer a, IEnumerable<bool> pattern)
+        {
+            int seq = a.LastQueuedSeq + 1;
+            foreach (bool fire in pattern) { m.EnqueueInput(a.Id, Frame(a, seq++, fire)); m.Tick(); }
+        }
+
+        private static IEnumerable<bool> Ticks(int count, bool fire) => Enumerable.Repeat(fire, count);
+
+        private static void ReloadCompletesWhileFiring()
+        {
+            foreach (string marker in new[] { MarkerCatalog.Standard, MarkerCatalog.Shotgun })
+            {
+                foreach (bool pulse in new[] { false, true })
+                {
+                    var (m, a, _) = Duel(marker, 30f);
+                    a.Pitch = 0.3f;
+                    MarkerSpecs specs = a.Specs;
+                    for (int i = 0; i < 400 && a.Marker.AmmoInMagazine > 0; i++) Play(m, a, new[] { i % 2 == 0 });
+                    Assert.AreEqual(0, a.Marker.AmmoInMagazine, $"{marker}: Magazin leergeschossen");
+                    Play(m, a, Ticks(1, false));
+                    int ticks = (int)MathF.Ceiling((specs.ReloadSeconds + 0.3f) / GameMatch.TickDt);
+                    Play(m, a, Enumerable.Range(0, ticks).Select(i => !pulse || i % 2 == 0));
+                    Assert.AreEqual(specs.ReserveAmmo - specs.MagazineSize, a.Marker.AmmoInReserve,
+                        $"{marker} {(pulse ? "gepulst" : "gehalten")}: Nachladen nach {specs.ReloadSeconds} s abgeschlossen");
+                }
+            }
+        }
+
+        private static void SemiTapDuringCooldownBuffered()
+        {
+            var (m, a, _) = Duel(MarkerCatalog.Shotgun, 30f);   // Abklingzeit 0,83 s
+            a.Pitch = 0.3f;
+            Play(m, a, Ticks(1, true));
+            Play(m, a, Ticks(14, false));                   // ~0,47 s nach dem Schuss
+            Play(m, a, Ticks(3, true));                     // kurzer Tipp (100 ms), noch in der Abklingzeit
+            Assert.AreEqual(1, a.ShotsFired, "Tipp in der Abklingzeit feuert noch nicht");
+            Play(m, a, Ticks(40, false));
+            Assert.AreEqual(2, a.ShotsFired, "gepufferter Tipp feuert genau einmal, sobald bereit");
+        }
+
+        private static void SemiTwoTapsDuringCooldownFireOnce()
+        {
+            var (m, a, _) = Duel(MarkerCatalog.Shotgun, 30f);
+            a.Pitch = 0.3f;
+            Play(m, a, Ticks(1, true));
+            Play(m, a, Ticks(11, false));
+            Play(m, a, Ticks(3, true));
+            Play(m, a, Ticks(3, false));
+            Play(m, a, Ticks(3, true));
+            Play(m, a, Ticks(40, false));
+            Assert.AreEqual(2, a.ShotsFired, "höchstens ein gepufferter Schuss");
+        }
+
+        private static void SemiBufferedTapExpires()
+        {
+            var (m, a, _) = Duel(MarkerCatalog.Shotgun, 30f);
+            a.Pitch = 0.3f;
+            Play(m, a, Ticks(1, true));
+            Play(m, a, Ticks(2, false));
+            Play(m, a, Ticks(3, true));                     // Tipp direkt nach dem Schuss: ~0,75 s bis bereit
+            Play(m, a, Ticks(40, false));
+            Assert.AreEqual(1, a.ShotsFired, "zu früher Tipp verfällt statt verspätet zu feuern");
         }
 
         private static void ShotEventCarriesPelletIndex()
