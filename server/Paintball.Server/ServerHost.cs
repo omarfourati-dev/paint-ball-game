@@ -47,6 +47,16 @@ namespace Paintball.Server
         public List<string> AllowedOrigins = new();
         public ServerOptions Game = new();
         public bool RunGameLoop = true;
+        /// <summary>Aktiviert /api/auth/dev (nur Tests und lokale Entwicklung).</summary>
+        public bool DevLogin;
+        /// <summary>Postgres-URL; leer = In-Memory (Warnung im Log).</summary>
+        public string DatabaseUrl;
+        /// <summary>Öffentliche Basis-URL für OAuth-Redirects, z. B. https://paint-ball-game.omarfourati.de.</summary>
+        public string PublicUrl;
+        public string GoogleClientId;
+        public string GoogleClientSecret;
+        /// <summary>Überschreibbar für Tests (Task 6).</summary>
+        public IGoogleOAuthClient Google;
     }
 
     /// <summary>
@@ -92,11 +102,26 @@ namespace Paintball.Server
             });
             builder.Services.Configure<BrotliCompressionProviderOptions>(o => o.Level = CompressionLevel.Optimal);
 
-            // ÜBERGANG bis Task 5: In-Memory-Repository, Task 5 verdrahtet Postgres.
-            var accounts = new AccountStore(new InMemoryPlayerRepository());
+            IPlayerRepository repo;
+            if (string.IsNullOrWhiteSpace(options.DatabaseUrl))
+            {
+                Console.Error.WriteLine("[DB] DATABASE_URL nicht gesetzt – Konten nur im Arbeitsspeicher (gehen beim Neustart verloren)");
+                repo = new InMemoryPlayerRepository();
+            }
+            else
+            {
+                var pg = new PostgresPlayerRepository(options.DatabaseUrl);
+                pg.EnsureSchema();
+                repo = pg;
+            }
+            var accounts = new AccountStore(repo);
             var game = new GameServer(options.Game, accounts);
             builder.Services.AddSingleton(game);
-            if (options.RunGameLoop) builder.Services.AddHostedService(_ => new GameLoopService(game));
+            if (options.RunGameLoop)
+            {
+                builder.Services.AddHostedService(_ => new GameLoopService(game));
+                builder.Services.AddHostedService(_ => new SessionCleanupService(accounts));
+            }
 
             WebApplication app = builder.Build();
 
@@ -139,12 +164,16 @@ namespace Paintball.Server
             {
                 if (!ctx.WebSockets.IsWebSocketRequest) { ctx.Response.StatusCode = 400; return; }
                 if (!OriginAllowed(ctx, options)) { ctx.Response.StatusCode = 403; return; }
+                string playerId = accounts.PlayerIdForSession(AuthApi.SessionToken(ctx));
+                if (playerId == null) { ctx.Response.StatusCode = 401; return; }
+                if (accounts.NeedsName(playerId)) { ctx.Response.StatusCode = 403; return; }
                 using WebSocket socket = await ctx.WebSockets.AcceptWebSocketAsync();
                 var connection = new WsConnection(socket, game.Options.MaxMessageBytes);
-                await connection.RunAsync(game, ctx.Connection.RemoteIpAddress?.ToString(), ctx.RequestAborted);
+                await connection.RunAsync(game, ctx.Connection.RemoteIpAddress?.ToString(), playerId, ctx.RequestAborted);
             });
 
             MapApi(app, game, accounts);
+            AuthApi.Map(app, game, accounts, options);
 
             if (Directory.Exists(webRoot))
             {
@@ -214,25 +243,39 @@ namespace Paintball.Server
         {
             DateTime startedAt = DateTime.UtcNow;
 
-            app.MapGet("/api/health", () => Results.Json(new
+            app.MapGet("/api/health", () =>
             {
-                status = "ok",
-                version = Version,
-                protocol = ProtocolVersion,
-                uptimeSeconds = (int)(DateTime.UtcNow - startedAt).TotalSeconds,
-                sessions = game.SessionCount,
-                rooms = game.Rooms.Count,
-                matches = game.Rooms.Count(r => r.State == RoomState.Match),
-                accounts = accounts.Count,
-                tickMs = Math.Round(game.Metrics.LastTickMs, 3),
-                maxTickMs = Math.Round(game.Metrics.MaxTickMs, 3),
-                metrics = new
+                try
                 {
-                    game.Metrics.MessagesIn, game.Metrics.MessagesRejected, game.Metrics.Logins,
-                    game.Metrics.MatchesStarted, game.Metrics.MatchesFinished, game.Metrics.Reconnects,
-                    game.Metrics.AfkKicks, game.Metrics.FloodKicks
+                    int count = accounts.Count; // fragt die Datenbank ab, wirft bei DB-Fehler
+                    return Results.Json(new
+                    {
+                        status = "ok",
+                        version = Version,
+                        protocol = ProtocolVersion,
+                        uptimeSeconds = (int)(DateTime.UtcNow - startedAt).TotalSeconds,
+                        sessions = game.SessionCount,
+                        rooms = game.Rooms.Count,
+                        matches = game.Rooms.Count(r => r.State == RoomState.Match),
+                        accounts = count,
+                        db = count >= 0 ? "ok" : "error",
+                        tickMs = Math.Round(game.Metrics.LastTickMs, 3),
+                        maxTickMs = Math.Round(game.Metrics.MaxTickMs, 3),
+                        metrics = new
+                        {
+                            game.Metrics.MessagesIn, game.Metrics.MessagesRejected, game.Metrics.Logins,
+                            game.Metrics.MatchesStarted, game.Metrics.MatchesFinished, game.Metrics.Reconnects,
+                            game.Metrics.AfkKicks, game.Metrics.FloodKicks
+                        }
+                    });
                 }
-            }));
+                catch (Exception ex)
+                {
+                    // Nur den Typ loggen: Npgsql-Meldungen können Host/Benutzer enthalten.
+                    Console.Error.WriteLine("[Health] Datenbank nicht erreichbar: " + ex.GetType().Name);
+                    return Results.Json(new { status = "degraded", db = "error" }, statusCode: 503);
+                }
+            });
 
             app.MapGet("/api/maps", () => Results.Text(MapsJson(), "application/json"));
             app.MapGet("/api/config", () => Results.Json(new
@@ -253,17 +296,7 @@ namespace Paintball.Server
                 int top = int.TryParse(req.Query["top"], out int t) ? Math.Clamp(t, 1, 100) : 50;
                 return Results.Json(accounts.Leaderboard(top).Select(r => new { r.Rank, r.Name, r.Mmr, r.Level, r.League, r.Division }));
             });
-
-            // DSGVO (NFR-12): Auskunft und Löschung.
-            // ÜBERGANG bis Task 5: vorübergehend 501, Task 5 authentifiziert über das Session-Cookie.
-            app.MapGet("/api/me/export", () => Results.StatusCode(501));
-            app.MapDelete("/api/me", () => Results.StatusCode(501));
-        }
-
-        private static string BearerToken(HttpRequest req)
-        {
-            string auth = req.Headers.Authorization.ToString();
-            return auth.StartsWith("Bearer ", StringComparison.Ordinal) ? auth.Substring(7).Trim() : null;
+            // DSGVO (NFR-12): Auskunft und Löschung über das Session-Cookie → AuthApi.
         }
 
         /// <summary>Kartengeometrie aus dem Core-MapCatalog – eine Quelle für Server und Client.</summary>
@@ -353,6 +386,31 @@ namespace Paintball.Server
         }
     }
 
+    /// <summary>Räumt abgelaufene Sessions auf: beim Start und danach stündlich.</summary>
+    internal sealed class SessionCleanupService : BackgroundService
+    {
+        private readonly AccountStore _accounts;
+        public SessionCleanupService(AccountStore accounts) { _accounts = accounts; }
+
+        protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+        {
+            await Task.Yield(); // Start des Hosts nicht durch den ersten DB-Zugriff blockieren
+            using var timer = new PeriodicTimer(TimeSpan.FromHours(1));
+            do
+            {
+                try { _accounts.CleanupSessions(); }
+                catch (Exception ex) { Console.Error.WriteLine("[Sessions] Aufräumen fehlgeschlagen: " + ex.GetType().Name); }
+            }
+            while (await WaitAsync(timer, stoppingToken));
+        }
+
+        private static async Task<bool> WaitAsync(PeriodicTimer timer, CancellationToken ct)
+        {
+            try { return await timer.WaitForNextTickAsync(ct); }
+            catch (OperationCanceledException) { return false; }
+        }
+    }
+
     /// <summary>WebSocket-Verbindung ↔ GameServer-Session. Senden entkoppelt über begrenzten Kanal.</summary>
     internal sealed class WsConnection : IClientSink
     {
@@ -379,14 +437,9 @@ namespace Paintball.Server
             _outbox.Writer.TryComplete();
         }
 
-        public async Task RunAsync(GameServer game, string remote, CancellationToken ct)
+        public async Task RunAsync(GameServer game, string remote, string playerId, CancellationToken ct)
         {
-            // ÜBERGANG (Task 5 ersetzt das durch das Session-Cookie)
-            SignInResult signIn = game.Accounts.SignIn("ws-temp:" + Guid.NewGuid().ToString("N"), "");
-            string name = "Spieler-" + Random.Shared.Next(1000, 10000);
-            if (game.Accounts.SetName(signIn.PlayerId, name) == NameResult.Taken)
-                game.Accounts.SetName(signIn.PlayerId, "Spieler-" + Random.Shared.Next(1000, 10000));
-            Session session = game.Connect(this, remote, signIn.PlayerId);
+            Session session = game.Connect(this, remote, playerId);
             Task writer = WriteLoop(ct);
             var buffer = new byte[4096];
             var message = new MemoryStream();

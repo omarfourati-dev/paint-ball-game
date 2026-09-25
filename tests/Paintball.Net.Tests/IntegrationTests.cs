@@ -26,8 +26,7 @@ namespace Paintball.Net.Tests
             r.RunAsync("HTTPS: Kartendaten aus Core-MapCatalog für den Client (FR-53)", MapsApi);
             r.RunAsync("WSS: Fremde Origin wird abgewiesen (CSWSH-Schutz)", ForeignOriginRejected);
             r.RunAsync("HTTP: Weiterleitung auf HTTPS (NFR-11)", HttpRedirectsToHttps);
-            // ÜBERGANG bis Task 5: Endpunkte antworten vorübergehend 501, Test kommt mit Session-Cookie zurück.
-            // r.RunAsync("DSGVO: Export und Löschung per Bearer-Token (NFR-12)", GdprEndpoints);
+            r.RunAsync("DSGVO: Export und Löschung per Session-Cookie (NFR-12)", GdprEndpoints);
             r.RunAsync("WSS: Übergroße Nachricht wird abgelehnt, Verbindung bleibt (NFR-10)", OversizeMessage);
             r.RunAsync("Web: Client-Dateien werden ausgeliefert und komprimiert (PA-03)", ServesClient);
             r.RunAsync("Web: 3D-Modelle (glTF/bin) und HDRI werden mit korrektem Typ ausgeliefert", ServesModels);
@@ -38,6 +37,11 @@ namespace Paintball.Net.Tests
             r.RunAsync("Proxy: Ohne Forwarded-Proto Weiterleitung auf HTTPS ohne internen Port", ProxyRedirectsWithoutPort);
             r.RunAsync("Proxy: WebSocket über den Proxy mit gleicher Origin", ProxyWebSocket);
             r.RunAsync("Proxy: Container-Healthcheck erreicht /api/health ohne Proxy-Header", ProxyHealthWithoutForwarding);
+            r.RunAsync("Auth: Dev-Login nur mit Flag, Cookie HttpOnly/Secure/SameSite=Lax", DevLoginCookie);
+            r.RunAsync("Auth: /api/me 401 ohne Session, needsName nach erstem Login, Namenswahl mit taken/invalid", MeAndName);
+            r.RunAsync("Auth: /ws ohne Cookie 401, ohne Namen 403", WsRequiresSession);
+            r.RunAsync("Auth: Abmelden macht Session ungültig", Logout);
+            r.RunAsync("Auth: POST ohne gleiche Origin wird abgelehnt", CsrfOrigin);
         }
 
         private static string HarnessWebRoot;
@@ -49,7 +53,7 @@ namespace Paintball.Net.Tests
             public int HttpPort;
             public HttpClient Http;
 
-            public static async Task<Harness> StartAsync()
+            public static async Task<Harness> StartAsync(bool devLogin = true)
             {
                 string web = AccountTests.TempDir();
                 HarnessWebRoot = web;
@@ -64,6 +68,7 @@ namespace Paintball.Net.Tests
                     HttpPort = 0,
                     DataDirectory = AccountTests.TempDir(),
                     WebRoot = web,
+                    DevLogin = devLogin,
                     Game = new Paintball.Net.Rooms.ServerOptions { LobbyCountdownSeconds = 0.5f }
                 };
                 WebApplication app = ServerHost.Build(Array.Empty<string>(), options);
@@ -76,16 +81,36 @@ namespace Paintball.Net.Tests
                 {
                     ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator,
                     AllowAutoRedirect = false,
+                    UseCookies = false,
                     AutomaticDecompression = DecompressionMethods.None
                 }) { BaseAddress = new Uri($"https://localhost:{h.HttpsPort}") };
                 return h;
             }
 
-            public async Task<ClientWebSocket> ConnectAsync(string origin = null)
+            /// <summary>Meldet sich per Dev-Login an und gibt den Cookie-Header "pb_session=…" zurück.</summary>
+            public async Task<string> LoginAsync(string name)
+            {
+                HttpResponseMessage res = await Http.GetAsync("/api/auth/dev?name=" + Uri.EscapeDataString(name));
+                Assert.AreEqual(HttpStatusCode.Found, res.StatusCode, "Dev-Login leitet weiter");
+                string set = res.Headers.GetValues("Set-Cookie").First(v => v.StartsWith("pb_session=", StringComparison.Ordinal));
+                return set.Substring(0, set.IndexOf(';'));
+            }
+
+            public HttpRequestMessage Req(HttpMethod m, string path, string cookie, string json = null)
+            {
+                var req = new HttpRequestMessage(m, path);
+                if (cookie != null) req.Headers.Add("Cookie", cookie);
+                req.Headers.Add("Origin", $"https://localhost:{HttpsPort}");
+                if (json != null) req.Content = new StringContent(json, Encoding.UTF8, "application/json");
+                return req;
+            }
+
+            public async Task<ClientWebSocket> ConnectAsync(string origin = null, string cookie = null)
             {
                 var ws = new ClientWebSocket();
                 ws.Options.RemoteCertificateValidationCallback = (_, _, _, _) => true; // Entwicklerzertifikat
                 if (origin != null) ws.Options.SetRequestHeader("Origin", origin);
+                if (cookie != null) ws.Options.SetRequestHeader("Cookie", cookie);
                 await ws.ConnectAsync(new Uri($"wss://localhost:{HttpsPort}/ws"), CancellationToken.None);
                 return ws;
             }
@@ -122,9 +147,9 @@ namespace Paintball.Net.Tests
         private static async Task WssEndToEnd()
         {
             await using Harness h = await Harness.StartAsync();
-            using ClientWebSocket ws = await h.ConnectAsync($"https://localhost:{h.HttpsPort}");
-            // ÜBERGANG bis Task 5: hello meldet keinen eigenen Namen mehr an, das Konto kommt aus dem WsConnection-Übergang.
-            await SendAsync(ws, new { t = "hello", name = "Integration", input = "kbm", crossPlay = true });
+            string cookie = await h.LoginAsync("Integration");
+            using ClientWebSocket ws = await h.ConnectAsync($"https://localhost:{h.HttpsPort}", cookie);
+            await SendAsync(ws, new { t = "hello", input = "kbm", crossPlay = true });
             JsonElement welcome = await ReceiveUntil(ws, "welcome");
             Assert.IsFalse(string.IsNullOrEmpty(welcome.GetProperty("account").GetString()), "Konto über WSS erhalten (Google-Login)");
 
@@ -187,7 +212,8 @@ namespace Paintball.Net.Tests
         {
             await using Harness h = await Harness.StartAsync();
             bool rejected = false;
-            try { using ClientWebSocket ws = await h.ConnectAsync("https://evil.example"); }
+            string cookie = await h.LoginAsync("Fremd");
+            try { using ClientWebSocket ws = await h.ConnectAsync("https://evil.example", cookie); }
             catch (WebSocketException) { rejected = true; }
             Assert.IsTrue(rejected, "Fremde Origin abgewiesen");
         }
@@ -204,32 +230,24 @@ namespace Paintball.Net.Tests
         private static async Task GdprEndpoints()
         {
             await using Harness h = await Harness.StartAsync();
-            using ClientWebSocket ws = await h.ConnectAsync();
-            await SendAsync(ws, new { t = "hello", name = "Datenschutz" });
-            string token = (await ReceiveUntil(ws, "welcome")).GetProperty("token").GetString();
+            string cookie = await h.LoginAsync("Datenschutz");
 
-            var req = new HttpRequestMessage(HttpMethod.Get, "/api/me/export");
-            req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
-            HttpResponseMessage export = await h.Http.SendAsync(req);
+            HttpResponseMessage export = await h.Http.SendAsync(h.Req(HttpMethod.Get, "/api/me/export", cookie));
             Assert.AreEqual(HttpStatusCode.OK, export.StatusCode, "Export erlaubt");
             Assert.IsTrue((await export.Content.ReadAsStringAsync()).Contains("Datenschutz"), "Daten enthalten");
 
-            Assert.AreEqual(HttpStatusCode.Unauthorized, (await h.Http.GetAsync("/api/me/export")).StatusCode, "Ohne Token kein Zugriff");
+            Assert.AreEqual(HttpStatusCode.Unauthorized, (await h.Http.GetAsync("/api/me/export")).StatusCode, "Ohne Session kein Zugriff");
 
-            var del = new HttpRequestMessage(HttpMethod.Delete, "/api/me");
-            del.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
-            Assert.AreEqual(HttpStatusCode.NoContent, (await h.Http.SendAsync(del)).StatusCode, "Gelöscht");
-
-            var again = new HttpRequestMessage(HttpMethod.Get, "/api/me/export");
-            again.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
-            Assert.AreEqual(HttpStatusCode.Unauthorized, (await h.Http.SendAsync(again)).StatusCode, "Token nach Löschung ungültig");
+            Assert.AreEqual(HttpStatusCode.NoContent, (await h.Http.SendAsync(h.Req(HttpMethod.Delete, "/api/me", cookie))).StatusCode, "Gelöscht");
+            Assert.AreEqual(HttpStatusCode.Unauthorized, (await h.Http.SendAsync(h.Req(HttpMethod.Get, "/api/me/export", cookie))).StatusCode, "Session nach Löschung ungültig");
         }
 
         private static async Task OversizeMessage()
         {
             await using Harness h = await Harness.StartAsync();
-            using ClientWebSocket ws = await h.ConnectAsync();
-            await SendAsync(ws, new { t = "hello", name = "Groß" });
+            string cookie = await h.LoginAsync("Gross");
+            using ClientWebSocket ws = await h.ConnectAsync(cookie: cookie);
+            await SendAsync(ws, new { t = "hello" });
             await ReceiveUntil(ws, "welcome");
             await ws.SendAsync(Encoding.UTF8.GetBytes("{\"t\":\"ping\",\"x\":\"" + new string('a', 100000) + "\"}"), WebSocketMessageType.Text, true, CancellationToken.None);
             JsonElement err = await ReceiveUntil(ws, "error");
@@ -288,6 +306,7 @@ namespace Paintball.Net.Tests
             {
                 BehindProxy = true,
                 HttpPort = 0,
+                DevLogin = true,
                 DataDirectory = AccountTests.TempDir(),
                 WebRoot = AccountTests.TempDir(),
                 Game = new Paintball.Net.Rooms.ServerOptions { LobbyCountdownSeconds = 0.5f }
@@ -346,15 +365,91 @@ namespace Paintball.Net.Tests
             var (app, port) = await StartProxyModeAsync();
             try
             {
+                using var http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false });
+                var login = new HttpRequestMessage(HttpMethod.Get, $"http://localhost:{port}/api/auth/dev?name=Proxy");
+                login.Headers.Add("X-Forwarded-Proto", "https");
+                HttpResponseMessage res = await http.SendAsync(login);
+                Assert.AreEqual(HttpStatusCode.Found, res.StatusCode, "Dev-Login über den Proxy");
+                string set = res.Headers.GetValues("Set-Cookie").First(v => v.StartsWith("pb_session=", StringComparison.Ordinal));
+
                 using var ws = new ClientWebSocket();
                 ws.Options.SetRequestHeader("Origin", $"https://localhost:{port}");
                 ws.Options.SetRequestHeader("X-Forwarded-Proto", "https");
+                ws.Options.SetRequestHeader("Cookie", set.Substring(0, set.IndexOf(';')));
                 await ws.ConnectAsync(new Uri($"ws://localhost:{port}/ws"), CancellationToken.None);
-                await SendAsync(ws, new { t = "hello", name = "Proxy" });
+                await SendAsync(ws, new { t = "hello" });
                 Assert.IsFalse(string.IsNullOrEmpty((await ReceiveUntil(ws, "welcome")).GetProperty("account").GetString()), "Login über den Proxy");
                 await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "bye", CancellationToken.None);
             }
             finally { await app.StopAsync(); await app.DisposeAsync(); }
+        }
+
+        private static async Task DevLoginCookie()
+        {
+            await using Harness h = await Harness.StartAsync();
+            HttpResponseMessage res = await h.Http.GetAsync("/api/auth/dev?name=Tester");
+            string set = res.Headers.GetValues("Set-Cookie").First(v => v.StartsWith("pb_session="));
+            string lower = set.ToLowerInvariant();
+            Assert.IsTrue(lower.Contains("httponly") && lower.Contains("secure") && lower.Contains("samesite=lax") && lower.Contains("path=/"), "Cookie-Attribute");
+            Assert.AreEqual("/play", res.Headers.Location.OriginalString, "zurück ins Spiel");
+
+            await using Harness prod = await Harness.StartAsync(devLogin: false);
+            Assert.AreEqual(HttpStatusCode.NotFound, (await prod.Http.GetAsync("/api/auth/dev?name=X")).StatusCode, "ohne Flag 404");
+        }
+
+        private static async Task MeAndName()
+        {
+            await using Harness h = await Harness.StartAsync();
+            Assert.AreEqual(HttpStatusCode.Unauthorized, (await h.Http.GetAsync("/api/me")).StatusCode, "ohne Session 401");
+            string cookie = await h.LoginAsync("");                      // Dev-Login ohne Namen → needsName
+            JsonElement me = JsonDocument.Parse(await (await h.Http.SendAsync(h.Req(HttpMethod.Get, "/api/me", cookie))).Content.ReadAsStringAsync()).RootElement;
+            Assert.IsTrue(me.GetProperty("needsName").GetBoolean(), "braucht Namen");
+
+            HttpResponseMessage bad = await h.Http.SendAsync(h.Req(HttpMethod.Post, "/api/me/name", cookie, "{\"name\":\"x\"}"));
+            Assert.AreEqual(HttpStatusCode.BadRequest, bad.StatusCode, "ungültig");
+            HttpResponseMessage ok = await h.Http.SendAsync(h.Req(HttpMethod.Post, "/api/me/name", cookie, "{\"name\":\"Kira\"}"));
+            Assert.AreEqual(HttpStatusCode.OK, ok.StatusCode, "gesetzt");
+
+            string other = await h.LoginAsync("");
+            HttpResponseMessage taken = await h.Http.SendAsync(h.Req(HttpMethod.Post, "/api/me/name", other, "{\"name\":\"KIRA\"}"));
+            Assert.AreEqual(HttpStatusCode.Conflict, taken.StatusCode, "vergeben");
+            Assert.IsTrue((await taken.Content.ReadAsStringAsync()).Contains("taken"), "Fehlercode taken");
+        }
+
+        private static async Task WsRequiresSession()
+        {
+            await using Harness h = await Harness.StartAsync();
+            bool rejected = false;
+            try { using ClientWebSocket ws = await h.ConnectAsync($"https://localhost:{h.HttpsPort}"); }
+            catch (WebSocketException) { rejected = true; }
+            Assert.IsTrue(rejected, "ohne Cookie abgelehnt");
+
+            string noName = await h.LoginAsync("");
+            var probe = new ClientWebSocket();
+            probe.Options.RemoteCertificateValidationCallback = (_, _, _, _) => true;
+            probe.Options.SetRequestHeader("Cookie", noName);
+            probe.Options.CollectHttpResponseDetails = true;
+            try { await probe.ConnectAsync(new Uri($"wss://localhost:{h.HttpsPort}/ws"), CancellationToken.None); } catch (WebSocketException) { }
+            Assert.AreEqual(HttpStatusCode.Forbidden, probe.HttpStatusCode, "ohne Namen 403");
+        }
+
+        private static async Task Logout()
+        {
+            await using Harness h = await Harness.StartAsync();
+            string cookie = await h.LoginAsync("Lou");
+            Assert.AreEqual(HttpStatusCode.NoContent, (await h.Http.SendAsync(h.Req(HttpMethod.Post, "/api/auth/logout", cookie))).StatusCode, "abgemeldet");
+            Assert.AreEqual(HttpStatusCode.Unauthorized, (await h.Http.SendAsync(h.Req(HttpMethod.Get, "/api/me", cookie))).StatusCode, "Session ungültig");
+        }
+
+        private static async Task CsrfOrigin()
+        {
+            await using Harness h = await Harness.StartAsync();
+            string cookie = await h.LoginAsync("Cleo");
+            HttpRequestMessage req = h.Req(HttpMethod.Delete, "/api/me", cookie);
+            req.Headers.Remove("Origin");
+            req.Headers.Add("Origin", "https://evil.example");
+            Assert.AreEqual(HttpStatusCode.Forbidden, (await h.Http.SendAsync(req)).StatusCode, "fremde Origin");
+            Assert.AreEqual(HttpStatusCode.OK, (await h.Http.SendAsync(h.Req(HttpMethod.Get, "/api/me", cookie))).StatusCode, "Konto noch da");
         }
     }
 }
