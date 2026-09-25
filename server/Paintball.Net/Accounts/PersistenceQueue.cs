@@ -21,7 +21,11 @@ namespace Paintball.Net.Accounts
     public sealed class PersistenceQueue : IAsyncDisposable
     {
         private static readonly int[] DefaultRetryDelaysMs = { 500, 2000, 5000 };
-        private static readonly TimeSpan DisposeFlushTimeout = TimeSpan.FromSeconds(10);
+        /// <summary>Zeitbudget von DisposeAsync für das Wegschreiben (Tests setzen es kürzer).</summary>
+        internal TimeSpan DisposeFlushTimeout { get; set; } = TimeSpan.FromSeconds(10);
+
+        /// <summary>Beim Herunterfahren verworfene Aufträge (auch in <see cref="Failures"/> enthalten).</summary>
+        internal int DroppedOnShutdown => Volatile.Read(ref _droppedOnShutdown);
 
         private sealed class Job
         {
@@ -155,18 +159,33 @@ namespace Paintball.Net.Accounts
             catch (TimeoutException) { }
         }
 
-        /// <summary>Flush (höchstens 10 s), Channel schließen, Rest verwerfen und auf den Worker warten. Mehrfacher Aufruf ist harmlos.</summary>
+        /// <summary>
+        /// Schreibt alles Offene weg (Budget <see cref="DisposeFlushTimeout"/>, Standard 10 s), schließt dann den Channel und wartet
+        /// auf den Worker. Während des Budgets werden weiter Aufträge angenommen und mitgeschrieben; geschlossen wird atomar in dem
+        /// Moment, in dem nichts mehr offen ist. Nur wenn das Budget abläuft, wird der Rest verworfen (gezählt in <see cref="Failures"/>).
+        /// Mehrfacher Aufruf ist harmlos.
+        /// </summary>
         public async ValueTask DisposeAsync()
         {
             if (Interlocked.Exchange(ref _disposeStarted, 1) == 1) { await _worker.ConfigureAwait(false); return; }
             if (_inline) return;
-            await FlushAsync(DisposeFlushTimeout).ConfigureAwait(false);
+            var clock = System.Diagnostics.Stopwatch.StartNew();   // monoton, unabhängig von Uhrzeit-Sprüngen
             bool abort;
-            lock (_gate)
+            while (true)
             {
-                _closed = true;
-                _channel.Writer.TryComplete();
-                abort = _pending > 0;
+                TimeSpan remaining = DisposeFlushTimeout - clock.Elapsed;
+                if (remaining > TimeSpan.Zero) await FlushAsync(remaining).ConfigureAwait(false);
+                lock (_gate)
+                {
+                    // Schließen nur, wenn wirklich nichts offen ist oder das Budget verbraucht ist – sonst weiter flushen.
+                    if (_pending == 0 || clock.Elapsed >= DisposeFlushTimeout)
+                    {
+                        _closed = true;
+                        _channel.Writer.TryComplete();
+                        abort = _pending > 0;
+                        break;
+                    }
+                }
             }
             if (abort) _abort.Cancel();   // außerhalb von _gate: Abbruch-Callbacks laufen synchron
             await _worker.ConfigureAwait(false);
@@ -236,9 +255,9 @@ namespace Paintball.Net.Accounts
             while (_flushWaiters.Count > 0 && _flushWaiters.Peek().Target <= job.Seq) _flushWaiters.Dequeue().Done.TrySetResult();
         }
 
-        private bool StillWanted(Job job)
+        private bool StillWanted(Job job)   // nur Forget; Abbruch prüft der Aufrufer getrennt, weil er als Verlust zählt
         {
-            lock (_gate) return !_abort.IsCancellationRequested && _players.TryGetValue(job.PlayerId, out PlayerState s) && s.Epoch == job.Epoch;
+            lock (_gate) return _players.TryGetValue(job.PlayerId, out PlayerState s) && s.Epoch == job.Epoch;
         }
 
         private async Task ExecuteWithRetryAsync(Job job, Action write)
@@ -256,7 +275,8 @@ namespace Paintball.Net.Accounts
                 }
                 try { await Task.Delay(_retryDelaysMs[attempt], _abort.Token).ConfigureAwait(false); }
                 catch (OperationCanceledException) { CountShutdownDrop(); return; }
-                if (!StillWanted(job)) return;   // inzwischen vergessen (Konto gelöscht) oder Herunterfahren
+                if (_abort.IsCancellationRequested) { CountShutdownDrop(); return; }   // Herunterfahren: Verlust, nie stumm
+                if (!StillWanted(job)) return;   // inzwischen vergessen (Konto gelöscht): gewollt, kein Fehler
             }
         }
 
@@ -270,9 +290,16 @@ namespace Paintball.Net.Accounts
             }
         }
 
-        /// <summary>Nach DisposeAsync: synchron schreiben, Fehler zählen, aber nicht werfen (Aufrufer erwarten Hintergrund-Semantik).</summary>
+        /// <summary>
+        /// Nach DisposeAsync: synchron schreiben, Fehler zählen, aber nicht werfen (Aufrufer erwarten Hintergrund-Semantik).
+        /// Wartet vorher auf den Worker, damit kein Schreibaufruf neben einem noch laufenden Worker-Aufruf liegt (Reihenfolge pro Spieler).
+        /// </summary>
         private void ExecuteAfterClose(Action write)
         {
+            if (!_worker.IsCompleted)
+            {
+                try { _worker.Wait(); } catch (AggregateException) { }   // Worker fängt selbst alles; nur zur Sicherheit
+            }
             try { write(); }
             catch (Exception ex) { RecordFailure("[Persistenz] Schreibauftrag nach dem Herunterfahren fehlgeschlagen: ", ex); }
         }

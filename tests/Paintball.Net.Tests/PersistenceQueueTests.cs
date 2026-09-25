@@ -28,6 +28,9 @@ namespace Paintball.Net.Tests
             r.Run("Queue: Inline gibt Fehler weiter", InlineRethrows);
             r.RunAsync("Queue: DisposeAsync schreibt Offenes weg", DisposeFlushes);
             r.RunAsync("Queue: nach DisposeAsync wird synchron geschrieben", EnqueueAfterDispose);
+            r.RunAsync("Queue: während DisposeAsync eingereihte Aufträge werden noch geschrieben", EnqueueDuringDispose);
+            r.RunAsync("Queue: DisposeAsync verwirft nach Zeitlimit den Rest und zählt ihn", DisposeTimeoutDrops);
+            r.RunAsync("Queue: Abbruch während einer Wiederholung zählt als Verlust", AbortDuringRetryCounted);
         }
 
         private static PlayerRecord Snap(string id, int xp) => new PlayerRecord { Id = id, Xp = xp };
@@ -35,16 +38,17 @@ namespace Paintball.Net.Tests
 
         private static async Task Coalesces()
         {
-            var repo = new RecordingRepository { DelayMs = 200 };
+            var repo = RecordingRepository.Paused();
             await using var q = PersistenceQueue.Background(repo, FastRetry);
             q.EnqueueSave(Snap("p", 1));
-            await Task.Delay(50);                       // #1 läuft jetzt
+            repo.WaitUntilFirstCallBlocks();            // #1 läuft jetzt
             q.EnqueueSave(Snap("p", 2));
             q.EnqueueSave(Snap("p", 3));
             q.EnqueueSave(Snap("p", 4));
+            repo.Release();
             await q.FlushAsync(FlushTimeout);
             var saves = repo.CallsFor("p").Where(c => c.Op == "save").ToList();
-            Assert.IsTrue(saves.Count <= 2, $"höchstens 2 SaveProgress, tatsächlich {saves.Count}");
+            Assert.AreEqual(2, saves.Count, "genau 2 SaveProgress (#1 und zusammengefasst #2 bis #4)");
             Assert.AreEqual(4, saves.Last().Xp, "der letzte Save trägt den neuesten Stand");
         }
 
@@ -61,14 +65,15 @@ namespace Paintball.Net.Tests
 
         private static async Task SaveMatchSaveOrder()
         {
-            var repo = new RecordingRepository { DelayMs = 100 };
+            var repo = RecordingRepository.Paused();
             await using var q = PersistenceQueue.Background(repo, FastRetry);
-            q.EnqueueSave(Snap("a", 1));                // hält den Worker beschäftigt
-            await Task.Delay(30);
+            q.EnqueueSave(Snap("a", 1));                // hält den Worker fest
+            repo.WaitUntilFirstCallBlocks();
             q.EnqueueSave(Snap("p", 1));
             q.EnqueueMatch("p", Match());
             q.EnqueueSave(Snap("p", 2));
             q.EnqueueSave(Snap("p", 3));
+            repo.Release();
             await q.FlushAsync(FlushTimeout);
             string log = string.Join(",", repo.CallsFor("p").Select(c => c.Op == "save" ? "save" + c.Xp : c.Op));
             Assert.AreEqual("save1,match,save3", log, "Save 2/3 dürfen nicht vor das Match rutschen");
@@ -101,14 +106,15 @@ namespace Paintball.Net.Tests
 
         private static async Task ForgetDropsPending()
         {
-            var repo = new RecordingRepository { DelayMs = 200 };
+            var repo = RecordingRepository.Paused();
             await using var q = PersistenceQueue.Background(repo, FastRetry);
             q.EnqueueSave(Snap("a", 1));
-            await Task.Delay(50);
+            repo.WaitUntilFirstCallBlocks();
             q.EnqueueSave(Snap("b", 1));
             q.EnqueueMatch("b", Match());
             q.Forget("b");
             Assert.IsTrue(q.HasPending("b"), "Aufträge von B liegen noch in der Schlange (werden leer durchlaufen)");
+            repo.Release();
             await q.FlushAsync(FlushTimeout);
             Assert.AreEqual(0, repo.CallsFor("b").Count, "für B gibt es keinen Aufruf");
             Assert.AreEqual(1, repo.CallsFor("a").Count, "A wurde geschrieben");
@@ -118,13 +124,14 @@ namespace Paintball.Net.Tests
 
         private static async Task SaveAfterForgetIsWritten()
         {
-            var repo = new RecordingRepository { DelayMs = 100 };
+            var repo = RecordingRepository.Paused();
             await using var q = PersistenceQueue.Background(repo, FastRetry);
             q.EnqueueSave(Snap("a", 1));
-            await Task.Delay(30);
+            repo.WaitUntilFirstCallBlocks();
             q.EnqueueSave(Snap("b", 1));
             q.Forget("b");
             q.EnqueueSave(Snap("b", 9));                // noch während der alte Job in der Schlange steht
+            repo.Release();
             await q.FlushAsync(FlushTimeout);
             string log = string.Join(",", repo.CallsFor("b").Select(c => c.Op + c.Xp));
             Assert.AreEqual("save9", log, "nur der Save nach Forget wird geschrieben");
@@ -248,6 +255,60 @@ namespace Paintball.Net.Tests
             Assert.AreEqual(0, q.Pending, "nichts offen");
             await q.DisposeAsync();                     // zweiter Aufruf ist harmlos
         }
+
+        private static async Task EnqueueDuringDispose()
+        {
+            var repo = RecordingRepository.Paused();
+            repo.HoldPlayer("b");                       // B-Aufrufe hängen, bis wir sie freigeben
+            var q = PersistenceQueue.Background(repo, FastRetry);
+            q.EnqueueSave(Snap("a", 1));
+            repo.WaitUntilFirstCallBlocks();
+            Task dispose = q.DisposeAsync().AsTask();   // läuft bis zum Flush-Warten synchron
+            Assert.IsFalse(dispose.IsCompleted, "Dispose wartet auf den blockierten Auftrag");
+            q.EnqueueMatch("b", Match());               // Erzeuger arbeitet während des Herunterfahrens weiter
+            q.EnqueueSave(Snap("b", 2));
+            repo.Release();                             // A fertig: der erste Flush von Dispose ist erfüllt
+            repo.WaitUntilHeldPlayerBlocks();           // Worker steckt im Match von B, der Save von B ist noch offen
+            await Task.Delay(100);                      // Dispose hat Zeit, (fälschlich) abzubrechen
+            repo.ReleaseHeldPlayer();
+            await dispose;
+            Assert.AreEqual("match,save", string.Join(",", repo.CallsFor("b").Select(c => c.Op)), "B wurde in Reihenfolge geschrieben");
+            Assert.AreEqual(0, q.DroppedOnShutdown, "nichts verworfen");
+            Assert.AreEqual(0L, q.Failures, "keine Fehler");
+            Assert.AreEqual(0, q.Pending, "nichts offen");
+        }
+
+        private static async Task DisposeTimeoutDrops()
+        {
+            var repo = RecordingRepository.Paused();
+            var q = PersistenceQueue.Background(repo, FastRetry);
+            q.DisposeFlushTimeout = TimeSpan.FromMilliseconds(100);
+            q.EnqueueSave(Snap("a", 1));
+            repo.WaitUntilFirstCallBlocks();
+            q.EnqueueSave(Snap("b", 1));
+            Task dispose = q.DisposeAsync().AsTask();
+            await Task.Delay(300);                      // Zeitlimit ist abgelaufen, A hängt noch
+            Assert.IsFalse(dispose.IsCompleted, "Dispose wartet auf den laufenden Schreibaufruf");
+            repo.Release();
+            await dispose;
+            Assert.AreEqual(1, repo.CallsFor("a").Count, "laufender Aufruf durfte zu Ende laufen");
+            Assert.AreEqual(0, repo.CallsFor("b").Count, "B wurde verworfen");
+            Assert.AreEqual(1, q.DroppedOnShutdown, "ein verworfener Auftrag");
+            Assert.AreEqual(1L, q.Failures, "als Fehler gezählt");
+            Assert.AreEqual(0, q.Pending, "nichts offen");
+        }
+
+        private static async Task AbortDuringRetryCounted()
+        {
+            var repo = new RecordingRepository { FailTimes = 100 };
+            var q = PersistenceQueue.Background(repo, new[] { 5000, 5000, 5000 });
+            q.DisposeFlushTimeout = TimeSpan.FromMilliseconds(100);
+            q.EnqueueSave(Snap("a", 1));
+            await q.DisposeAsync();                     // bricht die Wartezeit vor der Wiederholung ab
+            Assert.AreEqual(1, q.DroppedOnShutdown, "Abbruch in der Wiederholung gezählt");
+            Assert.AreEqual(1L, q.Failures, "als Fehler gezählt");
+            Assert.AreEqual(0, q.Pending, "nichts offen");
+        }
     }
 
     /// <summary>
@@ -270,6 +331,32 @@ namespace Paintball.Net.Tests
         private int _attempts;
         public int FailTimes;
         public int DelayMs;
+        private ManualResetEventSlim _pause;                 // blockiert nur den ersten Schreibaufruf
+        private readonly ManualResetEventSlim _firstBlocked = new(false);
+        private int _entered;
+
+        /// <summary>Der erste Schreibaufruf bleibt stehen, bis <see cref="Release"/> gerufen wird.</summary>
+        public static RecordingRepository Paused() => new RecordingRepository { _pause = new ManualResetEventSlim(false) };
+
+        public void WaitUntilFirstCallBlocks()
+        {
+            if (!_firstBlocked.Wait(TimeSpan.FromSeconds(10))) throw new TimeoutException("erster Schreibaufruf kam nicht an");
+        }
+
+        public void Release() => _pause.Set();
+
+        private string _holdId;
+        private readonly ManualResetEventSlim _hold = new(false), _holdEntered = new(false);
+
+        /// <summary>Alle Schreibaufrufe dieses Spielers warten, bis <see cref="ReleaseHeldPlayer"/> gerufen wird.</summary>
+        public void HoldPlayer(string playerId) => _holdId = playerId;
+
+        public void WaitUntilHeldPlayerBlocks()
+        {
+            if (!_holdEntered.Wait(TimeSpan.FromSeconds(10))) throw new TimeoutException("Aufruf des gehaltenen Spielers kam nicht an");
+        }
+
+        public void ReleaseHeldPlayer() => _hold.Set();
 
         public int Attempts { get { lock (_lock) return _attempts; } }
         public List<Call> Calls { get { lock (_lock) return _calls.ToList(); } }
@@ -277,6 +364,16 @@ namespace Paintball.Net.Tests
 
         private void Write(string op, string playerId, int xp)
         {
+            if (_pause != null && Interlocked.Increment(ref _entered) == 1)
+            {
+                _firstBlocked.Set();
+                _pause.Wait(TimeSpan.FromSeconds(10));
+            }
+            if (_holdId != null && playerId == _holdId)
+            {
+                _holdEntered.Set();
+                _hold.Wait(TimeSpan.FromSeconds(10));
+            }
             if (DelayMs > 0) Thread.Sleep(DelayMs);
             lock (_lock)
             {
