@@ -59,7 +59,70 @@ export function localFireStatus({ now, last, rps, ammo, reloading, interruptible
   return 'fired';
 }
 
-/** Feuer-Taste dieses Ticks: gehalten gewinnt; Auto-Feuer drückt bei Semi-Waffen im Wechsel (drücken/loslassen). */
+/**
+ * Lokale Waffe (Vorhersage) auf der Tick-Uhr: spiegelt MarkerStateMachine und GameMatch.ProcessInput, ohne
+ * performance.now() – mehrere Ticks in einem Frame zählen so wie auf dem Server. Das Nachladen läuft lokal
+ * (reloadUntil); Snapshots korrigieren es nur, wenn sie die Eingabe bestätigen, die es zuletzt lokal geändert hat.
+ */
+export class LocalWeapon {
+  constructor({ reload = 2, interruptible = true } = {}) {
+    this.reload = reload;
+    this.interruptible = interruptible;
+    this.time = 0;
+    this.last = -Infinity;
+    this.reloadUntil = -Infinity;
+    this.syncSeq = 0;   // Eingabe, die den Nachlade-Zustand zuletzt lokal geändert hat
+    this.gate = new TriggerGate();
+  }
+
+  /** Einmal pro Tick, vor startReload/fire. */
+  advance(dt) { this.time += dt; }
+
+  get reloading() { return this.time < this.reloadUntil - 1e-6; }
+
+  /** R-Frame (MarkerStateMachine.TryStartReload): nur bei nicht vollem Magazin und vorhandener Reserve. */
+  startReload(seq, ammo, mag, reserve) {
+    if (this.reloading) return true;
+    if (ammo >= mag || reserve <= 0) return false;
+    this.reloadUntil = this.time + this.reload;
+    this.syncSeq = seq;
+    return true;
+  }
+
+  /** Feuer-Bit dieses Ticks → 'none' (kein Versuch), 'fired', 'cooldown', 'empty' oder 'reload'. */
+  fire({ down, semi, seq, ammo, rps, running }) {
+    const attempt = this.gate.pull(down, semi, this.time, this.reloading);
+    if (!running || !attempt) return 'none';
+    const status = localFireStatus({ now: this.time, last: this.last, rps, ammo, reloading: this.reloading, interruptible: this.interruptible });
+    if (status === 'fired') {
+      if (this.reloading) { this.reloadUntil = -Infinity; this.syncSeq = seq; }   // Feuer bricht das Nachladen ab
+      this.last = this.time;
+      this.gate.fired(semi);
+    } else if (status === 'cooldown') this.gate.cooldown(semi, this.time);
+    return status;
+  }
+
+  /** Snapshot (`me.st`, `me.rl`, `ack`) als Korrektur – ältere Snapshots würden einen lokalen Wechsel überschreiben. */
+  sync({ ack, st, rl }) {
+    if (!(ack >= this.syncSeq)) return;
+    if (st === 'Reloading') {
+      if (!this.reloading) this.reloadUntil = this.time + Math.max(0, 1 - (rl ?? 0)) * this.reload;
+    } else this.reloadUntil = -Infinity;
+  }
+
+  /** Respawn: neuer Marker auf dem Server, Puffer verworfen. */
+  respawn() {
+    this.gate.reset();
+    this.reloadUntil = -Infinity;
+    this.last = -Infinity;
+  }
+}
+
+/**
+ * Feuer-Taste dieses Ticks: gehalten gewinnt; Auto-Feuer drückt bei Semi-Waffen im Wechsel (drücken/loslassen).
+ * Hinweis (E9 + Puffer): Fällt ein Auto-Feuer-Druck in die Abklingzeit, puffert ihn der Abzug wie einen Tipp –
+ * der Schuss kann also bis zu PENDING_SHOT_WINDOW (0,5 s) später fallen, auch wenn das Ziel inzwischen weg ist.
+ */
 export function fireIntent({ held, auto, semi, pulse }) {
   if (held) return { down: true, pulse: false };
   if (!auto) return { down: false, pulse: false };

@@ -234,8 +234,8 @@ export class App {
 
   markerInfo(id) {
     const m = this.profile?.markers?.find(x => x.id === id);
-    return m ? { id: m.id, name: m.name, rps: m.rps, velocity: m.velocity ?? 90, gravity: m.gravity ?? 1, spread: m.spread, range: m.range ?? 120, mag: m.mag, fireMode: m.fireMode ?? 'auto', pellets: m.pellets ?? 1 }
-      : { id, name: id, rps: 8, velocity: 90, gravity: 1, spread: 1.2, range: 120, fireMode: 'auto', pellets: 1 };
+    return m ? { id: m.id, name: m.name, rps: m.rps, velocity: m.velocity ?? 90, gravity: m.gravity ?? 1, spread: m.spread, range: m.range ?? 120, mag: m.mag, reload: m.reload ?? 2, fireMode: m.fireMode ?? 'auto', pellets: m.pellets ?? 1 }
+      : { id, name: id, rps: 8, velocity: 90, gravity: 1, spread: 1.2, range: 120, reload: 2, fireMode: 'auto', pellets: 1 };
   }
 
   // ---------------- Screens ----------------

@@ -59,6 +59,16 @@ export class TouchState {
     return { look: [x - last[0], y - last[1]], knob: null };
   }
 
+  /** Fenster verliert den Fokus oder wird verborgen: alle Finger gelten als losgelassen (Ducken-Umschalter bleibt). */
+  clear() {
+    this.moveId = null;
+    this.move = [0, 0];
+    this.fireIds.clear();
+    this.look.clear();
+    this.held.clear();
+    this.buttons.clear();
+  }
+
   end(id) {
     const kind = this.held.get(id) ?? null;
     this.held.delete(id);

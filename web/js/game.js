@@ -5,7 +5,7 @@ import { SnapshotBuffer, ServerClock } from './interpolation.js';
 import { BTN, decodePlayers, encodeInput, TEAM_MODES } from './protocol.js';
 import * as M from './movement.js';
 import { aimAngles, aimAssistFactor, angleBetween, shouldAutoFire, pelletDirections } from './aim.js';
-import { TriggerGate, tickFire, localFireStatus } from './trigger.js';
+import { LocalWeapon, tickFire } from './trigger.js';
 import { hexToRgb } from './renderer.js';
 import * as S from './scene.js';
 import { t, phrases, getLang } from './i18n.js';
@@ -75,9 +75,7 @@ export class ClientGame {
     this.uiBlocking = false;
     this.frameInput = { mx: 0, mz: 0, fire: false, sprint: false, crouch: false, jump: false };
     this.localShots = [];
-    this.lastLocalShot = 0;
     this.autoTarget = null;
-    this.trigger = new TriggerGate();
     this.autoPulse = false;
     this.lastHitSound = -1;
     this.localDashUntil = 0;
@@ -109,6 +107,8 @@ export class ClientGame {
     this.tutorial = msg.mode === 'training' && !tut.done ? tut : null;
     const marker = this.roster.get(this.me)?.marker ?? 'standard';
     this.marker = this.markerInfo(marker);
+    // Lokale Waffe auf der Tick-Uhr (Abzug, Abklingzeit, Nachladen) – Spiegel des Servers
+    this.weapon = new LocalWeapon({ reload: this.marker?.reload ?? 2, interruptible: this.marker?.id !== 'precision' });
     this.markerName = this.marker?.name ?? marker;
   }
 
@@ -155,7 +155,10 @@ export class ClientGame {
     this.round = msg.rd;
     if (msg.sc) this.scores = msg.sc;
     if (msg.ps) this.playerScores = new Map(msg.ps.map(([id, sc]) => [id, sc]));
-    if (msg.me) this.meState = msg.me;
+    if (msg.me) {
+      this.meState = msg.me;
+      this.weapon?.sync({ ack: msg.ack, st: msg.me.st, rl: msg.me.rl });
+    }
     this.pickupAvail = new Set(msg.pk);
     this.flagState = msg.fl ?? null;
     this.zoneState = msg.zn ?? null;
@@ -235,7 +238,7 @@ export class ClientGame {
         case 'elim': this.#onElim(e, nowS); break;
         case 'spawn':
           this.playerSplats.delete(e.id);
-          if (e.id === this.me) { this.needsReset = true; this.trigger.reset(); }
+          if (e.id === this.me) { this.needsReset = true; this.weapon?.respawn(); }
           break;
         case 'pick':
           if (e.by === this.me) {
@@ -508,10 +511,6 @@ export class ClientGame {
     if (pressed.has('reload')) buttons |= BTN.RELOAD;
     if (pressed.has('dash')) buttons |= BTN.DASH;
     if (pressed.has('use')) buttons |= BTN.USE;
-    const me = this.meState;
-    // Spiegel von GameMatch.ProcessInput: Nachladen (laufend oder in diesem Frame gestartet) verwirft den Semi-Puffer.
-    const reloadStarts = (buttons & BTN.RELOAD) !== 0 && me && me.rs > 0 && (this.displayAmmo ?? me.am) < (this.marker?.mag ?? Infinity);
-    const mayShoot = this.trigger.pull((buttons & BTN.FIRE) !== 0, semi, nowS, me?.st === 'Reloading' || !!reloadStarts);
 
     const lp = this.predictor.state;
     const view = this.#camera({ ...lp });
@@ -525,6 +524,16 @@ export class ClientGame {
       time: this.clock.serverTime(performance.now())
     };
     this.net?.send(encodeInput(frame));
+
+    // Waffe in der Reihenfolge von GameMatch.ProcessInput: Nachladen starten, dann Abzug/Schuss (Tick-Uhr).
+    const w = this.weapon, me = this.meState;
+    w.advance(DT);
+    const ammo = this.displayAmmo ?? me?.am ?? 0;
+    if (running && me && (buttons & BTN.RELOAD)) w.startReload(frame.seq, ammo, me.ml ?? this.marker?.mag ?? Infinity, me.rs);
+    const status = w.fire({
+      down: (buttons & BTN.FIRE) !== 0, semi, seq: frame.seq, ammo: me && this.marker ? ammo : 0,
+      rps: (this.marker?.rps ?? 8) * (this.myInfo?.rapid ? 1.5 : 1), running: running && !!me && !!this.marker
+    });
 
     if (!running) return;
     if ((buttons & BTN.DASH) && nowS >= this.localDashReady && (this.meState?.dash ?? 0) <= 0.05) {
@@ -542,23 +551,13 @@ export class ClientGame {
       if (buttons & BTN.RELOAD) this.tutorial.report('reloaded', 1);
     }
     if (buttons & BTN.RELOAD) this.audio.reload();
-    if (!mayShoot) return;
-    const status = this.#localShot(view, aim, frame, nowS);
-    if (status === 'fired') this.trigger.fired(semi);
-    else if (status === 'cooldown') this.trigger.cooldown(semi, nowS);
+    if (status === 'fired') this.#localShot(view, aim, frame, nowS);
   }
 
-  /** Lokaler Schussversuch (Vorhersage) – liefert den Status wie MarkerStateMachine.TryFire. */
+  /** Lokaler Schuss (Vorhersage, die Waffe hat bereits entschieden): Kugeln, Sound, Munition. */
   #localShot(view, aim, frame, nowS) {
     const me = this.meState;
-    if (!me || !this.marker) return 'none';
-    const status = localFireStatus({
-      now: nowS, last: this.lastLocalShot, rps: this.marker.rps * (this.myInfo?.rapid ? 1.5 : 1),
-      ammo: this.displayAmmo ?? me.am, reloading: me.st === 'Reloading', interruptible: this.marker.id !== 'precision'
-    });
-    if (status !== 'fired') return status;
     const seq = frame.seq;
-    this.lastLocalShot = nowS;
     this.#avatar(this.me).lastShot = nowS;
     this.localShots.push(seq);
     this.displayAmmo = Math.max(0, (this.displayAmmo ?? me.am) - 1);
@@ -575,7 +574,6 @@ export class ClientGame {
     if (pellets > 1) this.audio.shotgun(0, 1); else this.audio.shot(0, 1);
     this.tutorial?.report('shot', 1);
     if (!this.settings.reducedMotion) this.shake = Math.min(0.2, this.shake + (pellets > 1 ? 0.06 : 0.02));
-    return 'fired';
   }
 
   // ---------------- Rendering ----------------

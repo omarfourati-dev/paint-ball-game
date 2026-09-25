@@ -1,7 +1,8 @@
 // Waffen im Client (Event-Paket): Semi-Abzug, Auto-Feuer-Takt, Schrot-Muster wie auf dem Server, HUD-Text.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { TriggerGate, fireIntent, tickFire, FireLatch, localFireStatus, PENDING_SHOT_WINDOW } from '../../web/js/trigger.js';
+import { TriggerGate, fireIntent, tickFire, FireLatch, localFireStatus, PENDING_SHOT_WINDOW, LocalWeapon } from '../../web/js/trigger.js';
+import { TouchState } from '../../web/js/touch.js';
 import { pelletDirections, PELLET_RING, PELLET_JITTER } from '../../web/js/aim.js';
 import { markerLabel } from '../../web/js/format.js';
 
@@ -217,4 +218,108 @@ test('HUD: Waffenname mit Abzugsart', () => {
   assert.equal(markerLabel('Splatter Schrot', 'semi', tr), 'Splatter Schrot · Einzelschuss');
   assert.equal(markerLabel('Splat-8 Allrounder', 'auto', tr), 'Splat-8 Allrounder · Automatik');
   assert.equal(markerLabel('', undefined, tr), 'Automatik', 'ohne Name und Modus: Auto');
+});
+
+// ---- Fix-Runde 1 (Review C2): Tick-Uhr, lokales Nachladen, Snapshot nur als Korrektur, Touch bei blur ----
+const DT = 1 / 30;
+const tickW = (w, o) => { w.advance(DT); return w.fire({ down: false, semi: false, ammo: 10, rps: 8, running: true, ...o }); };
+
+test('Tick-Uhr: mehrere Ticks im selben Frame zählen die Abklingzeit trotzdem richtig', () => {
+  const w = new LocalWeapon({ reload: 2, interruptible: true });
+  const shots = [];
+  // 12 Ticks, je 4 im selben Frame (gleiches performance.now()) – die Waffe kennt nur die Tick-Zeit
+  for (let k = 0; k < 12; k++) {
+    if (tickW(w, { down: true, seq: k + 1 }) === 'fired') shots.push(k);
+  }
+  assert.deepEqual(shots, [0, 4, 8], '8/s bei 30 Hz: alle 4 Ticks wie auf dem Server');
+});
+
+test('Longshot: R und Klick im selben Tick – kein lokaler Schuss', () => {
+  const w = new LocalWeapon({ reload: 2, interruptible: false });
+  w.advance(DT);
+  assert.equal(w.startReload(1, 3, 6, 20), true, 'Nachladen startet (Magazin nicht voll, Reserve da)');
+  assert.equal(w.fire({ down: true, semi: true, seq: 1, ammo: 3, rps: 2.5, running: true }), 'reload');
+  assert.equal(w.reloading, true);
+  for (let k = 0; k < 59; k++) assert.notEqual(tickW(w, { down: k % 2 === 0, semi: true, seq: k + 2, ammo: 3, rps: 2.5 }), 'fired');
+  w.advance(DT);
+  assert.equal(w.reloading, false, 'nach ReloadSeconds lokal fertig');
+});
+
+test('Allrounder: R und Klick im selben Tick – Feuer bricht das Nachladen ab wie auf dem Server', () => {
+  const w = new LocalWeapon({ reload: 2, interruptible: true });
+  w.advance(DT);
+  w.startReload(1, 3, 20, 40);
+  assert.equal(w.fire({ down: true, semi: false, seq: 1, ammo: 3, rps: 8, running: true }), 'fired');
+  assert.equal(w.reloading, false);
+  const e = new LocalWeapon({ reload: 2, interruptible: true });
+  e.advance(DT);
+  assert.equal(e.startReload(1, 0, 20, 40), true);
+  assert.equal(e.fire({ down: true, semi: false, seq: 1, ammo: 0, rps: 8, running: true }), 'reload', 'leeres Magazin: Nachladen läuft weiter');
+  assert.equal(new LocalWeapon().startReload(1, 20, 20, 40), false, 'volles Magazin: kein Nachladen');
+});
+
+test('Snapshot korrigiert das lokale Nachladen erst, wenn er die auslösende Eingabe bestätigt', () => {
+  const w = new LocalWeapon({ reload: 2, interruptible: false });
+  w.advance(DT);
+  w.startReload(5, 3, 6, 20);
+  w.sync({ ack: 4, st: 'Ready', rl: 0 });
+  assert.equal(w.reloading, true, 'älterer Snapshot (ack < 5): lokales Nachladen bleibt');
+  w.sync({ ack: 5, st: 'Ready', rl: 0 });
+  assert.equal(w.reloading, false, 'Server meldet Ready nach dem R-Frame: lokales Nachladen verwerfen');
+  const a = new LocalWeapon({ reload: 2, interruptible: true });
+  a.advance(DT);
+  a.sync({ ack: 3, st: 'Reloading', rl: 0.5 });
+  assert.equal(a.reloading, true, 'vom Server gestartetes Nachladen (leeres Magazin) übernehmen');
+  for (let k = 0; k < 29; k++) a.advance(DT);
+  assert.equal(a.reloading, true);
+  a.advance(DT); a.advance(DT);
+  assert.equal(a.reloading, false, 'Restzeit aus rl: (1 − 0,5) × 2 s');
+});
+
+test('Semi: Nachladen abbrechen und innerhalb einer RTT erneut tippen – der gepufferte Schuss bleibt', () => {
+  const w = new LocalWeapon({ reload: 2.4, interruptible: true });
+  const sg = { semi: true, rps: 1.2, ammo: 3 };
+  w.advance(DT);
+  w.sync({ ack: 0, st: 'Reloading', rl: 0.1 });    // Server lädt nach (z. B. R gedrückt)
+  assert.equal(w.reloading, true);
+  assert.equal(tickW(w, { ...sg, down: true, seq: 10 }), 'fired', 'Feuer bricht das Nachladen ab');
+  assert.equal(w.reloading, false);
+  const firedAt = w.time;
+  tickW(w, { ...sg, down: false, seq: 11 });
+  let k = 12;
+  while (w.time - firedAt < 0.4) tickW(w, { ...sg, down: false, seq: k++ });
+  assert.equal(tickW(w, { ...sg, down: true, seq: k++ }), 'cooldown', 'Tipp in der Abklingzeit');
+  assert.equal(w.gate.pending, true);
+  w.sync({ ack: 9, st: 'Reloading', rl: 0.2 });    // veraltete Snapshots (vor dem Abbruch) sagen noch „Reloading“
+  assert.equal(w.reloading, false, 'veralteter Snapshot startet kein lokales Nachladen');
+  let st = tickW(w, { ...sg, down: false, seq: k++ });
+  assert.equal(w.gate.pending, true, 'Puffer bleibt');
+  while (st !== 'fired' && w.time - firedAt < 1) st = tickW(w, { ...sg, down: false, seq: k++ });
+  assert.equal(st, 'fired', 'gepufferter Schuss fällt, sobald die Waffe bereit ist');
+});
+
+test('Respawn: Puffer, Nachladen und Abklingzeit zurückgesetzt', () => {
+  const w = new LocalWeapon({ reload: 2, interruptible: true });
+  w.advance(DT);
+  w.startReload(1, 1, 20, 40);
+  w.respawn();
+  assert.equal(w.reloading, false);
+  assert.equal(tickW(w, { down: true, seq: 2 }), 'fired');
+});
+
+test('Touch: clear() (blur/visibilitychange) lässt alle Finger los', () => {
+  const t = new TouchState();
+  t.start(1, 700, 250, 'fire', false);
+  t.start(2, 60, 300, null, true);
+  t.start(3, 900, 100, 'jump', false);
+  t.start(4, 800, 300, null, false);
+  t.clear();
+  assert.equal(t.fire, false, 'kein Dauerfeuer nach dem Tab-Wechsel');
+  assert.equal(t.moveId, null);
+  assert.deepEqual(t.move, [0, 0]);
+  assert.equal(t.buttons.size, 0);
+  assert.deepEqual(t.moveTo(1, 760, 260).look, [0, 0], 'keine Drehung durch alte Finger');
+  assert.deepEqual(t.moveTo(4, 860, 300).look, [0, 0]);
+  t.start(5, 700, 250, 'fire', false);
+  assert.equal(t.fire, true, 'danach normal nutzbar');
 });

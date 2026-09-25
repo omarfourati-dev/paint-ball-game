@@ -60,7 +60,18 @@ export class InputManager {
       const action = this.#actionFor(e.code);
       if (action) this.down.delete(action);
     });
-    addEventListener('blur', () => { this.down.clear(); this.mouseFire = false; this.#fireLevel(); });
+    // Fokus weg oder Tab verborgen: alle Tasten, Maus und Touch-Finger loslassen (kein Dauerfeuer danach).
+    const releaseAll = () => {
+      this.down.clear();
+      this.mouseFire = false;
+      this.touch.clear();
+      const root = this.touchRoot;
+      root?.querySelector?.('.stick')?.classList.remove('visible');
+      root?.querySelectorAll?.('[data-btn].active').forEach(el => el.classList.remove('active'));
+      this.#fireLevel();
+    };
+    addEventListener('blur', releaseAll);
+    document.addEventListener('visibilitychange', () => { if (document.hidden) releaseAll(); });
   }
 
   #bindMouse() {
