@@ -23,6 +23,18 @@ export function angleBetween(a, b) {
  * Auto-Feuer (Event-Paket, nur Touch): schießen, wenn ein sichtbarer, nicht geschützter Gegner
  * in Waffenreichweite im Zielkegel der Zielhilfe liegt. Der Server prüft wie bisher Feuerrate und Blickrichtung.
  */
+/** Auto-Feuer-Reichweite für Mehrkugel-Waffen (Schrot), wie BotController.ShotgunBotRange auf dem Server. */
+export const SHOTGUN_AUTO_RANGE = 15;
+
+/**
+ * Reichweite, bis zu der Auto-Feuer auslöst: bei Schrot höchstens SHOTGUN_AUTO_RANGE, weil es auf größere
+ * Distanz kaum trifft (E2) und sonst das Magazin leer schießt, bevor der Gegner nahe genug ist.
+ */
+export function autoFireRange(marker) {
+  const range = marker?.range ?? 0;
+  return (marker?.pellets ?? 1) > 1 ? Math.min(range, SHOTGUN_AUTO_RANGE) : range;
+}
+
 export function shouldAutoFire({ enabled, device, target, range }) {
   if (!enabled || device !== 'touch' || !target) return false;
   return target.visible && !target.protected && target.angle < ASSIST_CONE && target.distance <= range;

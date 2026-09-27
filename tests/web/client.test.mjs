@@ -6,7 +6,7 @@ import { STRINGS, t, setLang, phrases, getLang, mapName } from '../../web/js/i18
 import { DEFAULTS, DEFAULT_KEYS, KEYS_VERSION, sanitize, loadSettings, saveSettings, rebind, teamPalette, ACTIONS, keyLabel } from '../../web/js/settings.js';
 import { TutorialTracker, STEPS, stepTextKey } from '../../web/js/tutorial.js';
 import { formatTime, connectionQuality, formatNumber, inviteUrl } from '../../web/js/format.js';
-import { aimAngles, aimAssistFactor, shouldAutoFire, ASSIST_CONE, resolveFireButton } from '../../web/js/aim.js';
+import { aimAngles, aimAssistFactor, shouldAutoFire, ASSIST_CONE, resolveFireButton, autoFireRange, SHOTGUN_AUTO_RANGE } from '../../web/js/aim.js';
 
 function memoryStorage() {
   const data = new Map();
@@ -208,6 +208,16 @@ test('Auto-Feuer: nur Touch, nur im Zielkegel, in Reichweite und bei freier Sich
   assert.equal(shouldAutoFire({ ...base, target: null }), false, 'kein Gegner');
   assert.equal(shouldAutoFire({ ...base, target: { ...target, angle: ASSIST_CONE } }), false, 'Rand des Kegels zählt nicht');
   assert.equal(shouldAutoFire({ ...base, range: 19 }), false, 'außer Reichweite');
+});
+
+test('Auto-Feuer: Schrot nur auf kurze Distanz (wie die Bots), sonst volle Reichweite', () => {
+  assert.equal(SHOTGUN_AUTO_RANGE, 15);
+  assert.equal(autoFireRange({ range: 28, pellets: 6 }), 15, 'Schrot: 15 m statt 28 m');
+  assert.equal(autoFireRange({ range: 10, pellets: 6 }), 10, 'kürzere Reichweite bleibt');
+  assert.equal(autoFireRange({ range: 120, pellets: 1 }), 120, 'Einzelprojektil: volle Reichweite');
+  assert.equal(autoFireRange(undefined), 0, 'ohne Marker kein Auto-Feuer');
+  const target = { angle: 0.01, distance: 20, visible: true, protected: false };
+  assert.equal(shouldAutoFire({ enabled: true, device: 'touch', target, range: autoFireRange({ range: 28, pellets: 6 }) }), false, 'Schrot auf 20 m: kein Auto-Feuer');
 });
 
 test('Auto-Feuer: verdeckter oder spawn-geschützter Gegner löst nicht aus', () => {

@@ -4,7 +4,7 @@ import { Predictor } from './prediction.js';
 import { SnapshotBuffer, ServerClock } from './interpolation.js';
 import { BTN, decodePlayers, encodeInput, TEAM_MODES } from './protocol.js';
 import * as M from './movement.js';
-import { aimAngles, aimAssistFactor, angleBetween, shouldAutoFire, pelletDirections } from './aim.js';
+import { aimAngles, aimAssistFactor, angleBetween, shouldAutoFire, autoFireRange, pelletDirections } from './aim.js';
 import { LocalWeapon, tickFire } from './trigger.js';
 import { hexToRgb } from './renderer.js';
 import * as S from './scene.js';
@@ -499,7 +499,7 @@ export class ClientGame {
     // Feuer: gespeicherte Druck-Flanke (kurze Klicks/Tipps), Auto-Feuer drückt bei Semi im Wechsel (E9),
     // blockierende UI und Runden außerhalb von „running“ unterdrücken alles.
     const held = this.uiBlocking ? (this.input.drainFire(), false) : this.input.takeFire();
-    const autoFire = shouldAutoFire({ enabled: this.settings.autoFire, device: this.input.device, target: this.autoTarget, range: this.marker?.range ?? 0 });
+    const autoFire = shouldAutoFire({ enabled: this.settings.autoFire, device: this.input.device, target: this.autoTarget, range: autoFireRange(this.marker) });
     const semi = this.marker?.fireMode === 'semi';
     const fire = tickFire({ held, auto: autoFire, semi, pulse: this.autoPulse, running, uiBlocking: this.uiBlocking });
     this.autoPulse = fire.pulse;
