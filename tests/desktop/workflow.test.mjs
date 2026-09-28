@@ -81,3 +81,24 @@ test('web-mvp.yml: Desktop-Tests laufen mit', () => {
   assert.match(webMvp, /'desktop\/\*\*'/);
   assert.match(webMvp, /node --test tests\/desktop\/\*\.test\.mjs/);
 });
+
+test('deploy.yml: ein älterer Lauf überschreibt keinen neueren Code-Deploy (Tip of main)', () => {
+  const d = job('deploy');
+  const tip = step(d, 'id: tip');
+  assert.match(tip, /git fetch [^\n]*origin main/);
+  assert.match(tip, /"\$GITHUB_SHA"/);
+  assert.match(tip, /current=true/);
+  assert.match(tip, /::notice::Überspringe Code-Deploy/, 'klare Log-Zeile beim Überspringen');
+  assert.ok(!/\n        if:/.test(tip), 'Prüfung läuft immer');
+  assert.ok(d.indexOf('id: tip') < d.indexOf('rsync '), 'vor dem rsync');
+  assert.ok(!/persist-credentials: false/.test(step(d, 'actions/checkout@v4')), 'Deploy-Checkout behält das Token für den Fetch');
+  const guard = /\n        if: steps\.tip\.outputs\.current == 'true'\n/;
+  for (const marker of ['rsync ', "docker network create web", 'CREATE DATABASE', '> $DEPLOY_DIR/.env', 'docker compose build',
+    'docker stop -t 45', 'docker compose up -d', 'State.Health.Status', 'docker compose ps', 'caddy reload', 'docker image prune']) {
+    assert.match(step(d, marker), guard, `Code-Deploy-Schritt „${marker}“ nur beim aktuellen Stand`);
+  }
+  for (const marker of ['mkdir -p $DEPLOY_DIR/downloads', 'actions/download-artifact@v4', 'publish-downloads.sh']) {
+    assert.ok(!/steps\.tip/.test(step(d, marker)), `„${marker}“ läuft auch bei älterem Stand`);
+  }
+  assert.ok(!/cancel-in-progress/.test(deploy), 'kein Abbruch laufender Deploys per concurrency');
+});

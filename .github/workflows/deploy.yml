@@ -112,7 +112,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Check tip of main
+        # Schutz vor dem Deploy-Race: Braucht der Windows-Build lange, kann ein neuerer Push schon deployt sein. Dann darf
+        # dieser ältere Lauf den Code nicht zurückdrehen – rsync, Compose und Caddy werden übersprungen. Das Checkout behält
+        # sein Token (persist-credentials), contents: read reicht für den Fetch. Scheitert der Fetch, scheitert der Schritt.
+        id: tip
+        run: |
+          git fetch --no-tags --depth=1 origin main
+          tip=$(git rev-parse FETCH_HEAD)
+          if [ "$tip" = "$GITHUB_SHA" ]; then
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::Überspringe Code-Deploy: $GITHUB_SHA ist nicht mehr der Stand von origin/main ($tip). Ein neuerer Lauf deployt."
+            echo "current=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Sync code to deploy directory
+        if: steps.tip.outputs.current == 'true'
         run: |
           mkdir -p $DEPLOY_DIR
           rsync -rlD --no-owner --no-group --delete \
@@ -143,9 +159,11 @@ jobs:
         run: bash desktop/scripts/publish-downloads.sh "$RUNNER_TEMP/desktop-exe" "$DEPLOY_DIR/downloads"
 
       - name: Ensure Docker network 'web' exists
+        if: steps.tip.outputs.current == 'true'
         run: docker network create web 2>/dev/null || echo "Network 'web' already exists."
 
       - name: Create database if not exists
+        if: steps.tip.outputs.current == 'true'
         run: |
           # Nur „already exists“ ist harmlos; jeder andere Fehler (Rolle fehlt, Container weg …) lässt den Schritt scheitern.
           if out=$(docker exec zentrades-postgres psql -U zentrades -c "CREATE DATABASE paintball OWNER paintball;" 2>&1); then
@@ -158,6 +176,7 @@ jobs:
           fi
 
       - name: Write .env
+        if: steps.tip.outputs.current == 'true'
         run: |
           # AdSense (öffentliche Werte, daher GitHub-Variables): nur gültige Werte schreiben – gleiche Regeln wie der Server
           # (AdsConfig.cs). Ungültiges oder Fehlendes fällt weg, dann bleibt die Werbung bzw. der Slot aus. printf '%s\n'
@@ -188,10 +207,12 @@ jobs:
           ADSENSE_INTERSTITIAL_EVERY: ${{ vars.ADSENSE_INTERSTITIAL_EVERY }}
 
       - name: Build image
+        if: steps.tip.outputs.current == 'true'
         working-directory: ${{ env.DEPLOY_DIR }}
         run: docker compose build --no-cache
 
       - name: Stop old container
+        if: steps.tip.outputs.current == 'true'
         # Erst SIGTERM mit 45 s Frist: der Server schließt die WebSockets (1001 server_restart), stoppt den Spieltakt
         # und schreibt die Warteschlange weg. "docker rm -f" allein wäre ein SIGKILL und verlöre offene Spielstände.
         run: |
@@ -199,10 +220,12 @@ jobs:
           docker rm -f paintball 2>/dev/null || true
 
       - name: Start service
+        if: steps.tip.outputs.current == 'true'
         working-directory: ${{ env.DEPLOY_DIR }}
         run: docker compose up -d --remove-orphans
 
       - name: Wait for health
+        if: steps.tip.outputs.current == 'true'
         run: |
           echo "Waiting for paintball to become healthy..."
           for i in $(seq 1 12); do
@@ -219,11 +242,14 @@ jobs:
           exit 1
 
       - name: Show status
+        if: steps.tip.outputs.current == 'true'
         working-directory: ${{ env.DEPLOY_DIR }}
         run: docker compose ps
 
       - name: Reload Caddy
+        if: steps.tip.outputs.current == 'true'
         run: docker compose -f /opt/caddy/docker-compose.yml exec caddy caddy reload --config /etc/caddy/Caddyfile
 
       - name: Clean up dangling images
+        if: steps.tip.outputs.current == 'true'
         run: docker image prune -f
