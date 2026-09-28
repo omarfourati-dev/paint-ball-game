@@ -68,14 +68,15 @@ namespace Paintball.Net.Tests
             r.RunAsync("Google: Abbruch ohne pb_oauth-Cookie → invalid_state, keine Session (Anti-Login-CSRF)", GoogleCancelledWithoutCookie);
             r.RunAsync("Google: no-store auch bei Rate-Limit (429) auf der Start-Route", GoogleStartRateLimitNoStore);
             r.RunAsync("Google: pb_oauth im Format vor dem Desktop-Login (3 Teile) gilt weiter", GoogleThreePartCookieStillValid);
-            r.Run("Desktop: Grant-Speicher – einmalig, erster gewinnt, 2 min, 5 Fehlversuche, Obergrenze", DesktopGrantStoreRules);
-            r.RunAsync("Desktop: Google-Start merkt sich die challenge, ungültige challenge → Fehlerseite", DesktopGoogleStart);
+            r.Run("Desktop: Grant-Speicher – Code statt challenge als Schlüssel, einmalig, 2 min, 5 Fehlversuche, Obergrenze, Port-Validierung", DesktopGrantStoreRules);
+            r.RunAsync("Desktop: Google-Start merkt sich challenge+port, ungültige challenge/Port → Fehlerseite", DesktopGoogleStart);
             r.RunAsync("Desktop: Callback legt Grant an, keine Sitzung im Browser, Browser-Sitzung bleibt gültig", DesktopCallbackNoBrowserSession);
-            r.RunAsync("Desktop: Fehler, Abbruch und fehlende Konfiguration führen auf /desktop-login?error=…", DesktopCallbackErrors);
+            r.RunAsync("Desktop: Fehler/Abbruch gehen an den lokalen Empfänger, fehlende Konfiguration auf /desktop-login?error=…", DesktopCallbackErrors);
             r.RunAsync("Desktop: Einlösen gelingt genau einmal, Cookie mit __Host-Attributen, Namensvorschlag", DesktopRedeemOnce);
+            r.RunAsync("Desktop: Kontoübernahme per untergeschobener challenge ist verhindert (Loopback-Rückgabe, Review Runde 1)", DesktopAccountTakeoverPrevented);
             r.RunAsync("Desktop: falscher verifier → 401, nach 5 Fehlversuchen ist der Grant weg", DesktopRedeemWrongVerifier);
             r.RunAsync("Desktop: nach 2 Minuten ist der Grant ungültig", DesktopRedeemExpired);
-            r.RunAsync("Desktop: Einlösen nur mit JSON (415), kaputter Körper 400, unbekannte challenge 202, no-store", DesktopRedeemInputs);
+            r.RunAsync("Desktop: Einlösen nur mit JSON (415), kaputter Körper 400, unbekannter Code 404, no-store", DesktopRedeemInputs);
             r.RunAsync("Desktop: Rate-Limit 60/min/IP beim Einlösen, getrennt von den anderen Auth-Routen", DesktopRedeemRateLimit);
             r.RunAsync("Desktop: Dev-Login mit desktop legt Grant statt Sitzung an", DesktopDevLogin);
             r.RunAsync("Herunterfahren schreibt offene Spielstände", ShutdownFlushesPendingWrites);
@@ -142,24 +143,43 @@ namespace Paintball.Net.Tests
         private static string NewVerifier() => Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32))
             .TrimEnd('=').Replace('+', '-').Replace('/', '_');
 
-        private static HttpRequestMessage RedeemReq(string challenge, string verifier, string contentType = "application/json", string cookie = null)
+        private static HttpRequestMessage RedeemReq(string code, string verifier, string contentType = "application/json", string cookie = null)
         {
             var req = new HttpRequestMessage(HttpMethod.Post, "/api/auth/desktop/redeem")
             {
-                Content = new StringContent(JsonSerializer.Serialize(new { challenge, verifier }), Encoding.UTF8, contentType)
+                Content = new StringContent(JsonSerializer.Serialize(new { code, verifier }), Encoding.UTF8, contentType)
             };
             if (cookie != null) req.Headers.Add("Cookie", cookie);
             return req;
         }
 
-        /// <summary>Desktop-Flow im „Browser“: Start mit challenge, dann Callback mit Fake-Google; gibt die Callback-Antwort zurück.</summary>
-        private static async Task<HttpResponseMessage> DesktopCallbackAsync(Harness h, string challenge, string code, string browserCookie = null)
+        /// <summary>Ein beliebiger gültiger Port im erlaubten Bereich (1024–65535) für den lokalen RFC-8252-Empfänger.</summary>
+        private const int TestPort = 51234;
+
+        /// <summary>
+        /// Desktop-Flow im „Browser“ (RFC 8252): Start mit challenge+port, dann Callback mit Fake-Google; gibt die
+        /// Callback-Antwort zurück – bei Erfolg/Fehler ein Redirect auf http://127.0.0.1:&lt;port&gt;/done?code=…|error=….
+        /// </summary>
+        private static async Task<HttpResponseMessage> DesktopCallbackAsync(Harness h, string challenge, string googleCode, int port = TestPort, string browserCookie = null)
         {
-            HttpResponseMessage start = await h.Http.GetAsync("/api/auth/google?desktop=" + challenge);
+            HttpResponseMessage start = await h.Http.GetAsync($"/api/auth/google?desktop={challenge}&port={port}");
             var (state, cookie) = ReadOAuthCookie(start);
-            var req = new HttpRequestMessage(HttpMethod.Get, $"/api/auth/google/callback?code={code}&state={state}");
+            var req = new HttpRequestMessage(HttpMethod.Get, $"/api/auth/google/callback?code={googleCode}&state={state}");
             req.Headers.Add("Cookie", browserCookie == null ? cookie : cookie + "; " + browserCookie);
             return await h.Http.SendAsync(req);
+        }
+
+        /// <summary>Prüft, dass die Antwort ausschließlich auf http://127.0.0.1:&lt;port&gt;/done weiterleitet, und liest code/error.</summary>
+        private static (string Code, string Error) AssertLoopbackRedirect(HttpResponseMessage res, int expectedPort)
+        {
+            Assert.AreEqual(HttpStatusCode.Found, res.StatusCode, "Weiterleitung an den lokalen Empfänger");
+            Uri loc = res.Headers.Location;
+            Assert.AreEqual("http", loc.Scheme, "kein https für 127.0.0.1 nötig/möglich");
+            Assert.AreEqual("127.0.0.1", loc.Host, "ausschließlich 127.0.0.1 (RFC 8252)");
+            Assert.AreEqual(expectedPort, loc.Port, "der beim Start hinterlegte Port");
+            Assert.AreEqual("/done", loc.AbsolutePath, "fester Pfad des lokalen Empfängers");
+            var q = System.Web.HttpUtility.ParseQueryString(loc.Query);
+            return (q["code"], q["error"]);
         }
 
         private static string SessionCookieOf(HttpResponseMessage res)
@@ -359,8 +379,8 @@ namespace Paintball.Net.Tests
             await using Harness h = await Harness.StartAsync();
             HttpResponseMessage start = await h.Http.GetAsync("/api/auth/google");
             var (state, cookie) = ReadOAuthCookie(start);
-            Assert.IsTrue(cookie.EndsWith("."), "neues Format: vierter Teil (desktop) leer");
-            string threeParts = cookie.Substring(0, cookie.Length - 1);
+            Assert.IsTrue(cookie.EndsWith(".."), "neues Format: vierter und fünfter Teil (desktop, port) leer");
+            string threeParts = cookie.Substring(0, cookie.Length - 2);
             var req = new HttpRequestMessage(HttpMethod.Get, $"/api/auth/google/callback?code=c9&state={state}");
             req.Headers.Add("Cookie", threeParts);
             HttpResponseMessage res = await h.Http.SendAsync(req);
@@ -374,64 +394,113 @@ namespace Paintball.Net.Tests
             var store = new DesktopGrantStore(() => now);
 
             string v1 = NewVerifier(), c1 = Challenge(v1);
-            Assert.IsTrue(store.Add(c1, "p1", "Omar"), "Grant angelegt");
-            Assert.IsFalse(store.Add(c1, "p2", null), "zweiter Grant für dieselbe challenge abgelehnt (erster gewinnt)");
-            Assert.IsFalse(store.Add("kurz", "p1", null), "ungültige challenge");
-            Assert.AreEqual(RedeemStatus.Ok, store.TryRedeem(c1, v1, out DesktopGrant g), "einlösen");
+            string code1 = store.Add(c1, "p1", "Omar");
+            Assert.IsTrue(code1 != null, "Grant angelegt, Code zurückgegeben");
+            Assert.IsTrue(DesktopGrantStore.ValidPkceValue(code1), "Code selbst im PKCE-Format (43 Zeichen base64url)");
+            Assert.IsTrue(store.Add("kurz", "p1", null) == null, "ungültige challenge liefert keinen Code");
+            Assert.AreEqual(RedeemStatus.Ok, store.TryRedeem(code1, v1, out DesktopGrant g), "einlösen über den Code");
             Assert.AreEqual("p1", g.PlayerId, "Spieler aus dem Grant");
             Assert.AreEqual("Omar", g.SuggestedName, "Namensvorschlag aus dem Grant");
-            Assert.AreEqual(RedeemStatus.Pending, store.TryRedeem(c1, v1, out _), "zweites Einlösen: verbraucht");
+            Assert.AreEqual(RedeemStatus.NotFound, store.TryRedeem(code1, v1, out _), "zweites Einlösen: Code verbraucht");
+
+            // Kontoübernahme-Angriff (Sicherheits-Review Task 1, Runde 1): Der Angreifer erzeugt challenge/verifier selbst
+            // und bringt das Opfer dazu, sie zu benutzen – der Server legt daraufhin einen Grant fürs Opfer an. Ohne den
+            // Code (er geht per Server-Redirect ausschließlich an 127.0.0.1, nie an den Angreifer) bleibt das wertlos.
+            string vAttacker = NewVerifier(), cAttacker = Challenge(vAttacker);
+            string codeForVictim = store.Add(cAttacker, "victim", null);
+            Assert.IsTrue(codeForVictim != null, "Server legt den Grant fürs Opfer an (challenge kam vom Angreifer)");
+            Assert.AreEqual(RedeemStatus.NotFound, store.TryRedeem(cAttacker, vAttacker, out DesktopGrant none),
+                "Angreifer kennt challenge UND verifier, aber nicht den Code – keine Sitzung");
+            Assert.IsTrue(none == null, "kein Grant zurückgegeben");
+            Assert.AreEqual(RedeemStatus.Ok, store.TryRedeem(codeForVictim, vAttacker, out DesktopGrant withCode),
+                "mit dem echten Code UND dem passenden verifier gelingt es (der Code erreicht den Angreifer aber nie)");
+            Assert.AreEqual("victim", withCode.PlayerId, "eingelöst wird trotzdem das Konto des Opfers");
 
             string v2 = NewVerifier(), c2 = Challenge(v2);
-            store.Add(c2, "p2", null);
+            string code2 = store.Add(c2, "p2", null);
             for (int i = 1; i <= 4; i++)
-                Assert.AreEqual(RedeemStatus.WrongVerifier, store.TryRedeem(c2, NewVerifier(), out _), "Fehlversuch " + i);
-            Assert.AreEqual(RedeemStatus.Ok, store.TryRedeem(c2, v2, out _), "4 Fehlversuche: Grant noch da");
+                Assert.AreEqual(RedeemStatus.WrongVerifier, store.TryRedeem(code2, NewVerifier(), out _), "Fehlversuch " + i);
+            Assert.AreEqual(RedeemStatus.Ok, store.TryRedeem(code2, v2, out _), "4 Fehlversuche: Grant noch da");
 
             string v3 = NewVerifier(), c3 = Challenge(v3);
-            store.Add(c3, "p3", null);
-            for (int i = 1; i <= DesktopGrantStore.MaxFailures; i++) store.TryRedeem(c3, NewVerifier(), out _);
-            Assert.AreEqual(RedeemStatus.Pending, store.TryRedeem(c3, v3, out _), "nach 5 Fehlversuchen gelöscht");
+            string code3 = store.Add(c3, "p3", null);
+            for (int i = 1; i <= DesktopGrantStore.MaxFailures; i++) store.TryRedeem(code3, NewVerifier(), out _);
+            Assert.AreEqual(RedeemStatus.NotFound, store.TryRedeem(code3, v3, out _), "nach 5 Fehlversuchen gelöscht");
 
-            Assert.AreEqual(RedeemStatus.Malformed, store.TryRedeem(null, v3, out _), "challenge fehlt");
-            Assert.AreEqual(RedeemStatus.Malformed, store.TryRedeem(c3, "kurz", out _), "verifier falsches Format");
+            // Ein unbekannter/falscher Code zählt nirgends als Fehlversuch – auch nicht am echten Grant.
+            string v3b = NewVerifier(), c3b = Challenge(v3b);
+            string code3b = store.Add(c3b, "p3b", null);
+            string unknownCode = NewVerifier(); // Format gültig, aber nie als Grant angelegt
+            for (int i = 1; i <= 10; i++)
+                Assert.AreEqual(RedeemStatus.NotFound, store.TryRedeem(unknownCode, NewVerifier(), out _), "unbekannter Code " + i);
+            Assert.AreEqual(RedeemStatus.Ok, store.TryRedeem(code3b, v3b, out _), "unbekannter Code zählt nicht als Fehlversuch am echten Grant");
+
+            Assert.AreEqual(RedeemStatus.Malformed, store.TryRedeem(null, v3, out _), "code fehlt");
+            Assert.AreEqual(RedeemStatus.Malformed, store.TryRedeem("kurz", v3, out _), "code falsches Format");
+            string vFormat = NewVerifier();
+            string codeForFormatCheck = store.Add(Challenge(vFormat), "pf", null);
+            Assert.AreEqual(RedeemStatus.Malformed, store.TryRedeem(codeForFormatCheck, "kurz", out _), "verifier falsches Format");
+            // Aufräumen: ein Formatfehler zählt nicht als Fehlversuch, der Grant bleibt normal einlösbar (und verschwindet
+            // hier aus dem Speicher, damit er die Count-Prüfung am Ende dieses Tests nicht verfälscht).
+            Assert.AreEqual(RedeemStatus.Ok, store.TryRedeem(codeForFormatCheck, vFormat, out _), "danach normal einlösbar");
 
             string v4 = NewVerifier(), c4 = Challenge(v4);
-            store.Add(c4, "p4", null);
+            string code4 = store.Add(c4, "p4", null);
             now = now.Add(DesktopGrantStore.Lifetime).AddSeconds(-1);
-            Assert.AreEqual(RedeemStatus.Ok, store.TryRedeem(c4, v4, out _), "kurz vor Ablauf gültig");
+            Assert.AreEqual(RedeemStatus.Ok, store.TryRedeem(code4, v4, out _), "kurz vor Ablauf gültig");
 
             string v5 = NewVerifier(), c5 = Challenge(v5);
-            store.Add(c5, "p5", null);
+            string code5 = store.Add(c5, "p5", null);
             now = now.Add(DesktopGrantStore.Lifetime);
-            Assert.AreEqual(RedeemStatus.Pending, store.TryRedeem(c5, v5, out _), "nach 2 Minuten abgelaufen");
+            Assert.AreEqual(RedeemStatus.NotFound, store.TryRedeem(code5, v5, out _), "nach 2 Minuten abgelaufen");
             Assert.AreEqual(0, store.Count, "abgelaufener Grant entfernt");
 
             var small = new DesktopGrantStore(() => now, maxGrants: 2);
-            Assert.IsTrue(small.Add(Challenge(NewVerifier()), "a", null) && small.Add(Challenge(NewVerifier()), "b", null), "2 erlaubt");
-            Assert.IsFalse(small.Add(Challenge(NewVerifier()), "c", null), "Obergrenze");
+            Assert.IsTrue(small.Add(Challenge(NewVerifier()), "a", null) != null && small.Add(Challenge(NewVerifier()), "b", null) != null, "2 erlaubt");
+            Assert.IsTrue(small.Add(Challenge(NewVerifier()), "c", null) == null, "Obergrenze");
             now = now.Add(DesktopGrantStore.Lifetime);
-            Assert.IsTrue(small.Add(Challenge(NewVerifier()), "d", null), "abgelaufene Grants machen Platz");
+            Assert.IsTrue(small.Add(Challenge(NewVerifier()), "d", null) != null, "abgelaufene Grants machen Platz");
             Assert.AreEqual(1, small.Count, "beim Anlegen aufgeräumt");
+
+            // Port-Validierung (RFC 8252 Loopback): 1024–65535, keine führenden Nullen, kein Drumherum.
+            foreach (var (raw, ok) in new[]
+            {
+                ("1024", true), ("65535", true), ("8080", true),
+                ("0", false), ("80", false), ("70000", false), ("abc", false), ("1234 ", false), (" 1234", false),
+                ("01024", false), ("", false), (null, false)
+            })
+            {
+                bool valid = DesktopGrantStore.ValidPort(raw, out int parsed);
+                Assert.AreEqual(ok, valid, "Port " + (raw ?? "<null>"));
+                if (ok) Assert.AreEqual(int.Parse(raw), parsed, "geparster Port " + raw);
+            }
         }
 
         private static async Task DesktopGoogleStart()
         {
             await using Harness h = await Harness.StartAsync();
             string challenge = Challenge(NewVerifier());
-            HttpResponseMessage res = await h.Http.GetAsync("/api/auth/google?desktop=" + challenge + "&join=AB12");
+            HttpResponseMessage res = await h.Http.GetAsync($"/api/auth/google?desktop={challenge}&port={TestPort}&join=AB12");
             Assert.AreEqual("accounts.google.com", res.Headers.Location.Host, "zu Google");
             Assert.IsFalse(res.Headers.Location.Query.Contains(challenge), "Desktop-challenge geht nicht an Google");
             string set = res.Headers.GetValues("Set-Cookie").First(v => v.StartsWith("pb_oauth="));
             string[] parts = set.Substring("pb_oauth=".Length, set.IndexOf(';') - "pb_oauth=".Length).Split('.');
-            Assert.AreEqual(4, parts.Length, "state.join.verifier.desktop");
+            Assert.AreEqual(5, parts.Length, "state.join.verifier.desktop.port");
             Assert.AreEqual("", parts[1], "Einladungscode im Desktop-Flow ignoriert");
             Assert.AreEqual(challenge, parts[3], "challenge im Cookie");
+            Assert.AreEqual(TestPort.ToString(), parts[4], "Port im Cookie");
             foreach (string bad in new[] { "kurz", new string('a', 42) + "!", new string('a', 44) })
             {
-                HttpResponseMessage r = await h.Http.GetAsync("/api/auth/google?desktop=" + Uri.EscapeDataString(bad));
+                HttpResponseMessage r = await h.Http.GetAsync($"/api/auth/google?desktop={Uri.EscapeDataString(bad)}&port={TestPort}");
                 Assert.AreEqual("/desktop-login?error=oauth_failed", r.Headers.Location.OriginalString, "ungültige challenge: " + bad);
                 Assert.IsFalse(r.Headers.TryGetValues("Set-Cookie", out var sc) && sc.Any(v => v.StartsWith("pb_oauth=")), "kein state-Cookie: " + bad);
+            }
+            // Port muss wie eine ungültige challenge behandelt werden: 1024–65535, keine führenden Nullen, kein Drumherum.
+            foreach (string badPort in new[] { "0", "80", "70000", "abc", "1234 ", "" })
+            {
+                HttpResponseMessage r = await h.Http.GetAsync($"/api/auth/google?desktop={challenge}&port={Uri.EscapeDataString(badPort)}");
+                Assert.AreEqual("/desktop-login?error=oauth_failed", r.Headers.Location.OriginalString, "ungültiger Port: '" + badPort + "'");
+                Assert.IsFalse(r.Headers.TryGetValues("Set-Cookie", out var sc) && sc.Any(v => v.StartsWith("pb_oauth=")), "kein state-Cookie: Port " + badPort);
             }
         }
 
@@ -439,8 +508,10 @@ namespace Paintball.Net.Tests
         {
             await using Harness h = await Harness.StartAsync();
             string browserSession = await h.LoginAsync("ImBrowser");
-            HttpResponseMessage res = await DesktopCallbackAsync(h, Challenge(NewVerifier()), "d1", browserSession);
-            Assert.AreEqual("/desktop-login", res.Headers.Location.OriginalString, "Erfolgsseite statt /play");
+            HttpResponseMessage res = await DesktopCallbackAsync(h, Challenge(NewVerifier()), "d1", TestPort, browserSession);
+            (string loopbackCode, string loopbackError) = AssertLoopbackRedirect(res, TestPort);
+            Assert.IsTrue(loopbackCode != null, "Code an den lokalen Empfänger statt der Erfolgsseite direkt");
+            Assert.IsTrue(loopbackError == null, "kein Fehler");
             Assert.IsFalse(SetsSession(res), "keine Sitzung im Browser");
             Assert.IsFalse(res.Headers.TryGetValues("Set-Cookie", out var sc) && sc.Any(v => v.StartsWith("pb_suggest=")), "kein Namensvorschlag im Browser");
             Assert.IsTrue(res.Headers.CacheControl?.NoStore == true, "no-store");
@@ -453,20 +524,30 @@ namespace Paintball.Net.Tests
             await using Harness h = await Harness.StartAsync();
             string challenge = Challenge(NewVerifier());
             HttpResponseMessage failed = await DesktopCallbackAsync(h, challenge, "bad");
-            Assert.AreEqual("/desktop-login?error=oauth_failed", failed.Headers.Location.OriginalString, "Token-Tausch fehlgeschlagen");
+            (string failCode, string failError) = AssertLoopbackRedirect(failed, TestPort);
+            Assert.AreEqual("oauth_failed", failError, "Token-Tausch fehlgeschlagen, an den lokalen Empfänger gemeldet");
+            Assert.IsTrue(failCode == null, "kein Code bei Fehler");
             Assert.IsFalse(SetsSession(failed), "keine Sitzung");
 
-            HttpResponseMessage start = await h.Http.GetAsync("/api/auth/google?desktop=" + challenge);
+            HttpResponseMessage start = await h.Http.GetAsync($"/api/auth/google?desktop={challenge}&port={TestPort}");
             var (state, cookie) = ReadOAuthCookie(start);
             var cancel = new HttpRequestMessage(HttpMethod.Get, $"/api/auth/google/callback?error=access_denied&state={state}");
             cancel.Headers.Add("Cookie", cookie);
-            Assert.AreEqual("/desktop-login?error=cancelled", (await h.Http.SendAsync(cancel)).Headers.Location.OriginalString, "Abbruch");
+            HttpResponseMessage cancelRes = await h.Http.SendAsync(cancel);
+            (_, string cancelError) = AssertLoopbackRedirect(cancelRes, TestPort);
+            Assert.AreEqual("cancelled", cancelError, "Abbruch, an den lokalen Empfänger gemeldet");
+
+            // Ohne gültigen state (Anti-CSRF) bleibt es bei der normalen Fehlerseite: der Port aus der URL ist an dieser
+            // Stelle noch nicht vertrauenswürdig (kein gültiges pb_oauth-Cookie dazu).
+            var noState = new HttpRequestMessage(HttpMethod.Get, $"/api/auth/google/callback?error=access_denied&state=falsch");
+            Assert.AreEqual("/play?auth_error=invalid_state", (await h.Http.SendAsync(noState)).Headers.Location.OriginalString,
+                "ungültiger state → normale Fehlerseite, nicht der (nicht vertrauenswürdige) Loopback");
 
             HttpResponseMessage probe = await h.Http.SendAsync(RedeemReq(challenge, NewVerifier()));
-            Assert.AreEqual(HttpStatusCode.Accepted, probe.StatusCode, "nach Fehlern kein Grant (sonst 401)");
+            Assert.AreEqual(HttpStatusCode.NotFound, probe.StatusCode, "challenge ist kein Code – nie ein Grant (sonst 401)");
 
             await using Harness off = await Harness.StartAsync(google: null, googleConfigured: false);
-            HttpResponseMessage nc = await off.Http.GetAsync("/api/auth/google?desktop=" + challenge);
+            HttpResponseMessage nc = await off.Http.GetAsync($"/api/auth/google?desktop={challenge}&port={TestPort}");
             Assert.AreEqual("/desktop-login?error=not_configured", nc.Headers.Location.OriginalString, "nicht konfiguriert");
         }
 
@@ -474,8 +555,10 @@ namespace Paintball.Net.Tests
         {
             await using Harness h = await Harness.StartAsync();   // FakeGoogle liefert GivenName "Omar"
             string verifier = NewVerifier(), challenge = Challenge(verifier);
-            await DesktopCallbackAsync(h, challenge, "d2");
-            HttpResponseMessage res = await h.Http.SendAsync(RedeemReq(challenge, verifier));
+            HttpResponseMessage callback = await DesktopCallbackAsync(h, challenge, "d2");
+            (string code, _) = AssertLoopbackRedirect(callback, TestPort);
+            Assert.IsTrue(code != null, "Code vom Callback über den lokalen Empfänger");
+            HttpResponseMessage res = await h.Http.SendAsync(RedeemReq(code, verifier));
             Assert.AreEqual(HttpStatusCode.OK, res.StatusCode, "eingelöst");
             Assert.IsTrue(res.Headers.CacheControl?.NoStore == true, "no-store");
             string set = res.Headers.GetValues("Set-Cookie").First(v => v.StartsWith("__Host-pb_session=")).ToLowerInvariant();
@@ -488,24 +571,31 @@ namespace Paintball.Net.Tests
             JsonElement me = JsonDocument.Parse(await (await h.Http.SendAsync(meReq)).Content.ReadAsStringAsync()).RootElement;
             Assert.IsTrue(me.GetProperty("needsName").GetBoolean(), "neues Konto → Namenswahl");
             Assert.AreEqual("Omar", me.GetProperty("suggestedName").GetString(), "Vorschlag kommt über den Grant in der App an");
-            HttpResponseMessage again = await h.Http.SendAsync(RedeemReq(challenge, verifier));
-            Assert.AreEqual(HttpStatusCode.Accepted, again.StatusCode, "zweites Einlösen: Grant verbraucht");
+            HttpResponseMessage again = await h.Http.SendAsync(RedeemReq(code, verifier));
+            Assert.AreEqual(HttpStatusCode.NotFound, again.StatusCode, "zweites Einlösen: Code verbraucht");
             Assert.IsFalse(SetsSession(again), "keine zweite Sitzung");
+
+            // Angriffsszenario (Kontoübernahme, Sicherheits-Review Task 1): Wer nur challenge/verifier kennt, aber nicht
+            // den Code, bekommt selbst mit dem echten verifier keine Sitzung.
+            HttpResponseMessage withoutCode = await h.Http.SendAsync(RedeemReq(challenge, verifier));
+            Assert.AreEqual(HttpStatusCode.NotFound, withoutCode.StatusCode, "challenge statt Code – kein Treffer");
+            Assert.IsFalse(SetsSession(withoutCode), "keine Sitzung ohne den Code");
         }
 
         private static async Task DesktopRedeemWrongVerifier()
         {
             await using Harness h = await Harness.StartAsync();
             string verifier = NewVerifier(), challenge = Challenge(verifier);
-            await DesktopCallbackAsync(h, challenge, "d3");
+            HttpResponseMessage callback = await DesktopCallbackAsync(h, challenge, "d3");
+            (string code, _) = AssertLoopbackRedirect(callback, TestPort);
             for (int i = 1; i <= 5; i++)
             {
-                HttpResponseMessage bad = await h.Http.SendAsync(RedeemReq(challenge, NewVerifier()));
+                HttpResponseMessage bad = await h.Http.SendAsync(RedeemReq(code, NewVerifier()));
                 Assert.AreEqual(HttpStatusCode.Unauthorized, bad.StatusCode, "falscher verifier " + i);
                 Assert.IsFalse(SetsSession(bad), "keine Sitzung " + i);
             }
-            HttpResponseMessage late = await h.Http.SendAsync(RedeemReq(challenge, verifier));
-            Assert.AreEqual(HttpStatusCode.Accepted, late.StatusCode, "nach 5 Fehlversuchen gelöscht – auch der richtige verifier hilft nicht mehr");
+            HttpResponseMessage late = await h.Http.SendAsync(RedeemReq(code, verifier));
+            Assert.AreEqual(HttpStatusCode.NotFound, late.StatusCode, "nach 5 Fehlversuchen gelöscht – auch der richtige verifier hilft nicht mehr");
             Assert.IsFalse(SetsSession(late), "keine Sitzung");
         }
 
@@ -515,11 +605,12 @@ namespace Paintball.Net.Tests
             var grants = new DesktopGrantStore(() => now);
             await using Harness h = await Harness.StartAsync(desktopGrants: grants);
             string verifier = NewVerifier(), challenge = Challenge(verifier);
-            await DesktopCallbackAsync(h, challenge, "d4");
+            HttpResponseMessage callback = await DesktopCallbackAsync(h, challenge, "d4");
+            (string code, _) = AssertLoopbackRedirect(callback, TestPort);
             Assert.AreEqual(1, grants.Count, "Grant liegt");
             now = now.Add(DesktopGrantStore.Lifetime);
-            HttpResponseMessage res = await h.Http.SendAsync(RedeemReq(challenge, verifier));
-            Assert.AreEqual(HttpStatusCode.Accepted, res.StatusCode, "abgelaufen → wie nicht vorhanden");
+            HttpResponseMessage res = await h.Http.SendAsync(RedeemReq(code, verifier));
+            Assert.AreEqual(HttpStatusCode.NotFound, res.StatusCode, "abgelaufen → wie nicht vorhanden");
             Assert.IsFalse(SetsSession(res), "keine Sitzung");
             Assert.AreEqual(0, grants.Count, "abgelaufener Grant entfernt");
         }
@@ -528,22 +619,26 @@ namespace Paintball.Net.Tests
         {
             await using Harness h = await Harness.StartAsync();
             string verifier = NewVerifier(), challenge = Challenge(verifier);
-            await DesktopCallbackAsync(h, challenge, "d5");
-            HttpResponseMessage form = await h.Http.SendAsync(RedeemReq(challenge, verifier, "text/plain"));
+            HttpResponseMessage callback = await DesktopCallbackAsync(h, challenge, "d5");
+            (string code, _) = AssertLoopbackRedirect(callback, TestPort);
+            HttpResponseMessage form = await h.Http.SendAsync(RedeemReq(code, verifier, "text/plain"));
             Assert.AreEqual(HttpStatusCode.UnsupportedMediaType, form.StatusCode, "text/plain (Formular-Trick) abgelehnt");
             var broken = new HttpRequestMessage(HttpMethod.Post, "/api/auth/desktop/redeem") { Content = new StringContent("{kaputt", Encoding.UTF8, "application/json") };
             Assert.AreEqual(HttpStatusCode.BadRequest, (await h.Http.SendAsync(broken)).StatusCode, "kaputtes JSON");
-            Assert.AreEqual(HttpStatusCode.BadRequest, (await h.Http.SendAsync(RedeemReq(challenge, "kurz"))).StatusCode, "verifier falsches Format");
+            Assert.AreEqual(HttpStatusCode.BadRequest, (await h.Http.SendAsync(RedeemReq(code, "kurz"))).StatusCode, "verifier falsches Format");
+            Assert.AreEqual(HttpStatusCode.BadRequest, (await h.Http.SendAsync(RedeemReq("kurz", verifier))).StatusCode, "code falsches Format");
             var big = new HttpRequestMessage(HttpMethod.Post, "/api/auth/desktop/redeem")
             {
-                Content = new StringContent("{\"challenge\":\"" + new string('a', 2000) + "\"}", Encoding.UTF8, "application/json")
+                Content = new StringContent("{\"code\":\"" + new string('a', 2000) + "\"}", Encoding.UTF8, "application/json")
             };
             Assert.AreEqual(HttpStatusCode.BadRequest, (await h.Http.SendAsync(big)).StatusCode, "Körper über 1 KB");
             HttpResponseMessage unknown = await h.Http.SendAsync(RedeemReq(Challenge(NewVerifier()), NewVerifier()));
-            Assert.AreEqual(HttpStatusCode.Accepted, unknown.StatusCode, "unbekannte challenge: noch nicht angemeldet");
+            Assert.AreEqual(HttpStatusCode.NotFound, unknown.StatusCode, "unbekannter Code: kein Grant");
             Assert.IsTrue(unknown.Headers.CacheControl?.NoStore == true, "no-store");
-            Assert.AreEqual(HttpStatusCode.OK, (await h.Http.SendAsync(RedeemReq(challenge, verifier))).StatusCode,
-                "Format- und Typfehler zählen nicht als Fehlversuch");
+            // Format-/Typfehler UND unbekannte/falsche Codes zählen nicht als Fehlversuch am echten Grant.
+            for (int i = 1; i <= 8; i++) await h.Http.SendAsync(RedeemReq(NewVerifier(), NewVerifier()));
+            Assert.AreEqual(HttpStatusCode.OK, (await h.Http.SendAsync(RedeemReq(code, verifier))).StatusCode,
+                "Format-, Typ- und Fremd-Code-Fehler zählen nicht als Fehlversuch am echten Grant");
         }
 
         private static async Task DesktopRedeemRateLimit()
@@ -552,7 +647,7 @@ namespace Paintball.Net.Tests
             for (int i = 1; i <= 60; i++)
             {
                 HttpResponseMessage ok = await h.Http.SendAsync(RedeemReq(Challenge(NewVerifier()), NewVerifier()));
-                Assert.AreEqual(HttpStatusCode.Accepted, ok.StatusCode, $"Abfrage {i} erlaubt (Polling alle 2 s = 30/min, doppelte Reserve)");
+                Assert.AreEqual(HttpStatusCode.NotFound, ok.StatusCode, $"Abfrage {i} durchgelassen (unbekannter Code, aber nicht rate-begrenzt)");
             }
             HttpResponseMessage limited = await h.Http.SendAsync(RedeemReq(Challenge(NewVerifier()), NewVerifier()));
             Assert.AreEqual((HttpStatusCode)429, limited.StatusCode, "61. Abfrage begrenzt");
@@ -564,17 +659,48 @@ namespace Paintball.Net.Tests
         {
             await using Harness h = await Harness.StartAsync();
             string verifier = NewVerifier(), challenge = Challenge(verifier);
-            HttpResponseMessage res = await h.Http.GetAsync($"/api/auth/dev?name=DeskDev&desktop={challenge}");
-            Assert.AreEqual("/desktop-login", res.Headers.Location.OriginalString, "Erfolgsseite");
+            HttpResponseMessage res = await h.Http.GetAsync($"/api/auth/dev?name=DeskDev&desktop={challenge}&port={TestPort}");
+            (string code, string error) = AssertLoopbackRedirect(res, TestPort);
+            Assert.IsTrue(code != null, "Code an den lokalen Empfänger, wie beim Google-Callback");
+            Assert.IsTrue(error == null, "kein Fehler");
             Assert.IsFalse(SetsSession(res), "keine Sitzung im Browser");
-            HttpResponseMessage redeem = await h.Http.SendAsync(RedeemReq(challenge, verifier));
+            HttpResponseMessage redeem = await h.Http.SendAsync(RedeemReq(code, verifier));
             Assert.AreEqual(HttpStatusCode.OK, redeem.StatusCode, "Dev-Grant einlösbar");
             JsonElement me = JsonDocument.Parse(await (await h.Http.SendAsync(h.Req(HttpMethod.Get, "/api/me", SessionCookieOf(redeem)))).Content.ReadAsStringAsync()).RootElement;
             Assert.AreEqual("DeskDev", me.GetProperty("name").GetString(), "Name aus dem Dev-Login");
-            Assert.AreEqual(HttpStatusCode.BadRequest, (await h.Http.GetAsync("/api/auth/dev?desktop=kurz")).StatusCode, "ungültige challenge");
+            Assert.AreEqual(HttpStatusCode.BadRequest, (await h.Http.GetAsync($"/api/auth/dev?desktop=kurz&port={TestPort}")).StatusCode, "ungültige challenge");
+            Assert.AreEqual(HttpStatusCode.BadRequest, (await h.Http.GetAsync($"/api/auth/dev?desktop={challenge}&port=80")).StatusCode, "ungültiger Port");
             await using Harness prod = await Harness.StartAsync(devLogin: false);
-            Assert.AreEqual(HttpStatusCode.NotFound, (await prod.Http.GetAsync($"/api/auth/dev?desktop={challenge}")).StatusCode,
+            Assert.AreEqual(HttpStatusCode.NotFound, (await prod.Http.GetAsync($"/api/auth/dev?desktop={challenge}&port={TestPort}")).StatusCode,
                 "ohne --dev-login keine Dev-Variante");
+        }
+
+        /// <summary>
+        /// Der vom Sicherheits-Review gefundene Angriff (Runde 1, jetzt durch die Loopback-Rückgabe verhindert):
+        /// (1) Der Angreifer erzeugt eigene verifier/challenge, (2) das Opfer klickt einen Link mit dieser challenge
+        /// (hier: ohne Cookie vom Angreifer selbst gestartet, wie es ein Phishing-Link täte) und meldet sich bei Google an,
+        /// (3) der Angreifer versucht, mit challenge+verifier eine Sitzung zu bekommen. Er bekommt keine – ihm fehlt der
+        /// Code, der ausschließlich per Server-Redirect an 127.0.0.1 auf dem Rechner des Opfers ankommt.
+        /// </summary>
+        private static async Task DesktopAccountTakeoverPrevented()
+        {
+            await using Harness h = await Harness.StartAsync();
+            string attackerVerifier = NewVerifier(), attackerChallenge = Challenge(attackerVerifier);
+
+            // Das Opfer schließt den Google-Login mit der vom Angreifer vorgegebenen challenge ab (der Port ist der des
+            // Rechners, auf dem das Opfer gerade sitzt – der Code aus der Weiterleitung erreicht nur diesen Rechner).
+            HttpResponseMessage victimCallback = await DesktopCallbackAsync(h, attackerChallenge, "victim-code", TestPort);
+            (string code, _) = AssertLoopbackRedirect(victimCallback, TestPort);
+            Assert.IsTrue(code != null, "Grant wurde fürs Opfer angelegt");
+
+            // Der Angreifer kennt challenge UND verifier (er hat sie selbst erzeugt) – aber nicht den Code.
+            HttpResponseMessage attackerAttempt = await h.Http.SendAsync(RedeemReq(attackerChallenge, attackerVerifier));
+            Assert.AreEqual(HttpStatusCode.NotFound, attackerAttempt.StatusCode, "Angreifer ohne Code: keine Sitzung");
+            Assert.IsFalse(SetsSession(attackerAttempt), "keine Kontoübernahme");
+
+            // Zum Vergleich: Mit dem Code (den nur das Opfer über seinen lokalen Empfänger bekommt) gelingt es.
+            HttpResponseMessage legit = await h.Http.SendAsync(RedeemReq(code, attackerVerifier));
+            Assert.AreEqual(HttpStatusCode.OK, legit.StatusCode, "mit dem echten Code UND dem passenden verifier gelingt das Einlösen");
         }
 
         private sealed class Harness : IAsyncDisposable

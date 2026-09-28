@@ -135,36 +135,46 @@
 - Modify: `server/Paintball.Server/ServerHost.cs` (`ServerHostOptions.DesktopGrants`, Verdrahtung, `Pages["/desktop-login"]`)
 - Test: `tests/Paintball.Net.Tests/IntegrationTests.cs`
 
-**Interfaces:**
+**Interfaces (Nachtrag Loopback, Sicherheits-Review Runde 1):**
+
+> Ursprünglich (unten in Step 1–9 noch dokumentiert) lag der Grant unter der vom Client gewählten `challenge`; damit
+> konnte ein Angreifer dem Opfer per Link seine eigene `challenge` unterschieben, das Opfer bei Google anmelden lassen
+> und den Grant anschließend mit seinem eigenen `verifier` einlösen (Kontoübernahme). Das Review hat das gefunden;
+> die Ruling war ein Umbau auf **RFC 8252 (Loopback-Redirect)**, siehe Spec-Nachtrag „Loopback-Rückgabe“
+> (`docs/superpowers/specs/2026-09-28-desktop-exe-design.md`, Commit `e10ecd6`). Die folgenden Punkte ersetzen die
+> gleichnamigen Abschnitte aus Step 1–9 unten; der restliche Text dort (Testgerüst, Reihenfolge der Schritte) ist nur
+> noch historisch und beschreibt nicht mehr die tatsächliche Schnittstelle.
+
 - Consumes: `AccountStore.SignIn/CreateSession/EndSession/SetName`, `AuthApi.SetSession/SessionToken`, `RateLimiter`, `FakeGoogle` (Code `bad` wirft).
 - Produces:
-  - `GET /api/auth/google?desktop=<challenge>`:
-    - Weiterleitung zu Google, `pb_oauth = state.join.verifier.desktop`. Im Desktop-Flow ist `join` leer, im normalen Login ist `desktop` leer.
-    - Ungültige challenge → `302 /desktop-login?error=oauth_failed`.
+  - `GET /api/auth/google?desktop=<challenge>&port=<n>`:
+    - `port` ist der Port des lokalen RFC-8252-Empfängers der App, 1024–65535 (sonst wie eine ungültige challenge behandelt).
+    - Weiterleitung zu Google, `pb_oauth = state.join.verifier.desktop.port`. Im Desktop-Flow ist `join` leer, im normalen Login sind `desktop` und `port` leer.
+    - Ungültige challenge oder ungültiger Port → `302 /desktop-login?error=oauth_failed` (keine Loopback-Weiterleitung: der Port ist an dieser Stelle noch nicht durch ein gültiges `pb_oauth`-Cookie gedeckt).
     - Nicht konfiguriert → `302 /desktop-login?error=not_configured`.
-  - Callback im Desktop-Flow:
-    - Erfolg → `302 /desktop-login`, kein `__Host-pb_session`, kein `pb_suggest`.
-    - Fehler → `302 /desktop-login?error=oauth_failed|cancelled`.
-    - Ungültiger state → wie bisher `302 /play?auth_error=invalid_state`.
-  - Dev-Variante `GET /api/auth/dev?desktop=<challenge>&name=<Name>` (nur mit `--dev-login`):
-    - Erfolg → `302 /desktop-login`.
-    - Ungültige challenge → 400.
-  - `POST /api/auth/desktop/redeem`, `Content-Type: application/json`, Körper `{"challenge":"…","verifier":"…"}`, immer `Cache-Control: no-store`:
+  - Callback im Desktop-Flow (Port kommt aus dem `pb_oauth`-Cookie, nicht mehr aus der URL, und ist erst nach der `state`-Prüfung vertrauenswürdig):
+    - Erfolg → `302 http://127.0.0.1:<port>/done?code=<neuer Einmal-Code>`, kein `__Host-pb_session`, kein `pb_suggest`.
+    - Fehler/Abbruch → `302 http://127.0.0.1:<port>/done?error=oauth_failed|cancelled`.
+    - Ungültiger `state` → weiterhin `302 /play?auth_error=invalid_state` (nie der Loopback: der Port ist ohne gültigen `state` nicht vertrauenswürdig).
+  - Dev-Variante `GET /api/auth/dev?desktop=<challenge>&port=<n>&name=<Name>` (nur mit `--dev-login`):
+    - Erfolg → `302 http://127.0.0.1:<port>/done?code=<Code>`, wie beim Google-Callback.
+    - Ungültige challenge oder ungültiger Port → 400.
+  - `POST /api/auth/desktop/redeem`, `Content-Type: application/json`, Körper `{"code":"…","verifier":"…"}`, immer `Cache-Control: no-store`:
     - 200 `{"status":"ok"}` plus `Set-Cookie: __Host-pb_session=…` und `pb_suggest` (gesetzt bei Namensvorschlag, sonst gelöscht)
-    - 202 `{"status":"pending"}`
-    - 400 `{"error":"invalid"}`
-    - 401 `{"error":"invalid"}`
-    - 409 `{"error":"gone"}`
-    - 415
-    - 429
-  - `/desktop-login` → `/desktop-login.html` (die Datei legt Task 2 an).
-  - `public static string GoogleAuthApi.DesktopPage(string code)`.
+    - 404 `{"error":"invalid"}` – Code unbekannt, abgelaufen oder schon verbraucht; zählt nirgends als Fehlversuch (kein `202 pending` mehr, es gibt kein Polling).
+    - 400 `{"error":"invalid"}` – Format von `code`/`verifier` falsch, kaputtes JSON oder Körper über 1 KB.
+    - 401 `{"error":"invalid"}` – Code bekannt, `verifier` passt nicht zur `challenge` (zählt als Fehlversuch am Grant).
+    - 409 `{"error":"gone"}` – Konto zwischen Callback und Einlösen gelöscht.
+    - 415 – kein `application/json`.
+    - 429 – Rate-Limit (60/min/IP, eigene Instanz).
+  - `/desktop-login` → `/desktop-login.html` bleibt die Erfolgs-/Fehlerseite; sie wird jetzt vom lokalen Empfänger der App angesteuert, nicht mehr direkt vom Server (außer bei `not_configured` und bei ungültiger challenge/Port auf der Start-Route, siehe oben).
+  - `public static string GoogleAuthApi.DesktopPage(string code)` (nur noch für die oben genannten Sonderfälle) und neu `internal static string GoogleAuthApi.LoopbackUrl(int port, string query)`.
   - `public sealed class DesktopGrantStore(Func<DateTime> clock = null, int maxGrants = 10_000)` mit:
     - `Lifetime`, `MaxFailures`, `Count`
-    - `ValidPkceValue(string)`, `ChallengeOf(string)`
-    - `Add(string challenge, string playerId, string suggestedName) → bool`
-    - `TryRedeem(string challenge, string verifier, out DesktopGrant grant) → RedeemStatus`
-  - `enum RedeemStatus { Ok, Pending, WrongVerifier, Malformed }`.
+    - `ValidPkceValue(string)` (gilt für `verifier`, `challenge` und den Code), `ValidPort(string, out int)`
+    - `Add(string challenge, string playerId, string suggestedName) → string` (neuer Einmal-Code, oder `null`)
+    - `TryRedeem(string code, string verifier, out DesktopGrant grant) → RedeemStatus` – sucht über den **Code**, nicht mehr über die challenge
+  - `enum RedeemStatus { Ok, NotFound, WrongVerifier, Malformed }` (ersetzt `Pending`).
 
 - [ ] **Step 1: Failing Tests schreiben**
 

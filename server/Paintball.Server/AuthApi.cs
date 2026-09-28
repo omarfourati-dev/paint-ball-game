@@ -144,13 +144,15 @@ namespace Paintball.Server
             });
 
             // Bewusst ohne Rate-Limit: existiert nur mit --dev-login (nie in Produktion), die Tests melden sich darüber oft an.
-            // ?desktop=<challenge>: Dev-Variante des Desktop-Logins für lokale Tests der App – Grant statt Sitzung, wie der Google-Callback.
+            // ?desktop=<challenge>&port=<n>: Dev-Variante des Loopback-Desktop-Logins für lokale Tests der App – Grant statt
+            // Sitzung, Rückgabe an den lokalen Empfänger wie beim Google-Callback (Spec-Nachtrag „Loopback-Rückgabe“).
             app.MapGet("/api/auth/dev", (HttpContext ctx) =>
             {
                 if (!options.DevLogin) return Results.NotFound();
                 string desktop = ctx.Request.Query["desktop"].ToString();
                 bool isDesktop = desktop.Length > 0;
-                if (isDesktop && !DesktopGrantStore.ValidPkceValue(desktop)) return Results.BadRequest();
+                bool validPort = DesktopGrantStore.ValidPort(ctx.Request.Query["port"].ToString(), out int port);
+                if (isDesktop && (!DesktopGrantStore.ValidPkceValue(desktop) || !validPort)) return Results.BadRequest();
                 if (!isDesktop) accounts.EndSession(SessionToken(ctx)); // Re-Login: altes Token nicht gültig lassen (Desktop: Browser bleibt, wie er ist)
                 string name = ctx.Request.Query["name"].ToString();
                 string sub = "dev:" + (string.IsNullOrEmpty(name) ? Guid.NewGuid().ToString("N") : name.ToLowerInvariant());
@@ -159,7 +161,11 @@ namespace Paintball.Server
                 catch (AccountDeletedException) { return Results.Conflict(); }   // gleichzeitig gelöscht
                 if (s.NeedsName && !string.IsNullOrEmpty(name)) accounts.SetName(s.PlayerId, name);
                 if (isDesktop)
-                    return Results.Redirect(GoogleAuthApi.DesktopPage(grants.Add(desktop, s.PlayerId, null) ? null : "oauth_failed"));
+                {
+                    string grantCode = grants.Add(desktop, s.PlayerId, null);
+                    string url = grantCode != null ? GoogleAuthApi.LoopbackUrl(port, "code=" + grantCode) : GoogleAuthApi.LoopbackUrl(port, "error=oauth_failed");
+                    return Results.Redirect(url);
+                }
                 SetSession(ctx, accounts, accounts.CreateSession(s.PlayerId));
                 string join = ctx.Request.Query["join"].ToString();
                 return Results.Redirect(GoogleAuthApi.ValidJoin(join) != null ? "/play?join=" + join : "/play");

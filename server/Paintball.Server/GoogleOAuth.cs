@@ -77,11 +77,18 @@ namespace Paintball.Server
         private static string Base64Url(byte[] b) => Convert.ToBase64String(b).TrimEnd('=').Replace('+', '-').Replace('/', '_');
         private static bool ValidVerifier(string v) => v != null && v.Length == 43 && Regex.IsMatch(v, @"\A[A-Za-z0-9\-_]{43}\z");
 
-        /// <summary>Seite im Standardbrowser am Ende des Desktop-Logins; code = null heißt Erfolg.</summary>
+        /// <summary>Seite im Standardbrowser, wenn der Desktop-Flow nicht bis zu einem gültigen Port kommt; code = null heißt Erfolg.</summary>
         public static string DesktopPage(string code) => code == null ? "/desktop-login" : "/desktop-login?error=" + code;
 
+        /// <summary>
+        /// RFC-8252-Rückgabe an den lokalen Empfänger der App (Spec-Nachtrag „Loopback-Rückgabe“): Nur ein Prozess auf
+        /// 127.0.0.1 auf genau diesem Rechner bekommt den Code – deshalb ist die challenge allein (die ein Angreifer dem
+        /// Opfer unterschieben kann) für eine Kontoübernahme wertlos.
+        /// </summary>
+        internal static string LoopbackUrl(int port, string query) => $"http://127.0.0.1:{port}/done?{query}";
+
         /// <param name="limiter">Dieselbe Instanz wie in AuthApi.Map (20/min/IP pro Host).</param>
-        /// <param name="grants">Desktop-Login: Mit ?desktop=&lt;challenge&gt; endet der Flow in einem Grant statt in einer Browser-Sitzung.</param>
+        /// <param name="grants">Desktop-Login: Mit ?desktop=&lt;challenge&gt;&amp;port=&lt;n&gt; endet der Flow im lokalen Empfänger der App statt in einer Browser-Sitzung.</param>
         public static void Map(WebApplication app, AccountStore accounts, ServerHostOptions options, RateLimiter limiter, DesktopGrantStore grants)
         {
             IGoogleOAuthClient google = options.Google ?? (Configured(options) ? new GoogleOAuthClient(options.GoogleClientId, options.GoogleClientSecret) : null);
@@ -91,18 +98,21 @@ namespace Paintball.Server
             {
                 ctx.Response.Headers.CacheControl = "no-store"; // gilt auch für 429 (kein Zwischenspeichern von Auth-Antworten)
                 if (limiter.Exceeded(ctx)) return Results.StatusCode(429);
-                // Desktop-App: challenge = BASE64URL(SHA256(verifier der App)); ungültig → Fehlerseite ohne state-Cookie
+                // Desktop-App: challenge = BASE64URL(SHA256(verifier der App)), port = Port ihres lokalen RFC-8252-Empfängers;
+                // beide ungültig → Fehlerseite ohne state-Cookie (ein ungültiger Port ist so zu behandeln wie eine ungültige challenge).
                 string desktop = ctx.Request.Query["desktop"].ToString();
                 bool isDesktop = desktop.Length > 0;
-                if (isDesktop && !DesktopGrantStore.ValidPkceValue(desktop)) return Results.Redirect(DesktopPage("oauth_failed"));
+                bool validPort = DesktopGrantStore.ValidPort(ctx.Request.Query["port"].ToString(), out int port);
+                if (isDesktop && (!DesktopGrantStore.ValidPkceValue(desktop) || !validPort)) return Results.Redirect(DesktopPage("oauth_failed"));
                 if (!Configured(options) || google == null)
                     return Results.Redirect(isDesktop ? DesktopPage("not_configured") : "/play?auth_error=not_configured");
                 string state = Convert.ToHexString(RandomNumberGenerator.GetBytes(24));
                 string join = isDesktop ? string.Empty : (ValidJoin(ctx.Request.Query["join"].ToString()) ?? string.Empty);
                 string verifier = Base64Url(RandomNumberGenerator.GetBytes(32));
                 string challenge = Base64Url(SHA256.HashData(Encoding.ASCII.GetBytes(verifier)));
-                // Format state.join.verifier.desktop – desktop ist im normalen Browser-Login leer
-                ctx.Response.Cookies.Append(OAuthCookie, state + "." + join + "." + verifier + "." + desktop, cookieOpts);
+                string portPart = isDesktop ? port.ToString(System.Globalization.CultureInfo.InvariantCulture) : string.Empty;
+                // Format state.join.verifier.desktop.port – desktop und port sind im normalen Browser-Login leer
+                ctx.Response.Cookies.Append(OAuthCookie, state + "." + join + "." + verifier + "." + desktop + "." + portPart, cookieOpts);
                 string url = "https://accounts.google.com/o/oauth2/v2/auth?" + string.Join("&",
                     "client_id=" + Uri.EscapeDataString(options.GoogleClientId),
                     "redirect_uri=" + Uri.EscapeDataString(RedirectUri(options, ctx.Request)),
@@ -123,16 +133,20 @@ namespace Paintball.Server
                 ctx.Response.Cookies.Delete(OAuthCookie, cookieOpts); // state gilt genau einmal
                 string state = ctx.Request.Query["state"].ToString(), code = ctx.Request.Query["code"].ToString();
                 string[] parts = stored?.Split('.');
-                bool known = parts?.Length is 3 or 4; // 3 Teile: Cookie von vor dem Desktop-Login (höchstens 10 min alt)
+                bool known = parts?.Length is 3 or 5; // 3 Teile: Cookie von vor dem Desktop-Login (höchstens 10 min alt)
                 string storedState = known ? parts[0] : null;
                 string join = known ? ValidJoin(parts[1]) : null;
                 string verifier = known ? parts[2] : null;
-                string desktop = known && parts.Length == 4 && parts[3].Length > 0 ? parts[3] : null;
-                if (storedState == null || !ValidVerifier(verifier) || (desktop != null && !DesktopGrantStore.ValidPkceValue(desktop)) ||
+                string desktop = known && parts.Length == 5 && parts[3].Length > 0 ? parts[3] : null;
+                // Der Port stammt aus dem eigenen, HttpOnly-Cookie (nicht mehr aus der URL) – erst NACH der state-Prüfung
+                // vertrauenswürdig, deshalb bei ungültigem state weiter auf die normale Fehlerseite, nie auf den Loopback.
+                int port = 0;
+                bool validPort = desktop == null || DesktopGrantStore.ValidPort(parts[4], out port);
+                if (storedState == null || !ValidVerifier(verifier) || (desktop != null && (!DesktopGrantStore.ValidPkceValue(desktop) || !validPort)) ||
                     string.IsNullOrEmpty(state) ||
                     !CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(storedState), Encoding.ASCII.GetBytes(state)))
                     return Results.Redirect("/play?auth_error=invalid_state");
-                string Fail(string reason) => desktop != null ? DesktopPage(reason) : "/play?auth_error=" + reason;
+                string Fail(string reason) => desktop != null ? LoopbackUrl(port, "error=" + reason) : "/play?auth_error=" + reason;
                 if (ctx.Request.Query["error"].ToString() == "access_denied") return Results.Redirect(Fail("cancelled"));
                 if (string.IsNullOrEmpty(code) || google == null) return Results.Redirect(Fail("oauth_failed"));
                 try
@@ -142,9 +156,11 @@ namespace Paintball.Server
                     if (desktop != null)
                     {
                         // Desktop-Login: keine Sitzung und kein Namensvorschlag im Browser, die Browser-Sitzung bleibt unberührt.
-                        // Die App löst den Grant mit ihrem verifier über /api/auth/desktop/redeem ein.
+                        // Die App löst den vom lokalen Empfänger erhaltenen Code mit ihrem verifier über
+                        // /api/auth/desktop/redeem ein.
                         string suggestion = s.NeedsName && !string.IsNullOrEmpty(user.GivenName) ? user.GivenName : null;
-                        return Results.Redirect(grants.Add(desktop, s.PlayerId, suggestion) ? DesktopPage(null) : DesktopPage("oauth_failed"));
+                        string grantCode = grants.Add(desktop, s.PlayerId, suggestion);
+                        return Results.Redirect(grantCode != null ? LoopbackUrl(port, "code=" + grantCode) : Fail("oauth_failed"));
                     }
                     accounts.EndSession(AuthApi.SessionToken(ctx)); // Re-Login: altes Token nicht gültig lassen
                     AuthApi.SetSession(ctx, accounts, accounts.CreateSession(s.PlayerId));

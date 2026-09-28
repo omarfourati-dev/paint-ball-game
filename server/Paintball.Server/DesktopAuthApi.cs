@@ -7,36 +7,41 @@ using Paintball.Net.Accounts;
 
 namespace Paintball.Server
 {
-    /// <summary>POST /api/auth/desktop/redeem: Die Desktop-App tauscht ihren verifier gegen die normale Sitzung (Spec §2.4).</summary>
+    /// <summary>
+    /// POST /api/auth/desktop/redeem: Die Desktop-App tauscht den vom lokalen RFC-8252-Empfänger erhaltenen Einmal-Code
+    /// plus ihrem verifier gegen die normale Sitzung (Spec-Nachtrag „Loopback-Rückgabe“).
+    /// </summary>
     public static class DesktopAuthApi
     {
         private const long MaxBodyBytes = 1024;
 
-        /// <param name="limiter">Eigene Instanz (60/min/IP): Die App fragt alle 2 s nach.</param>
+        /// <param name="limiter">Eigene Instanz (60/min/IP).</param>
         public static void Map(WebApplication app, AccountStore accounts, DesktopGrantStore grants, RateLimiter limiter)
         {
             app.MapPost("/api/auth/desktop/redeem", async (HttpContext ctx) =>
             {
                 ctx.Response.Headers.CacheControl = "no-store"; // auch für 429 und Fehler
                 if (limiter.Exceeded(ctx)) return Results.StatusCode(429);
-                // Bewusst ohne Origin-Prüfung: Die App hat keine Web-Origin, der Schutz liegt allein im verifier.
+                // Bewusst ohne Origin-Prüfung: Die App hat keine Web-Origin, der Schutz liegt allein im code (den nur der
+                // lokale Empfänger auf 127.0.0.1 bekommt) und im verifier.
                 // application/json ist Pflicht: Ein fremdes HTML-Formular kann diesen Typ nicht senden (kein Login-CSRF per Formular).
                 if (!IsJson(ctx.Request.ContentType)) return Results.StatusCode(415);
                 if (ctx.Request.ContentLength > MaxBodyBytes) return Invalid();
                 IHttpMaxRequestBodySizeFeature limit = ctx.Features.Get<IHttpMaxRequestBodySizeFeature>();
                 if (limit != null && !limit.IsReadOnly) limit.MaxRequestBodySize = MaxBodyBytes;
-                string challenge, verifier;
+                string code, verifier;
                 try
                 {
                     using JsonDocument doc = await JsonDocument.ParseAsync(ctx.Request.Body);
-                    challenge = doc.RootElement.GetProperty("challenge").GetString();
+                    code = doc.RootElement.GetProperty("code").GetString();
                     verifier = doc.RootElement.GetProperty("verifier").GetString();
                 }
                 catch (Exception) { return Invalid(); }
 
-                switch (grants.TryRedeem(challenge, verifier, out DesktopGrant grant))
+                switch (grants.TryRedeem(code, verifier, out DesktopGrant grant))
                 {
-                    case RedeemStatus.Pending: return Results.Json(new { status = "pending" }, statusCode: 202);
+                    // Unbekannt, abgelaufen oder schon verbraucht: zählt nirgends als Fehlversuch (es gibt ja keinen Grant mehr).
+                    case RedeemStatus.NotFound: return Results.Json(new { error = "invalid" }, statusCode: 404);
                     case RedeemStatus.WrongVerifier: return Results.Json(new { error = "invalid" }, statusCode: 401);
                     case RedeemStatus.Malformed: return Invalid();
                 }

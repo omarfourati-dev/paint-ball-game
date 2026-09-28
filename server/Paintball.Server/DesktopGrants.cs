@@ -1,12 +1,13 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 
 namespace Paintball.Server
 {
-    public enum RedeemStatus { Ok, Pending, WrongVerifier, Malformed }
+    public enum RedeemStatus { Ok, NotFound, WrongVerifier, Malformed }
 
     public sealed class DesktopGrant
     {
@@ -16,8 +17,13 @@ namespace Paintball.Server
     }
 
     /// <summary>
-    /// Desktop-Login (Spec §2): Nach dem Google-Callback im Standardbrowser liegt hier challenge → Spieler, bis die App mit dem
-    /// passenden verifier einlöst. Einmalig, 2 Minuten gültig, nach 5 Fehlversuchen gelöscht, nur im Arbeitsspeicher.
+    /// Desktop-Login nach RFC 8252 (Loopback-Rückgabe, Spec-Nachtrag „Loopback-Rückgabe“): Nach dem Google-Callback im
+    /// Standardbrowser legt der Server hier einen Einmal-Code an (code → challenge/Spieler), den er per Redirect auf
+    /// http://127.0.0.1:&lt;port&gt;/done an den lokalen Empfänger der App liefert. Die App löst mit code + ihrem verifier
+    /// über /api/auth/desktop/redeem ein. Einmalig, 2 Minuten gültig, nach 5 Fehlversuchen gelöscht, nur im Arbeitsspeicher.
+    /// Der Code – nicht die challenge – ist der Schlüssel: Eine challenge, die ein Angreifer dem Opfer unterschiebt (etwa in
+    /// einem Phishing-Link), nützt ohne den Code nichts, und der Code verlässt den Rechner des Opfers nie – er geht per
+    /// Server-Redirect ausschließlich an 127.0.0.1, erreicht also nur einen Prozess auf genau diesem Rechner.
     /// </summary>
     public sealed class DesktopGrantStore
     {
@@ -26,6 +32,7 @@ namespace Paintball.Server
 
         private sealed class Entry
         {
+            public string Challenge;
             public string PlayerId;
             public string SuggestedName;
             public DateTime ExpiresAt;
@@ -47,51 +54,71 @@ namespace Paintball.Server
 
         public int Count { get { lock (_lock) return _grants.Count; } }
 
-        /// <summary>PKCE-Wert: genau 43 Zeichen base64url (32 Byte ohne Padding) – gilt für verifier und challenge.</summary>
+        /// <summary>PKCE-Wert: genau 43 Zeichen base64url (32 Byte ohne Padding) – gilt für verifier, challenge und den Code.</summary>
         public static bool ValidPkceValue(string v) => v != null && Regex.IsMatch(v, @"\A[A-Za-z0-9\-_]{43}\z");
 
-        public static string ChallengeOf(string verifier)
+        private static string ChallengeOf(string verifier)
             => Convert.ToBase64String(SHA256.HashData(Encoding.ASCII.GetBytes(verifier))).TrimEnd('=').Replace('+', '-').Replace('/', '_');
 
-        /// <summary>false bei ungültiger challenge, wenn für sie schon ein Grant liegt (der erste gewinnt) oder der Speicher voll ist.</summary>
-        public bool Add(string challenge, string playerId, string suggestedName)
+        private static string NewCode() => Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+
+        /// <summary>Dynamischer Port des lokalen RFC-8252-Empfängers der App: 1024–65535, keine führenden Nullen, kein Umgebendes.</summary>
+        public static bool ValidPort(string s, out int port)
         {
-            if (!ValidPkceValue(challenge) || string.IsNullOrEmpty(playerId)) return false;
+            port = 0;
+            if (string.IsNullOrEmpty(s) || !Regex.IsMatch(s, @"\A[1-9][0-9]{3,4}\z")) return false;
+            int p = int.Parse(s, NumberStyles.None, CultureInfo.InvariantCulture);
+            if (p < 1024 || p > 65535) return false;
+            port = p;
+            return true;
+        }
+
+        /// <summary>
+        /// Legt bei gültiger challenge einen Grant an und gibt den neuen Einmal-Code zurück (null bei ungültiger challenge,
+        /// fehlender playerId oder vollem Speicher). Anders als die challenge (kann vom Client kommen) ist der Code
+        /// serverseitig zufällig – deshalb gibt es hier keine „erster gewinnt“-Regel mehr wie vor dem Loopback-Umbau.
+        /// </summary>
+        public string Add(string challenge, string playerId, string suggestedName)
+        {
+            if (!ValidPkceValue(challenge) || string.IsNullOrEmpty(playerId)) return null;
             DateTime now = _clock();
             lock (_lock)
             {
                 SweepLocked(now);
-                if (_grants.ContainsKey(challenge) || _grants.Count >= _maxGrants) return false;
-                _grants[challenge] = new Entry { PlayerId = playerId, SuggestedName = suggestedName, ExpiresAt = now + Lifetime };
-                return true;
+                if (_grants.Count >= _maxGrants) return null;
+                string code;
+                do { code = NewCode(); } while (_grants.ContainsKey(code)); // praktisch nie mehr als ein Versuch
+                _grants[code] = new Entry { Challenge = challenge, PlayerId = playerId, SuggestedName = suggestedName, ExpiresAt = now + Lifetime };
+                return code;
             }
         }
 
         /// <summary>
-        /// Pending: kein (gültiger) Grant zur challenge – noch nicht angemeldet, abgelaufen oder verbraucht.
-        /// WrongVerifier: Grant da, verifier passt nicht (zählt als Fehlversuch). Malformed: Format falsch (zählt nicht).
+        /// NotFound: kein (gültiger) Grant zu diesem Code – unbekannt, abgelaufen oder schon verbraucht; zählt nirgends als
+        /// Fehlversuch. WrongVerifier: Grant da, verifier passt nicht zur challenge (zählt als Fehlversuch am Grant).
+        /// Malformed: Format von Code oder verifier falsch (zählt nicht).
         /// </summary>
-        public RedeemStatus TryRedeem(string challenge, string verifier, out DesktopGrant grant)
+        public RedeemStatus TryRedeem(string code, string verifier, out DesktopGrant grant)
         {
             grant = null;
-            if (!ValidPkceValue(challenge) || !ValidPkceValue(verifier)) return RedeemStatus.Malformed;
-            byte[] expected = Encoding.ASCII.GetBytes(challenge);
-            byte[] actual = Encoding.ASCII.GetBytes(ChallengeOf(verifier));
+            if (!ValidPkceValue(code) || !ValidPkceValue(verifier)) return RedeemStatus.Malformed;
             DateTime now = _clock();
             lock (_lock)
             {
-                if (!_grants.TryGetValue(challenge, out Entry e)) return RedeemStatus.Pending;
+                if (!_grants.TryGetValue(code, out Entry e)) return RedeemStatus.NotFound;
                 if (now >= e.ExpiresAt)
                 {
-                    _grants.Remove(challenge);
-                    return RedeemStatus.Pending;
+                    _grants.Remove(code);
+                    return RedeemStatus.NotFound;
                 }
+                byte[] expected = Encoding.ASCII.GetBytes(e.Challenge);
+                byte[] actual = Encoding.ASCII.GetBytes(ChallengeOf(verifier));
                 if (!CryptographicOperations.FixedTimeEquals(expected, actual))
                 {
-                    if (++e.Failures >= MaxFailures) _grants.Remove(challenge);
+                    if (++e.Failures >= MaxFailures) _grants.Remove(code);
                     return RedeemStatus.WrongVerifier;
                 }
-                _grants.Remove(challenge);
+                _grants.Remove(code);
                 grant = new DesktopGrant { PlayerId = e.PlayerId, SuggestedName = e.SuggestedName };
                 return RedeemStatus.Ok;
             }
