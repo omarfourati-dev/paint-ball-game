@@ -217,7 +217,8 @@ namespace Paintball.Server
             MapAds(app, ads);
             MapMetrics(app, game, accounts, options);
             var authLimiter = new RateLimiter(limit: 20, window: TimeSpan.FromMinutes(1)); // gemeinsam für alle Auth-Routen
-            // Die Desktop-App fragt alle 2 s nach (30/min): eigenes Fenster, damit sie weder sich selbst noch die anderen Auth-Routen ausbremst.
+            // Desktop-App (Loopback, kein Polling): ein Einlösen pro Login. Eigenes Fenster, damit viele Desktop-Nutzer hinter
+            // einer IP (NAT) weder sich gegenseitig noch die anderen Auth-Routen ausbremsen.
             var redeemLimiter = new RateLimiter(limit: 60, window: TimeSpan.FromMinutes(1));
             DesktopGrantStore desktopGrants = options.DesktopGrants ?? new DesktopGrantStore();
             AuthApi.Map(app, game, accounts, options, authLimiter, desktopGrants);

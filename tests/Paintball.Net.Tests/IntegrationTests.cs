@@ -589,7 +589,14 @@ namespace Paintball.Net.Tests
 
             await using Harness off = await Harness.StartAsync(google: null, googleConfigured: false);
             HttpResponseMessage nc = await off.Http.GetAsync($"/api/auth/google?desktop={challenge}&port={TestPort}");
-            Assert.AreEqual("/desktop-login?error=not_configured", nc.Headers.Location.OriginalString, "nicht konfiguriert");
+            (string ncCode, string ncError) = AssertLoopbackRedirect(nc, TestPort);
+            Assert.AreEqual("oauth_failed", ncError, "nicht konfiguriert: sofort an den lokalen Empfänger, die App wartet nicht bis zum Timeout");
+            Assert.IsTrue(ncCode == null, "kein Code");
+            Assert.IsFalse(nc.Headers.TryGetValues("Set-Cookie", out _), "kein state-Cookie");
+            HttpResponseMessage ncBadPort = await off.Http.GetAsync($"/api/auth/google?desktop={challenge}&port=80");
+            Assert.AreEqual("/desktop-login?error=oauth_failed", ncBadPort.Headers.Location.OriginalString, "ungültiger Port: nie an den Loopback");
+            HttpResponseMessage ncWeb = await off.Http.GetAsync("/api/auth/google");
+            Assert.AreEqual("/play?auth_error=not_configured", ncWeb.Headers.Location.OriginalString, "Browser-Login unverändert");
         }
 
         private static async Task DesktopRedeemOnce()

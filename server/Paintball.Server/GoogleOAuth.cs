@@ -104,8 +104,10 @@ namespace Paintball.Server
                 bool isDesktop = desktop.Length > 0;
                 bool validPort = DesktopGrantStore.ValidPort(ctx.Request.Query["port"].ToString(), out int port);
                 if (isDesktop && (!DesktopGrantStore.ValidPkceValue(desktop) || !validPort)) return Results.Redirect(DesktopPage("oauth_failed"));
+                // Desktop: challenge und Port sind geprüft → sofort an den lokalen Empfänger melden, sonst wartet die App bis
+                // zum Timeout (10 min). Nur ein Fehlercode, kein Geheimnis; der Empfänger kennt nur cancelled/oauth_failed.
                 if (!Configured(options) || google == null)
-                    return Results.Redirect(isDesktop ? DesktopPage("not_configured") : "/play?auth_error=not_configured");
+                    return Results.Redirect(isDesktop ? LoopbackUrl(port, "error=oauth_failed") : "/play?auth_error=not_configured");
                 string state = Convert.ToHexString(RandomNumberGenerator.GetBytes(24));
                 string join = isDesktop ? string.Empty : (ValidJoin(ctx.Request.Query["join"].ToString()) ?? string.Empty);
                 string verifier = Base64Url(RandomNumberGenerator.GetBytes(32));
