@@ -41,6 +41,7 @@ namespace Paintball.Net.Tests
             r.Run("Werbung: ADSENSE_* wird geprüft – ungültige Publisher-ID heißt aus, ungültige Slots fallen weg", AdsConfigFromEnvironment);
             r.RunAsync("Werbung: ohne Publisher-ID /api/ads enabled=false, /ads.txt 404, CSP und Referrer unverändert", AdsDisabled);
             r.RunAsync("Werbung: mit Publisher-ID /api/ads mit Slots, /ads.txt, CSP um Google-Domains erweitert", AdsEnabled);
+            r.RunAsync("Desktop: /desktop-login immer Referrer-Policy no-referrer, unabhängig von AdsConfig; / unverändert (Review Task 2)", DesktopLoginReferrerPolicyAlwaysNoReferrer);
             r.RunAsync("SEO: robots.txt, sitemap.xml, llms.txt mit Typ und UTF-8, /play mit noindex", ServesSeoFiles);
             r.RunAsync("Proxy: Hinter TLS-Reverse-Proxy nur HTTP, X-Forwarded-Proto zählt als HTTPS", ProxyTrustsForwardedProto);
             r.RunAsync("Proxy: Ohne Forwarded-Proto Weiterleitung auf HTTPS ohne internen Port", ProxyRedirectsWithoutPort);
@@ -1183,6 +1184,29 @@ namespace Paintball.Net.Tests
             Assert.AreEqual("default-src 'self'", dirs["default-src"], "default-src unverändert");
             Assert.AreEqual("frame-ancestors 'none'", dirs["frame-ancestors"], "nicht einbettbar");
             Assert.AreEqual("strict-origin-when-cross-origin", page.Headers.GetValues("Referrer-Policy").First(), "Referrer für AdSense");
+        }
+
+        /// <summary>
+        /// Sicherheits-Review Task 2: Die Erfolgsseite des Desktop-Logins darf nie an AdsConfig hängen – mit aktivierter
+        /// Werbung würde sonst "strict-origin-when-cross-origin" verraten, dass diese Anfrage von der Desktop-App kam.
+        /// </summary>
+        private static async Task DesktopLoginReferrerPolicyAlwaysNoReferrer()
+        {
+            AdsConfig enabled = Ads(new() { ["ADSENSE_CLIENT"] = "ca-pub-1234567890123456", ["ADSENSE_SLOT_LANDING"] = "1111111111" });
+            foreach (AdsConfig ads in new[] { AdsConfig.Disabled, enabled })
+            {
+                await using Harness h = await Harness.StartAsync(ads: ads);
+                HttpResponseMessage desktopLogin = await h.Http.GetAsync("/desktop-login");
+                Assert.AreEqual("no-referrer", desktopLogin.Headers.GetValues("Referrer-Policy").First(),
+                    $"/desktop-login immer no-referrer (Werbung {(ads.Enabled ? "an" : "aus")})");
+                HttpResponseMessage htmlDirect = await h.Http.GetAsync("/desktop-login.html");
+                Assert.AreEqual("no-referrer", htmlDirect.Headers.GetValues("Referrer-Policy").First(),
+                    $"/desktop-login.html direkt ebenfalls no-referrer (Werbung {(ads.Enabled ? "an" : "aus")})");
+
+                HttpResponseMessage landing = await h.Http.GetAsync("/");
+                Assert.AreEqual(ads.ReferrerPolicy, landing.Headers.GetValues("Referrer-Policy").First(),
+                    "/ bleibt beim bisherigen Verhalten (abhängig von AdsConfig)");
+            }
         }
 
         /// <summary>Echte Dateien aus web/ in den Test-Webroot kopieren und wie ein Crawler abrufen.</summary>

@@ -185,6 +185,8 @@ namespace Paintball.Server
                 h["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()";
                 h["Strict-Transport-Security"] = "max-age=31536000";
                 h["Content-Security-Policy"] = csp; // Google-Domains nur bei aktiver Werbung
+                // Desktop-Erfolgsseite: nie an Google/AdSense verraten, unabhängig von AdsConfig (Sicherheits-Review Task 2).
+                if (IsDesktopLoginPath(ctx.Request.Path)) h["Referrer-Policy"] = "no-referrer";
                 await next();
             });
 
@@ -252,6 +254,14 @@ namespace Paintball.Server
             ["/datenschutz"] = "/datenschutz.html",
             ["/desktop-login"] = "/desktop-login.html"
         };
+
+        /// <summary>
+        /// Trifft sowohl die freundliche Route (/desktop-login, vor RoutePages) als auch die HTML-Datei direkt
+        /// (/desktop-login.html) – die Kopfzeilen-Middleware läuft vor RoutePages, sieht also noch den Originalpfad.
+        /// </summary>
+        private static bool IsDesktopLoginPath(PathString path) =>
+            path.Equals("/desktop-login", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals("/desktop-login.html", StringComparison.OrdinalIgnoreCase);
 
         /// <summary>Alte Einladungslinks /?join= → /play, /play/ → /play, saubere URLs → HTML-Datei.</summary>
         private static Task RoutePages(HttpContext ctx, Func<Task> next)
