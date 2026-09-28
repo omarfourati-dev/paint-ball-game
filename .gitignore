@@ -48,3 +48,9 @@ node_modules/
 # ===== Secrets (Deploy schreibt .env aus GitHub-Secrets) =====
 .env
 .env.*
+
+# ===== Desktop-App (Electron) =====
+desktop/node_modules/
+desktop/dist/
+desktop/resources/
+web/downloads/

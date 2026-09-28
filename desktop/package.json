@@ -1,0 +1,58 @@
+{
+  "name": "paint-ball-desktop",
+  "productName": "Paint-Ball",
+  "version": "1.0.0",
+  "description": "Paint-Ball als Windows-App – lädt immer die Live-Seite",
+  "author": "Omar Fourati",
+  "license": "UNLICENSED",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --server=https://localhost:5443 --dev-login",
+    "predist": "node scripts/copy-icon.js",
+    "dist": "electron-builder --win nsis portable --x64 --publish never",
+    "e2e": "node e2e/desktop.e2e.mjs"
+  },
+  "devDependencies": {
+    "electron": "44.4.5",
+    "electron-builder": "26.15.3",
+    "playwright": "1.63.0"
+  },
+  "build": {
+    "appId": "de.omarfourati.paintball",
+    "productName": "Paint-Ball",
+    "copyright": "© 2026 Omar Fourati",
+    "directories": { "output": "dist", "buildResources": "resources" },
+    "files": ["main.js", "preload.js", "policy.js", "login.js", "offline.html"],
+    "asar": true,
+    "electronFuses": {
+      "runAsNode": false,
+      "enableCookieEncryption": true,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableNodeCliInspectArguments": false,
+      "enableEmbeddedAsarIntegrityValidation": true,
+      "onlyLoadAppFromAsar": true
+    },
+    "win": {
+      "target": ["nsis", "portable"],
+      "icon": "resources/icon.png"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowElevation": false,
+      "packElevateHelper": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Paint-Ball",
+      "uninstallDisplayName": "Paint-Ball",
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "PaintBall-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "PaintBall-${version}-portable.${ext}"
+    }
+  }
+}
