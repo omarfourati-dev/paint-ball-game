@@ -70,7 +70,9 @@ namespace Paintball.Net.Tests
             r.RunAsync("Google: pb_oauth im Format vor dem Desktop-Login (3 Teile) gilt weiter", GoogleThreePartCookieStillValid);
             r.Run("Desktop: Grant-Speicher – Code statt challenge als Schlüssel, einmalig, 2 min, 5 Fehlversuche, Obergrenze, Port-Validierung", DesktopGrantStoreRules);
             r.RunAsync("Desktop: Google-Start merkt sich challenge+port, ungültige challenge/Port → Fehlerseite", DesktopGoogleStart);
+            r.RunAsync("Desktop: feindliche Port-Werte am Start werden abgelehnt (Review Task 1)", DesktopGoogleStartHostilePorts);
             r.RunAsync("Desktop: Callback legt Grant an, keine Sitzung im Browser, Browser-Sitzung bleibt gültig", DesktopCallbackNoBrowserSession);
+            r.RunAsync("Desktop: gültiges Desktop-Cookie mit falschem state → normale Fehlerseite, nie der Loopback (Review Task 1)", DesktopCallbackWrongStateNoLoopback);
             r.RunAsync("Desktop: Fehler/Abbruch gehen an den lokalen Empfänger, fehlende Konfiguration auf /desktop-login?error=…", DesktopCallbackErrors);
             r.RunAsync("Desktop: Einlösen gelingt genau einmal, Cookie mit __Host-Attributen, Namensvorschlag", DesktopRedeemOnce);
             r.RunAsync("Desktop: Kontoübernahme per untergeschobener challenge ist verhindert (Loopback-Rückgabe, Review Runde 1)", DesktopAccountTakeoverPrevented);
@@ -504,6 +506,23 @@ namespace Paintball.Net.Tests
             }
         }
 
+        /// <summary>
+        /// Sicherheits-Review Task 1, nachgereicht in Task 2: Werte, die einen URL-, Host- oder Zahl-Parser zu einem
+        /// falschen Eindruck verleiten könnten (Userinfo-Trick, IPv6-Literal, Kommazahl, führende Null), müssen am Start
+        /// wie ein ungültiger Port behandelt werden – Fehlerseite, kein state-Cookie.
+        /// </summary>
+        private static async Task DesktopGoogleStartHostilePorts()
+        {
+            await using Harness h = await Harness.StartAsync();
+            string challenge = Challenge(NewVerifier());
+            foreach (string hostilePort in new[] { "1234@evil.example", "[::1]", "1234.5", "01234" })
+            {
+                HttpResponseMessage r = await h.Http.GetAsync($"/api/auth/google?desktop={challenge}&port={Uri.EscapeDataString(hostilePort)}");
+                Assert.AreEqual("/desktop-login?error=oauth_failed", r.Headers.Location.OriginalString, "feindlicher Port: " + hostilePort);
+                Assert.IsFalse(r.Headers.TryGetValues("Set-Cookie", out var sc) && sc.Any(v => v.StartsWith("pb_oauth=")), "kein state-Cookie: Port " + hostilePort);
+            }
+        }
+
         private static async Task DesktopCallbackNoBrowserSession()
         {
             await using Harness h = await Harness.StartAsync();
@@ -517,6 +536,26 @@ namespace Paintball.Net.Tests
             Assert.IsTrue(res.Headers.CacheControl?.NoStore == true, "no-store");
             HttpResponseMessage me = await h.Http.SendAsync(h.Req(HttpMethod.Get, "/api/me", browserSession));
             Assert.AreEqual(HttpStatusCode.OK, me.StatusCode, "bestehende Browser-Sitzung bleibt gültig");
+        }
+
+        /// <summary>
+        /// Sicherheits-Review Task 1, nachgereicht in Task 2: Ein gültiges pb_oauth-Cookie mit hinterlegter
+        /// challenge+Port darf den Loopback nur nach erfolgreicher state-Prüfung ansteuern. Bei falschem state bleibt es
+        /// bei der normalen Fehlerseite – der Port aus dem Cookie ist an dieser Stelle noch nicht vertrauenswürdig.
+        /// </summary>
+        private static async Task DesktopCallbackWrongStateNoLoopback()
+        {
+            await using Harness h = await Harness.StartAsync();
+            string challenge = Challenge(NewVerifier());
+            HttpResponseMessage start = await h.Http.GetAsync($"/api/auth/google?desktop={challenge}&port={TestPort}");
+            var (_, cookie) = ReadOAuthCookie(start); // gültiges Desktop-Cookie mit challenge+Port
+            var req = new HttpRequestMessage(HttpMethod.Get, "/api/auth/google/callback?code=c1&state=falsch");
+            req.Headers.Add("Cookie", cookie);
+            HttpResponseMessage res = await h.Http.SendAsync(req);
+            Assert.AreEqual("/play?auth_error=invalid_state", res.Headers.Location.OriginalString,
+                "gültiges Desktop-Cookie, aber falscher state: normale Fehlerseite, nie der (noch nicht vertrauenswürdige) Loopback");
+            Assert.IsFalse(SetsSession(res), "keine Sitzung");
+            Assert.IsFalse(res.Headers.Location.OriginalString.StartsWith("http://127.0.0.1"), "kein Loopback ohne gültigen state");
         }
 
         private static async Task DesktopCallbackErrors()

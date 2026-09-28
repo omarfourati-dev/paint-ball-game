@@ -1,7 +1,9 @@
 // Startablauf und Hilfsfunktionen des Google-Logins im Client.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { bootStep, loginUrl, authErrorKey, nameErrorKey, nextConnectState, closeAction, retryDelay, LEGACY_KEYS } from '../../web/js/auth.js';
+import { bootStep, loginUrl, authErrorKey, nameErrorKey, nextConnectState, closeAction, retryDelay, LEGACY_KEYS,
+  desktopBridge, desktopLoginKey, desktopLoginView } from '../../web/js/auth.js';
+import { readFileSync } from 'node:fs';
 import { STRINGS } from '../../web/js/i18n.js';
 
 test('Start: nur 401 → Anmeldung, needsName → Namenswahl, 200 → Spiel, sonst erneut versuchen', () => {
@@ -96,4 +98,56 @@ test('nextConnectState: nach welcome zählt ein neuer Abbruch bei 0, sonst hoch 
   assert.deepEqual(nextConnectState({ wasWelcomed: false, attempts: 0 }), { attempts: 1, fallback: false });
   assert.deepEqual(nextConnectState({ wasWelcomed: false, attempts: 1 }), { attempts: 2, fallback: false });
   assert.deepEqual(nextConnectState({ wasWelcomed: false, attempts: 2 }), { attempts: 0, fallback: true });
+});
+
+test('desktopBridge: nur mit Funktion startLogin, sonst null (normaler Browser)', () => {
+  assert.equal(desktopBridge(undefined), null);
+  assert.equal(desktopBridge({}), null);
+  assert.equal(desktopBridge({ desktop: { startLogin: 'nein' } }), null);
+  const d = { startLogin: () => Promise.resolve('ok'), version: '1.0.3' };
+  assert.equal(desktopBridge({ desktop: d }), d);
+});
+
+test('desktopLoginKey: Zustände des Desktop-Logins, Unbekanntes → allgemeiner Fehler', () => {
+  assert.equal(desktopLoginKey('pending'), 'auth.desktopPending');
+  assert.equal(desktopLoginKey('cancelled'), 'auth.desktopPending', 'neuer Versuch läuft');
+  assert.equal(desktopLoginKey('ok'), 'auth.desktopDone');
+  assert.equal(desktopLoginKey('timeout'), 'auth.desktopTimeout');
+  assert.equal(desktopLoginKey('failed'), 'auth.error.oauth_failed');
+  assert.equal(desktopLoginKey('constructor'), 'auth.error.oauth_failed', 'kein Prototyp-Treffer');
+  assert.equal(desktopLoginKey(undefined), 'auth.error.oauth_failed');
+});
+
+test('desktopLoginView: Erfolg oder Fehlertext wie auth_error', () => {
+  assert.deepEqual(desktopLoginView(null), { titleKey: 'desktop.ok.title', textKey: 'desktop.ok.text' });
+  assert.deepEqual(desktopLoginView('cancelled'), { titleKey: 'desktop.error.title', textKey: 'auth.error.cancelled' });
+  assert.deepEqual(desktopLoginView('not_configured'), { titleKey: 'desktop.error.title', textKey: 'auth.error.not_configured' });
+  assert.deepEqual(desktopLoginView('<script>'), { titleKey: 'desktop.error.title', textKey: 'auth.error.oauth_failed' });
+});
+
+test('Desktop-Login-Texte in DE und EN, Wortlaut aus der Spec', () => {
+  for (const k of ['auth.desktopPending', 'auth.desktopDone', 'auth.desktopTimeout', 'desktop.ok.title', 'desktop.ok.text', 'desktop.error.title']) {
+    assert.ok(STRINGS.de[k]?.trim(), `DE fehlt: ${k}`);
+    assert.ok(STRINGS.en[k]?.trim(), `EN fehlt: ${k}`);
+  }
+  assert.equal(STRINGS.de['auth.desktopPending'], 'Anmeldung im Browser geöffnet…');
+  assert.equal(STRINGS.de['desktop.ok.title'], 'Anmeldung erfolgreich');
+});
+
+test('desktop-login.html: noindex, Modul-Skript, kein Inline-Skript, keine Analyse', () => {
+  const html = readFileSync(new URL('../../web/desktop-login.html', import.meta.url), 'utf8');
+  assert.match(html, /<meta name="robots" content="noindex">/);
+  assert.match(html, /<script type="module" src="\/js\/desktop-login\.js"><\/script>/);
+  assert.doesNotMatch(html, /<script(?![^>]*\bsrc=)[^>]*>/, 'kein Inline-Skript (CSP)');
+  assert.doesNotMatch(html, /\son[a-z]+=/i, 'keine Inline-Handler (CSP)');
+  assert.doesNotMatch(html, /analytics/, 'ohne Umami');
+  assert.match(html, /id="dl-title"/);
+  assert.match(html, /id="dl-text"/);
+});
+
+test('Datenschutz: Satz zur Desktop-App', () => {
+  const html = readFileSync(new URL('../../web/datenschutz.html', import.meta.url), 'utf8');
+  assert.ok(html.includes('Desktop-App für Windows'), 'Desktop-App erwähnt');
+  assert.ok(html.includes('keine zusätzlichen Daten'), 'sammelt nichts zusätzlich');
+  assert.ok(html.includes('Standardbrowser'), 'Login über den Browser');
 });

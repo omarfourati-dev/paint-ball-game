@@ -121,3 +121,5 @@ dialog li { margin-bottom: 8px; }
   h1 { color: #db2777; }
   .board .rank { color: #b45309; }
 }
+.desktop-login { min-height: 80vh; display: grid; place-content: center; justify-items: center; gap: 12px; text-align: center; padding: 24px; }
+.desktop-login p { max-width: 40ch; color: var(--muted); }

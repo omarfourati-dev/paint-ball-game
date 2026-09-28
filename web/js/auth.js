@@ -64,3 +64,27 @@ const RETRY_DELAYS = [2, 4, 8, 15];
 export function retryDelay(attempt) {
   return RETRY_DELAYS[Math.min(attempt, RETRY_DELAYS.length - 1)];
 }
+
+/** Brücke der Desktop-App (desktop/preload.js) oder null im normalen Browser. */
+export function desktopBridge(win) {
+  const d = win?.desktop;
+  return d && typeof d.startLogin === 'function' ? d : null;
+}
+
+const DESKTOP_LOGIN_KEYS = {
+  pending: 'auth.desktopPending',
+  cancelled: 'auth.desktopPending', // ein neuerer Versuch läuft bereits
+  ok: 'auth.desktopDone',
+  timeout: 'auth.desktopTimeout'
+};
+
+/** Text zum Stand des Desktop-Logins ('pending' oder Ergebnis von desktop.startLogin()); Unbekanntes → allgemeiner Fehler. */
+export function desktopLoginKey(status) {
+  return Object.hasOwn(DESKTOP_LOGIN_KEYS, status) ? DESKTOP_LOGIN_KEYS[status] : 'auth.error.oauth_failed';
+}
+
+/** Seite /desktop-login im Standardbrowser: Erfolg oder Fehler (gleiche Codes wie ?auth_error=). */
+export function desktopLoginView(code) {
+  const err = authErrorKey(code);
+  return err ? { titleKey: 'desktop.error.title', textKey: err } : { titleKey: 'desktop.ok.title', textKey: 'desktop.ok.text' };
+}
