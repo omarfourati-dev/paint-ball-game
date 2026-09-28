@@ -121,7 +121,8 @@ test('Datenschutz: AdSense-Abschnitt mit Anbieter, Einwilligung, nicht personali
     'Nur mit deiner Einwilligung', 'Ohne Einwilligung',
     'Werbung wird über Google AdSense eingeblendet, sofern aktiviert'])
     assert.ok(privacy.includes(s), `Datenschutz enthält ${s}`);
-  assert.ok(!privacy.includes('keine Werbung'), 'Aussage „keine Werbung“ korrigiert');
+  // Einzige erlaubte Stelle: der Satz zur Desktop-App (dort ist AdSense aus, ads.js isDesktopApp)
+  assert.ok(!privacy.replace('In der Desktop-App wird keine Werbung angezeigt.', '').includes('keine Werbung'), 'Aussage „keine Werbung“ korrigiert');
   assert.ok(!web('llms.txt').includes('keine Werbung'), 'llms.txt ebenso');
 });
 

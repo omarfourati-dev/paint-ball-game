@@ -1,10 +1,20 @@
 // Google AdSense (aus, bis der Server eine Publisher-ID meldet): Banner auf Startseite, Lobby und Ergebnis,
 // Interstitial zwischen Matches über die H5 Ad Placement API. Nie während eines Matches, nie über Canvas/HUD.
 // Die Consent-Nachricht (zertifizierte CMP, „Datenschutz & Mitteilungen“) kommt über dasselbe Google-Skript.
+// In der Desktop-App nie (isDesktopApp): kein Skript, keine Slots, kein Interstitial, kein Link „Datenschutzeinstellungen“.
 
 export const ADS_SCRIPT = 'https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js';
 const CLIENT = /^ca-pub-\d{16}$/;
 const SLOT = /^\d+$/;
+
+/**
+ * Desktop-App (Electron, window.desktop aus desktop/preload.js; Start-URL /play?desktop=1): keine Werbung – die
+ * AdSense-Richtlinien verbieten Anzeigen in Software-Anwendungen. Einzige Stelle dieser Prüfung.
+ */
+export function isDesktopApp(win = globalThis) {
+  if (win?.desktop != null) return true;
+  try { return new URLSearchParams(win?.location?.search ?? '').get('desktop') === '1'; } catch { return false; }
+}
 
 /** Server-Antwort von /api/ads prüfen; alles Unerwartete heißt „aus“. */
 export function normalizeConfig(raw) {
@@ -51,8 +61,9 @@ export class Ads {
 
   get enabled() { return this.config.enabled; }
 
-  /** Lädt die Konfiguration; nur bei enabled:true wird das Google-Skript eingebunden. */
+  /** Lädt die Konfiguration; nur bei enabled:true wird das Google-Skript eingebunden. In der Desktop-App immer aus. */
   async init({ h5 = false } = {}) {
+    if (isDesktopApp(this.win)) { this.config = { enabled: false }; return this.config; }
     try { this.config = normalizeConfig(await this.fetchJson('/api/ads')); } catch { this.config = { enabled: false }; }
     if (!this.config.enabled || !this.doc) return this.config;
     const w = this.win;

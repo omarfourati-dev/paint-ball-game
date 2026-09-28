@@ -1,4 +1,5 @@
-// Startseite: Banner unter dem Inhalt und Link „Datenschutzeinstellungen“ – beides nur, wenn der Server Werbung aktiviert hat.
+// Startseite: Banner unter dem Inhalt und Link „Datenschutzeinstellungen“ – beides nur, wenn der Server Werbung aktiviert hat
+// und die Seite nicht in der Desktop-App läuft (isDesktopApp in ads.js).
 import { Ads } from './ads.js';
 
 const ads = new Ads();

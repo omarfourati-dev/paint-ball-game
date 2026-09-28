@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
-import { Ads, shouldShowBreak, normalizeConfig, scriptUrl, ADS_SCRIPT, BREAK_TIMEOUT_MS } from '../../web/js/ads.js';
+import { Ads, shouldShowBreak, normalizeConfig, scriptUrl, isDesktopApp, ADS_SCRIPT, BREAK_TIMEOUT_MS } from '../../web/js/ads.js';
 
 const webPath = p => new URL(`../../web/${p}`, import.meta.url);
 const ON = { enabled: true, client: 'ca-pub-1234567890123456', slots: { landing: '111', lobby: '222', results: '333' }, interstitialEvery: 3 };
@@ -67,6 +67,51 @@ test('Werbung: ohne Konfiguration wird kein Google-Skript geladen, Platzhalter b
   const link = { hidden: false, addEventListener() {} };
   ads.bindPrivacyLink(link);
   assert.equal(link.hidden, true, '„Datenschutzeinstellungen“ nur mit Werbung');
+});
+
+test('Werbung: isDesktopApp – window.desktop oder ?desktop=1, sonst normaler Browser', () => {
+  assert.equal(isDesktopApp({ desktop: { version: '1.0.1', startLogin() {} } }), true, 'Brücke aus preload.js');
+  assert.equal(isDesktopApp({ location: { search: '?desktop=1' } }), true, 'Start-URL der App');
+  assert.equal(isDesktopApp({ location: { search: '?join=ABC&desktop=1' } }), true);
+  assert.equal(isDesktopApp({ location: { search: '?desktop=0' } }), false);
+  assert.equal(isDesktopApp({ location: { search: '?join=ABC' } }), false);
+  assert.equal(isDesktopApp({}), false);
+  assert.equal(isDesktopApp(undefined), false);
+});
+
+for (const [label, win] of [['window.desktop', () => ({ desktop: { version: '', startLogin() {} } })], ['?desktop=1', () => ({ location: { search: '?desktop=1' } })]]) {
+  test(`Werbung: Desktop-App (${label}) – kein Skript, keine Slots, kein Interstitial, kein Datenschutz-Link`, async () => {
+    const { doc, make } = fakeDom();
+    const w = win();
+    let fetched = 0;
+    const ads = new Ads({ fetchJson: async () => { fetched++; return ON; }, doc, win: w, timers: { setTimeout: () => 1, clearTimeout() {} } });
+    await ads.init({ h5: true });
+    assert.equal(ads.enabled, false, 'aus, obwohl der Server Werbung meldet');
+    assert.equal(fetched, 0, '/api/ads wird gar nicht erst abgefragt');
+    assert.equal(doc.scripts.length, 0, 'kein adsbygoogle.js');
+    assert.equal(w.adsbygoogle, undefined);
+    assert.equal(w.adBreak, undefined, 'keine H5-API');
+    for (const key of ['landing', 'lobby', 'results']) {
+      const slot = make('aside');
+      assert.equal(ads.fill(slot, key), false, key);
+      assert.equal(slot.hidden, true, `${key}: Platzhalter verborgen`);
+    }
+    w.adBreak = () => assert.fail('kein Interstitial');
+    assert.equal(ads.maybeBreak({ ...R, matchesFinished: 3, inMatch: false }), false);
+    const link = { hidden: false, addEventListener() {} };
+    ads.bindPrivacyLink(link);
+    assert.equal(link.hidden, true, '„Datenschutzeinstellungen (Werbung)“ verborgen');
+  });
+}
+
+test('Werbung: Startseite und Spiel gehen beide durch Ads.init (zentrale Desktop-Prüfung), Datenschutz nennt es', () => {
+  const landing = readFileSync(webPath('js/landing-ads.js'), 'utf8');
+  assert.match(landing, /import \{ Ads \} from '\.\/ads\.js'/);
+  assert.match(landing, /ads\.init\(\)\.then/);
+  assert.ok(!landing.includes('googlesyndication'), 'kein eigenes Skript');
+  const app = readFileSync(webPath('js/app.js'), 'utf8');
+  assert.match(app, /this\.ads\.enabled \? `<button class="btn" id="privacy-settings">/, 'Einstellungs-Knopf nur bei aktiver Werbung');
+  assert.ok(readFileSync(webPath('datenschutz.html'), 'utf8').includes('In der Desktop-App wird keine Werbung angezeigt.'));
 });
 
 test('Werbung: Fehler beim Abruf von /api/ads heißt aus', async () => {
