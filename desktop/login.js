@@ -6,6 +6,7 @@ const crypto = require('node:crypto');
 const http = require('node:http');
 
 const LOGIN_TIMEOUT_MS = 120000;
+const REDEEM_TIMEOUT_MS = 15000;
 const CODE_RE = /^[A-Za-z0-9_-]{43}$/;
 const ERROR_REASONS = new Set(['cancelled', 'oauth_failed']);
 
@@ -97,10 +98,10 @@ function redeemResult(status) {
 
 /**
  * Ein Login-Versuch nach dem anderen. start(): Empfänger öffnen, Browser öffnen, auf die Rückgabe warten, einlösen,
- * Sitzungs-Cookie prüfen (E12). Ein neuer start() oder cancel() löst einen noch wartenden Versuch mit 'cancelled' ab.
+ * Sitzungs-Cookie prüfen (E12). Das Einlösen bricht nach 15 s ab (→ 'failed'). Ein neuer start() oder cancel() löst einen noch wartenden Versuch mit 'cancelled' ab.
  * Abbruch bei Google (error=cancelled) ist 'failed' – 'cancelled' heißt nur „durch einen neueren Versuch abgelöst“.
  */
-function createLoginFlow({ config, openExternal, fetchFn, hasSession, timeoutMs = LOGIN_TIMEOUT_MS }) {
+function createLoginFlow({ config, openExternal, fetchFn, hasSession, timeoutMs = LOGIN_TIMEOUT_MS, redeemTimeoutMs = REDEEM_TIMEOUT_MS }) {
   let current = null;
 
   async function start() {
@@ -123,7 +124,8 @@ function createLoginFlow({ config, openExternal, fetchFn, hasSession, timeoutMs 
         const res = await fetchFn(`${config.origin}/api/auth/desktop/redeem`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ code: got.code, verifier: pkce.verifier })
+          body: JSON.stringify({ code: got.code, verifier: pkce.verifier }),
+          signal: AbortSignal.timeout(redeemTimeoutMs)   // hängender Server: nach 15 s failed statt ewig „Anmeldung läuft“
         });
         status = res.status;
       } catch {
@@ -139,4 +141,4 @@ function createLoginFlow({ config, openExternal, fetchFn, hasSession, timeoutMs 
   return { start, cancel: () => current?.cancel() };
 }
 
-module.exports = { LOGIN_TIMEOUT_MS, createPkce, browserLoginUrl, listenOnce, redeemResult, createLoginFlow };
+module.exports = { LOGIN_TIMEOUT_MS, REDEEM_TIMEOUT_MS, createPkce, browserLoginUrl, listenOnce, redeemResult, createLoginFlow };

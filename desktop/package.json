@@ -32,7 +32,8 @@
       "enableNodeOptionsEnvironmentVariable": false,
       "enableNodeCliInspectArguments": false,
       "enableEmbeddedAsarIntegrityValidation": true,
-      "onlyLoadAppFromAsar": true
+      "onlyLoadAppFromAsar": true,
+      "grantFileProtocolExtraPrivileges": false
     },
     "win": {
       "target": ["nsis", "portable"],

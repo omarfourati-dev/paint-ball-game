@@ -159,6 +159,25 @@ test('createLoginFlow: Status ≠ 200, Netzwerkfehler, fehlendes Cookie, Abbruch
   assert.equal(cancelled.log.redeems.length, 0);
 });
 
+test('createLoginFlow: Einlösen hängt → nach der Frist abgebrochen (AbortSignal), failed', async () => {
+  assert.equal(login.REDEEM_TIMEOUT_MS, 15000);
+  let signal;
+  const flow = login.createLoginFlow({
+    config: { origin: O, devLogin: false },
+    redeemTimeoutMs: 50,
+    openExternal: async url => { await send(Number(new URL(url).searchParams.get('port')), { path: `/done?code=${CODE}` }); },
+    fetchFn: (_url, init) => new Promise((_resolve, reject) => {   // wie fetch: hängt, bis das Signal abbricht
+      signal = init.signal;
+      init.signal.addEventListener('abort', () => reject(init.signal.reason));
+    }),
+    hasSession: async () => true
+  });
+  const started = Date.now();
+  assert.equal(await flow.start(), 'failed');
+  assert.ok(signal instanceof AbortSignal && signal.aborted);
+  assert.ok(Date.now() - started < 5000);
+});
+
 test('createLoginFlow: ohne Rückgabe → timeout, kein Einlösen', async () => {
   const { flow, log } = harness({ browser: 'none', timeoutMs: 50 });
   assert.equal(await flow.start(), 'timeout');

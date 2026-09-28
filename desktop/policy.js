@@ -123,7 +123,55 @@ function offlineHtml(template, retryUrl, locale) {
   return template.replace(/\{\{([A-Z_]+)\}\}/g, (_, k) => escapeHtml(values[k] ?? ''));
 }
 
+/**
+ * Chromium-/Electron-Schalter, die verpackt nie wirken dürfen (zweite Schicht hinter der argv-Prüfung): Sie würden die
+ * Spiel-Origin umleiten, Zertifikatsprüfung oder Sandbox abschalten oder DevTools/CDP öffnen.
+ */
+const FORBIDDEN_SWITCHES = Object.freeze(['remote-debugging-port', 'remote-debugging-pipe', 'remote-allow-origins',
+  'ignore-certificate-errors', 'ignore-certificate-errors-spki-list', 'host-resolver-rules', 'host-rules', 'proxy-server',
+  'proxy-pac-url', 'no-sandbox', 'disable-web-security', 'js-flags', 'inspect', 'inspect-brk', 'user-data-dir']);
+
+/**
+ * Start verpackt nur ohne Schalter: Eine veränderte Verknüpfung mit z. B. --host-resolver-rules oder --remote-debugging-port
+ * beendet die App sofort. Die NSIS-Verknüpfungen und die portable .exe übergeben keine Argumente. Windows-Chromium versteht
+ * neben „-“/„--“ auch „/“ als Schalter-Präfix. Unverpackt (npm start, Abnahme) bleiben die Dev-Schalter erlaubt.
+ * Rückgabe: null (Start erlaubt) oder der Grund.
+ */
+function startupBlockReason(argv, isPackaged, hasSwitch = () => false) {
+  if (!isPackaged) return null;
+  const bad = (argv ?? []).slice(1).find(a => /^[-/]/.test(String(a)));
+  if (bad !== undefined) return 'argument';
+  return FORBIDDEN_SWITCHES.some(s => hasSwitch(s)) ? 'switch' : null;
+}
+
+/** Adresse für shell.openExternal: normalisiertes href, nur https:/mailto:, sonst null. */
+function externalHref(url) {
+  const u = parseUrl(url);
+  return u && EXTERNAL_PROTOCOLS.has(u.protocol) ? u.href : null;
+}
+
+const EXTERNAL_MIN_INTERVAL_MS = 2000;
+const USER_GESTURE_WINDOW_MS = 1000;
+
+/**
+ * Gegen Werbe-Tab-Fluten: höchstens ein externes Öffnen alle 2 s. window.open/target=_blank (kann auch aus Werbe-iframes
+ * kommen, Electron nennt den Frame nicht) zusätzlich nur kurz nach echter Eingabe (Maus, Taste, Touch) im Fenster;
+ * Navigationen im Hauptframe (will-navigate) nur mit dem Zeitlimit.
+ * state = { lastOpenAt, lastInputAt } in ms.
+ */
+function externalOpenAllowed(kind, now, state) {
+  if (now - (state.lastOpenAt ?? -Infinity) < EXTERNAL_MIN_INTERVAL_MS) return false;
+  if (kind === 'window-open' && !(now - (state.lastInputAt ?? -Infinity) <= USER_GESTURE_WINDOW_MS)) return false;
+  return true;
+}
+
+/** input-event-Typen, die als Nutzer-Geste zählen. */
+const GESTURE_INPUTS = new Set(['mouseDown', 'mouseUp', 'keyDown', 'rawKeyDown', 'char', 'touchStart', 'touchEnd', 'gestureTap']);
+const isUserGesture = input => GESTURE_INPUTS.has(input?.type);
+
 module.exports = {
   PROD_ORIGIN, resolveConfig, classifyNavigation, redirectAllowed, windowOpenAction, isExternalAllowed, keyAction,
-  permissionAllowed, isTrustedSender, leaveDialog, shouldShowOffline, offlineHtml
+  permissionAllowed, isTrustedSender, leaveDialog, shouldShowOffline, offlineHtml,
+  FORBIDDEN_SWITCHES, startupBlockReason, externalHref, EXTERNAL_MIN_INTERVAL_MS, USER_GESTURE_WINDOW_MS,
+  externalOpenAllowed, isUserGesture
 };

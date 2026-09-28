@@ -137,3 +137,42 @@ test('policy.js und login.js kommen ohne Electron aus', () => {
     assert.doesNotMatch(src, /require\('electron'\)/, f);
   }
 });
+
+test('startupBlockReason: verpackt kein einziger Schalter (-, --, /), dazu Liste gefährlicher Chromium-Schalter; unverpackt frei', () => {
+  const none = () => false;
+  assert.equal(policy.startupBlockReason(['C:/x/Paint-Ball.exe'], true, none), null, 'NSIS-Verknüpfung: keine Argumente');
+  for (const a of ['--host-resolver-rules=MAP * 1.2.3.4', '--ignore-certificate-errors', '--proxy-server=http://evil:8080',
+    '--remote-debugging-port=9222', '-remote-debugging-port=9222', '/remote-debugging-port=9222', '--server=https://evil.example',
+    '--dev-login', '--', '-'])
+    assert.equal(policy.startupBlockReason(['Paint-Ball.exe', a], true, none), 'argument', a);
+  assert.equal(policy.startupBlockReason(['Paint-Ball.exe', 'C:/Users/x/datei.txt'], true, none), null, 'kein Schalter');
+  for (const s of policy.FORBIDDEN_SWITCHES)
+    assert.equal(policy.startupBlockReason(['Paint-Ball.exe'], true, name => name === s), 'switch', s);
+  for (const s of ['remote-debugging-port', 'host-resolver-rules', 'ignore-certificate-errors', 'proxy-server', 'no-sandbox', 'user-data-dir'])
+    assert.ok(policy.FORBIDDEN_SWITCHES.includes(s), s);
+  assert.equal(policy.startupBlockReason(['electron', '.', '--server=https://localhost:5443', '--dev-login', '--user-data=C:/tmp/pb'], false,
+    () => true), null, 'unverpackt: Dev-Schalter bleiben');
+});
+
+test('externalHref: normalisierte Adresse, nur https:/mailto:', () => {
+  assert.equal(policy.externalHref('HTTPS://Example.ORG/a b'), 'https://example.org/a%20b');
+  assert.equal(policy.externalHref('mailto:info@example.org'), 'mailto:info@example.org');
+  for (const u of ['http://example.org/', 'file:///C:/', 'ms-settings:', 'kaputt', undefined]) assert.equal(policy.externalHref(u), null, String(u));
+});
+
+test('externalOpenAllowed: höchstens eins alle 2 s; window.open nur kurz nach echter Eingabe', () => {
+  const nav = (now, state) => policy.externalOpenAllowed('navigate', now, state);
+  const pop = (now, state) => policy.externalOpenAllowed('window-open', now, state);
+  assert.equal(nav(10000, {}), true, 'erstes Öffnen');
+  assert.equal(nav(11999, { lastOpenAt: 10000 }), false, 'zu schnell');
+  assert.equal(nav(12000, { lastOpenAt: 10000 }), true);
+  assert.equal(pop(10000, {}), false, 'Werbe-Pop-up ohne Eingabe');
+  assert.equal(pop(10000, { lastInputAt: 9500 }), true, 'Klick eben');
+  assert.equal(pop(10000, { lastInputAt: 8000 }), false, 'Eingabe zu lange her');
+  assert.equal(pop(10000, { lastInputAt: 9900, lastOpenAt: 9000 }), false, 'Klickserie: trotzdem 2 s');
+  assert.equal(policy.EXTERNAL_MIN_INTERVAL_MS, 2000);
+  assert.equal(policy.isUserGesture({ type: 'mouseDown' }), true);
+  assert.equal(policy.isUserGesture({ type: 'keyDown' }), true);
+  assert.equal(policy.isUserGesture({ type: 'mouseMove' }), false, 'Bewegung ist keine Geste');
+  assert.equal(policy.isUserGesture(undefined), false);
+});

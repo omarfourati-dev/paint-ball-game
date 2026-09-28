@@ -7,15 +7,32 @@ const path = require('node:path');
 const policy = require('./policy');
 const login = require('./login');
 
+// Zuerst, vor jeder anderen Initialisierung: verpackt keine Schalter (veränderte Verknüpfung mit --host-resolver-rules,
+// --proxy-server, --remote-debugging-port und Zertifikats-Schaltern …) – sonst sofort beenden.
+if (policy.startupBlockReason(process.argv, app.isPackaged, name => app.commandLine.hasSwitch(name))) {
+  app.exit(1);
+  return;   // CommonJS: nichts weiter initialisieren
+}
+
 const config = policy.resolveConfig(process.argv, app.isPackaged);
 if (config.userDataDir) app.setPath('userData', config.userDataDir);   // nur unverpackt: frisches Profil für die Abnahme
 app.enableSandbox();
 
 const offlineTemplate = fs.readFileSync(path.join(__dirname, 'offline.html'), 'utf8');
 let win = null;
+const externalState = { lastOpenAt: -Infinity, lastInputAt: -Infinity };
 
 function openExternalSafe(url) {
-  if (policy.isExternalAllowed(url)) shell.openExternal(url).catch(() => {});
+  const href = policy.externalHref(url);
+  if (href) shell.openExternal(href).catch(() => {});
+}
+
+/** Externes Öffnen oder Login aus der Seite heraus: höchstens eins alle 2 s, window.open nur nach echter Eingabe. */
+function throttled(kind, fn) {
+  const now = Date.now();
+  if (!policy.externalOpenAllowed(kind, now, externalState)) return;
+  externalState.lastOpenAt = now;
+  fn();
 }
 
 /**
@@ -24,7 +41,7 @@ function openExternalSafe(url) {
  */
 const loginFlow = login.createLoginFlow({
   config,
-  openExternal: url => { if (!policy.isExternalAllowed(url)) throw new Error('blocked'); return shell.openExternal(url); },
+  openExternal: url => { const href = policy.externalHref(url); if (!href) throw new Error('blocked'); return shell.openExternal(href); },
   fetchFn: (url, init) => session.defaultSession.fetch(url, { ...init, credentials: 'include' }),
   hasSession: async () => (await session.defaultSession.cookies.get({ url: config.origin, name: '__Host-pb_session' })).length > 0
 });
@@ -42,10 +59,12 @@ async function startLogin() {
 /** Für jedes webContents: keine webview, keine neuen Fenster, Navigation und Weiterleitungen nur nach policy.js. */
 function hardenContents(contents) {
   contents.on('will-attach-webview', event => event.preventDefault());
+  // Echte Eingaben merken (Maus, Taste, Touch): window.open aus Werbe-iframes ohne Klick öffnet nichts.
+  contents.on('input-event', (_event, input) => { if (policy.isUserGesture(input)) externalState.lastInputAt = Date.now(); });
   contents.setWindowOpenHandler(({ url }) => {
     const action = policy.windowOpenAction(url, config.origin);
-    if (action === 'external') openExternalSafe(url);
-    else if (action === 'login') startLogin().catch(() => {});
+    if (action === 'external') throttled('window-open', () => openExternalSafe(url));
+    else if (action === 'login') throttled('window-open', () => startLogin().catch(() => {}));
     return { action: 'deny' };
   });
   contents.on('will-navigate', (event, legacyUrl) => {
@@ -53,9 +72,9 @@ function hardenContents(contents) {
     const { action } = policy.classifyNavigation(url, config.origin);
     if (action === 'allow') return;
     event.preventDefault();
-    if (action === 'external') openExternalSafe(url);
+    if (action === 'external') throttled('navigate', () => openExternalSafe(url));
     else if (action === 'home') contents.loadURL(config.startUrl);
-    else if (action === 'login') startLogin().catch(() => {});
+    else if (action === 'login') throttled('navigate', () => startLogin().catch(() => {}));
   });
   contents.on('will-redirect', (event, legacyUrl, _isInPlace, legacyIsMainFrame) => {
     const url = event.url ?? legacyUrl;
@@ -128,6 +147,8 @@ if (!app.requestSingleInstanceLock()) {
   });
   app.on('web-contents-created', (_event, contents) => hardenContents(contents));
   app.on('window-all-closed', () => app.quit());
+  // Kein Client-Zertifikat anbieten (Chromium würde sonst ggf. eins aus dem Windows-Speicher wählen).
+  app.on('select-client-certificate', (event, _wc, _url, _list, callback) => { event.preventDefault(); callback(); });
   app.whenReady().then(() => {
     Menu.setApplicationMenu(null);   // keine Menü-Kürzel: Strg+W/Strg+R/Strg+Umschalt+I tun nichts (Entscheidung E7)
     app.setAppUserModelId('de.omarfourati.paintball');
@@ -137,6 +158,7 @@ if (!app.requestSingleInstanceLock()) {
     ses.setPermissionCheckHandler((_wc, permission, requestingOrigin) =>
       policy.permissionAllowed(permission, requestingOrigin, config.origin));
     ses.setDevicePermissionHandler(() => false);
+    ses.on('will-download', event => event.preventDefault());   // die App braucht keine Downloads (die .exe lädt man im Browser)
     ipcMain.handle('desktop:start-login', event =>
       (policy.isTrustedSender(event.senderFrame?.url, config.origin) ? startLogin() : 'failed'));
     createWindow();

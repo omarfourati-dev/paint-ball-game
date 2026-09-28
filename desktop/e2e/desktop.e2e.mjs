@@ -108,21 +108,43 @@ try {
     (await session.defaultSession.cookies.get({ url: origin })).map(c => ({ name: c.name, secure: c.secure, httpOnly: c.httpOnly })), ORIGIN);
   check('Sitzungs-Cookie liegt in der Electron-Sitzung', cookies.some(c => c.name === '__Host-pb_session' && c.secure && c.httpOnly), JSON.stringify(cookies));
 
-  // Links im Menü (kein laufendes Match, also keine beforeunload-Nachfrage)
+  // Links im Menü (kein laufendes Match, also keine beforeunload-Nachfrage). Externes Öffnen ist auf eins alle 2 s gedrosselt,
+  // window.open zusätzlich nur kurz nach echter Eingabe – deshalb Pausen und ein echter Klick über sendInputEvent.
   const before = page.url();
+  const GAP = 2200;
   await page.evaluate(() => {
     for (const href of ['https://example.org/extern', 'file:///C:/Windows/']) {
       const a = document.createElement('a'); a.href = href; document.body.append(a); a.click(); a.remove();
     }
-    window.open('https://example.org/popup');
     window.open('file:///C:/');
   });
-  await sleep(800);
-  await page.evaluate(() => { location.href = '/datenschutz'; });
+  await sleep(GAP);
+  await page.evaluate(() => window.open('https://example.org/ohne-klick'));   // wie ein Werbe-Pop-up: keine Eingabe vorher
+  await sleep(GAP);
+  const box = await page.evaluate(() => {
+    const b = document.createElement('button');
+    b.id = 'e2e-popup';
+    b.style.cssText = 'position:fixed;left:10px;top:10px;width:80px;height:40px;z-index:99999';
+    b.onclick = () => window.open('https://example.org/popup');
+    document.body.append(b);
+    const r = b.getBoundingClientRect();
+    return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
+  });
+  await app.evaluate(({ BrowserWindow }, { x, y }) => {
+    const wc = BrowserWindow.getAllWindows()[0].webContents;
+    wc.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 });
+    wc.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 });
+  }, box);
+  await sleep(300);
+  await page.evaluate(() => { location.href = '/datenschutz'; });   // < 2 s nach dem Pop-up: gedrosselt
+  await sleep(GAP);
+  await page.evaluate(() => { document.querySelector('#e2e-popup')?.remove(); location.href = '/datenschutz'; });
   await sleep(1200);
   const ext = await opened();
   check('Externe Links und /datenschutz im Standardbrowser, Fenster bleibt im Spiel',
     page.url() === before && ['https://example.org/extern', 'https://example.org/popup', `${ORIGIN}/datenschutz`].every(u => ext.includes(u)), JSON.stringify(ext));
+  check('Pop-up ohne Klick öffnet nichts, externes Öffnen höchstens eins alle 2 s',
+    !ext.includes('https://example.org/ohne-klick') && ext.filter(u => u === `${ORIGIN}/datenschutz`).length === 1, JSON.stringify(ext));
   check('file: wird weder geöffnet noch geladen', !ext.some(u => u.startsWith('file:')) && page.url() === before);
 
   const perms = await page.evaluate(async () => ({
