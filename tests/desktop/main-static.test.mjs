@@ -63,3 +63,11 @@ test('package.json: Versionen exakt gepinnt, NSIS pro Benutzer und portable, Fus
   assert.equal(pkg.build.electronFuses.onlyLoadAppFromAsar, true);
   assert.deepEqual(pkg.build.files, ['main.js', 'preload.js', 'policy.js', 'login.js', 'offline.html']);
 });
+
+test('package.json: name = productName, sonst installiert der pro-Benutzer-NSIS-Installer in einen falschen Ordner', () => {
+  // electron-builder benutzt für den Installationsordner bei oneClick+perUser (unser Fall) den sanitisierten
+  // package.json-Namen, nicht productName (getWindowsInstallationDirName: isTryToUseProductName = !oneClick || isPerMachine
+  // = false bei oneClick:true/perMachine:false). Ohne diesen Gleichlauf landet die App unter
+  // %LOCALAPPDATA%\Programs\paint-ball-desktop statt ...\Programs\Paint-Ball (Abnahme Task 6, Step 4).
+  assert.equal(pkg.name, pkg.build.productName);
+});
