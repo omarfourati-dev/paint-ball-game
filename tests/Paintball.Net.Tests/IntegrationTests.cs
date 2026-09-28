@@ -67,6 +67,17 @@ namespace Paintball.Net.Tests
             r.RunAsync("Google: Cookie mit fehlerhaftem Verifier (Länge/Zeichen) → invalid_state", GoogleMalformedVerifier);
             r.RunAsync("Google: Abbruch ohne pb_oauth-Cookie → invalid_state, keine Session (Anti-Login-CSRF)", GoogleCancelledWithoutCookie);
             r.RunAsync("Google: no-store auch bei Rate-Limit (429) auf der Start-Route", GoogleStartRateLimitNoStore);
+            r.RunAsync("Google: pb_oauth im Format vor dem Desktop-Login (3 Teile) gilt weiter", GoogleThreePartCookieStillValid);
+            r.Run("Desktop: Grant-Speicher – einmalig, erster gewinnt, 2 min, 5 Fehlversuche, Obergrenze", DesktopGrantStoreRules);
+            r.RunAsync("Desktop: Google-Start merkt sich die challenge, ungültige challenge → Fehlerseite", DesktopGoogleStart);
+            r.RunAsync("Desktop: Callback legt Grant an, keine Sitzung im Browser, Browser-Sitzung bleibt gültig", DesktopCallbackNoBrowserSession);
+            r.RunAsync("Desktop: Fehler, Abbruch und fehlende Konfiguration führen auf /desktop-login?error=…", DesktopCallbackErrors);
+            r.RunAsync("Desktop: Einlösen gelingt genau einmal, Cookie mit __Host-Attributen, Namensvorschlag", DesktopRedeemOnce);
+            r.RunAsync("Desktop: falscher verifier → 401, nach 5 Fehlversuchen ist der Grant weg", DesktopRedeemWrongVerifier);
+            r.RunAsync("Desktop: nach 2 Minuten ist der Grant ungültig", DesktopRedeemExpired);
+            r.RunAsync("Desktop: Einlösen nur mit JSON (415), kaputter Körper 400, unbekannte challenge 202, no-store", DesktopRedeemInputs);
+            r.RunAsync("Desktop: Rate-Limit 60/min/IP beim Einlösen, getrennt von den anderen Auth-Routen", DesktopRedeemRateLimit);
+            r.RunAsync("Desktop: Dev-Login mit desktop legt Grant statt Sitzung an", DesktopDevLogin);
             r.RunAsync("Herunterfahren schreibt offene Spielstände", ShutdownFlushesPendingWrites);
             r.RunAsync("Herunterfahren mit offener WebSocket-Verbindung: 1001 server_restart, alles geschrieben, zügig", ShutdownWithOpenWebSocket);
             r.RunAsync("Spieltakt: StopAsync kehrt erst zurück, wenn die Takt-Schleife beendet ist", GameLoopStopWaitsForLoop);
@@ -127,6 +138,35 @@ namespace Paintball.Net.Tests
 
         private static bool SetsSession(HttpResponseMessage res)
             => res.Headers.TryGetValues("Set-Cookie", out var sc) && sc.Any(v => v.StartsWith("__Host-pb_session="));
+
+        private static string NewVerifier() => Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32))
+            .TrimEnd('=').Replace('+', '-').Replace('/', '_');
+
+        private static HttpRequestMessage RedeemReq(string challenge, string verifier, string contentType = "application/json", string cookie = null)
+        {
+            var req = new HttpRequestMessage(HttpMethod.Post, "/api/auth/desktop/redeem")
+            {
+                Content = new StringContent(JsonSerializer.Serialize(new { challenge, verifier }), Encoding.UTF8, contentType)
+            };
+            if (cookie != null) req.Headers.Add("Cookie", cookie);
+            return req;
+        }
+
+        /// <summary>Desktop-Flow im „Browser“: Start mit challenge, dann Callback mit Fake-Google; gibt die Callback-Antwort zurück.</summary>
+        private static async Task<HttpResponseMessage> DesktopCallbackAsync(Harness h, string challenge, string code, string browserCookie = null)
+        {
+            HttpResponseMessage start = await h.Http.GetAsync("/api/auth/google?desktop=" + challenge);
+            var (state, cookie) = ReadOAuthCookie(start);
+            var req = new HttpRequestMessage(HttpMethod.Get, $"/api/auth/google/callback?code={code}&state={state}");
+            req.Headers.Add("Cookie", browserCookie == null ? cookie : cookie + "; " + browserCookie);
+            return await h.Http.SendAsync(req);
+        }
+
+        private static string SessionCookieOf(HttpResponseMessage res)
+        {
+            string set = res.Headers.GetValues("Set-Cookie").First(v => v.StartsWith("__Host-pb_session="));
+            return set.Substring(0, set.IndexOf(';'));
+        }
 
         private static async Task GoogleStart()
         {
@@ -314,6 +354,229 @@ namespace Paintball.Net.Tests
             Assert.IsTrue(res.Headers.CacheControl?.NoStore == true, "no-store auch bei 429");
         }
 
+        private static async Task GoogleThreePartCookieStillValid()
+        {
+            await using Harness h = await Harness.StartAsync();
+            HttpResponseMessage start = await h.Http.GetAsync("/api/auth/google");
+            var (state, cookie) = ReadOAuthCookie(start);
+            Assert.IsTrue(cookie.EndsWith("."), "neues Format: vierter Teil (desktop) leer");
+            string threeParts = cookie.Substring(0, cookie.Length - 1);
+            var req = new HttpRequestMessage(HttpMethod.Get, $"/api/auth/google/callback?code=c9&state={state}");
+            req.Headers.Add("Cookie", threeParts);
+            HttpResponseMessage res = await h.Http.SendAsync(req);
+            Assert.AreEqual("/play", res.Headers.Location.OriginalString, "altes Format führt normal ins Spiel");
+            Assert.IsTrue(SetsSession(res), "Sitzung gesetzt");
+        }
+
+        private static void DesktopGrantStoreRules()
+        {
+            DateTime now = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+            var store = new DesktopGrantStore(() => now);
+
+            string v1 = NewVerifier(), c1 = Challenge(v1);
+            Assert.IsTrue(store.Add(c1, "p1", "Omar"), "Grant angelegt");
+            Assert.IsFalse(store.Add(c1, "p2", null), "zweiter Grant für dieselbe challenge abgelehnt (erster gewinnt)");
+            Assert.IsFalse(store.Add("kurz", "p1", null), "ungültige challenge");
+            Assert.AreEqual(RedeemStatus.Ok, store.TryRedeem(c1, v1, out DesktopGrant g), "einlösen");
+            Assert.AreEqual("p1", g.PlayerId, "Spieler aus dem Grant");
+            Assert.AreEqual("Omar", g.SuggestedName, "Namensvorschlag aus dem Grant");
+            Assert.AreEqual(RedeemStatus.Pending, store.TryRedeem(c1, v1, out _), "zweites Einlösen: verbraucht");
+
+            string v2 = NewVerifier(), c2 = Challenge(v2);
+            store.Add(c2, "p2", null);
+            for (int i = 1; i <= 4; i++)
+                Assert.AreEqual(RedeemStatus.WrongVerifier, store.TryRedeem(c2, NewVerifier(), out _), "Fehlversuch " + i);
+            Assert.AreEqual(RedeemStatus.Ok, store.TryRedeem(c2, v2, out _), "4 Fehlversuche: Grant noch da");
+
+            string v3 = NewVerifier(), c3 = Challenge(v3);
+            store.Add(c3, "p3", null);
+            for (int i = 1; i <= DesktopGrantStore.MaxFailures; i++) store.TryRedeem(c3, NewVerifier(), out _);
+            Assert.AreEqual(RedeemStatus.Pending, store.TryRedeem(c3, v3, out _), "nach 5 Fehlversuchen gelöscht");
+
+            Assert.AreEqual(RedeemStatus.Malformed, store.TryRedeem(null, v3, out _), "challenge fehlt");
+            Assert.AreEqual(RedeemStatus.Malformed, store.TryRedeem(c3, "kurz", out _), "verifier falsches Format");
+
+            string v4 = NewVerifier(), c4 = Challenge(v4);
+            store.Add(c4, "p4", null);
+            now = now.Add(DesktopGrantStore.Lifetime).AddSeconds(-1);
+            Assert.AreEqual(RedeemStatus.Ok, store.TryRedeem(c4, v4, out _), "kurz vor Ablauf gültig");
+
+            string v5 = NewVerifier(), c5 = Challenge(v5);
+            store.Add(c5, "p5", null);
+            now = now.Add(DesktopGrantStore.Lifetime);
+            Assert.AreEqual(RedeemStatus.Pending, store.TryRedeem(c5, v5, out _), "nach 2 Minuten abgelaufen");
+            Assert.AreEqual(0, store.Count, "abgelaufener Grant entfernt");
+
+            var small = new DesktopGrantStore(() => now, maxGrants: 2);
+            Assert.IsTrue(small.Add(Challenge(NewVerifier()), "a", null) && small.Add(Challenge(NewVerifier()), "b", null), "2 erlaubt");
+            Assert.IsFalse(small.Add(Challenge(NewVerifier()), "c", null), "Obergrenze");
+            now = now.Add(DesktopGrantStore.Lifetime);
+            Assert.IsTrue(small.Add(Challenge(NewVerifier()), "d", null), "abgelaufene Grants machen Platz");
+            Assert.AreEqual(1, small.Count, "beim Anlegen aufgeräumt");
+        }
+
+        private static async Task DesktopGoogleStart()
+        {
+            await using Harness h = await Harness.StartAsync();
+            string challenge = Challenge(NewVerifier());
+            HttpResponseMessage res = await h.Http.GetAsync("/api/auth/google?desktop=" + challenge + "&join=AB12");
+            Assert.AreEqual("accounts.google.com", res.Headers.Location.Host, "zu Google");
+            Assert.IsFalse(res.Headers.Location.Query.Contains(challenge), "Desktop-challenge geht nicht an Google");
+            string set = res.Headers.GetValues("Set-Cookie").First(v => v.StartsWith("pb_oauth="));
+            string[] parts = set.Substring("pb_oauth=".Length, set.IndexOf(';') - "pb_oauth=".Length).Split('.');
+            Assert.AreEqual(4, parts.Length, "state.join.verifier.desktop");
+            Assert.AreEqual("", parts[1], "Einladungscode im Desktop-Flow ignoriert");
+            Assert.AreEqual(challenge, parts[3], "challenge im Cookie");
+            foreach (string bad in new[] { "kurz", new string('a', 42) + "!", new string('a', 44) })
+            {
+                HttpResponseMessage r = await h.Http.GetAsync("/api/auth/google?desktop=" + Uri.EscapeDataString(bad));
+                Assert.AreEqual("/desktop-login?error=oauth_failed", r.Headers.Location.OriginalString, "ungültige challenge: " + bad);
+                Assert.IsFalse(r.Headers.TryGetValues("Set-Cookie", out var sc) && sc.Any(v => v.StartsWith("pb_oauth=")), "kein state-Cookie: " + bad);
+            }
+        }
+
+        private static async Task DesktopCallbackNoBrowserSession()
+        {
+            await using Harness h = await Harness.StartAsync();
+            string browserSession = await h.LoginAsync("ImBrowser");
+            HttpResponseMessage res = await DesktopCallbackAsync(h, Challenge(NewVerifier()), "d1", browserSession);
+            Assert.AreEqual("/desktop-login", res.Headers.Location.OriginalString, "Erfolgsseite statt /play");
+            Assert.IsFalse(SetsSession(res), "keine Sitzung im Browser");
+            Assert.IsFalse(res.Headers.TryGetValues("Set-Cookie", out var sc) && sc.Any(v => v.StartsWith("pb_suggest=")), "kein Namensvorschlag im Browser");
+            Assert.IsTrue(res.Headers.CacheControl?.NoStore == true, "no-store");
+            HttpResponseMessage me = await h.Http.SendAsync(h.Req(HttpMethod.Get, "/api/me", browserSession));
+            Assert.AreEqual(HttpStatusCode.OK, me.StatusCode, "bestehende Browser-Sitzung bleibt gültig");
+        }
+
+        private static async Task DesktopCallbackErrors()
+        {
+            await using Harness h = await Harness.StartAsync();
+            string challenge = Challenge(NewVerifier());
+            HttpResponseMessage failed = await DesktopCallbackAsync(h, challenge, "bad");
+            Assert.AreEqual("/desktop-login?error=oauth_failed", failed.Headers.Location.OriginalString, "Token-Tausch fehlgeschlagen");
+            Assert.IsFalse(SetsSession(failed), "keine Sitzung");
+
+            HttpResponseMessage start = await h.Http.GetAsync("/api/auth/google?desktop=" + challenge);
+            var (state, cookie) = ReadOAuthCookie(start);
+            var cancel = new HttpRequestMessage(HttpMethod.Get, $"/api/auth/google/callback?error=access_denied&state={state}");
+            cancel.Headers.Add("Cookie", cookie);
+            Assert.AreEqual("/desktop-login?error=cancelled", (await h.Http.SendAsync(cancel)).Headers.Location.OriginalString, "Abbruch");
+
+            HttpResponseMessage probe = await h.Http.SendAsync(RedeemReq(challenge, NewVerifier()));
+            Assert.AreEqual(HttpStatusCode.Accepted, probe.StatusCode, "nach Fehlern kein Grant (sonst 401)");
+
+            await using Harness off = await Harness.StartAsync(google: null, googleConfigured: false);
+            HttpResponseMessage nc = await off.Http.GetAsync("/api/auth/google?desktop=" + challenge);
+            Assert.AreEqual("/desktop-login?error=not_configured", nc.Headers.Location.OriginalString, "nicht konfiguriert");
+        }
+
+        private static async Task DesktopRedeemOnce()
+        {
+            await using Harness h = await Harness.StartAsync();   // FakeGoogle liefert GivenName "Omar"
+            string verifier = NewVerifier(), challenge = Challenge(verifier);
+            await DesktopCallbackAsync(h, challenge, "d2");
+            HttpResponseMessage res = await h.Http.SendAsync(RedeemReq(challenge, verifier));
+            Assert.AreEqual(HttpStatusCode.OK, res.StatusCode, "eingelöst");
+            Assert.IsTrue(res.Headers.CacheControl?.NoStore == true, "no-store");
+            string set = res.Headers.GetValues("Set-Cookie").First(v => v.StartsWith("__Host-pb_session=")).ToLowerInvariant();
+            Assert.IsTrue(set.Contains("httponly") && set.Contains("secure") && set.Contains("samesite=lax") && set.Contains("path=/")
+                && set.Contains("max-age=2592000"), "Cookie-Attribute wie beim Browser-Login (30 Tage)");
+            Assert.IsFalse(set.Contains("domain="), "__Host- verbietet ein Domain-Attribut");
+            var meReq = h.Req(HttpMethod.Get, "/api/me", SessionCookieOf(res));
+            string suggest = res.Headers.GetValues("Set-Cookie").First(v => v.StartsWith("pb_suggest="));
+            meReq.Headers.Add("Cookie", suggest.Substring(0, suggest.IndexOf(';')));
+            JsonElement me = JsonDocument.Parse(await (await h.Http.SendAsync(meReq)).Content.ReadAsStringAsync()).RootElement;
+            Assert.IsTrue(me.GetProperty("needsName").GetBoolean(), "neues Konto → Namenswahl");
+            Assert.AreEqual("Omar", me.GetProperty("suggestedName").GetString(), "Vorschlag kommt über den Grant in der App an");
+            HttpResponseMessage again = await h.Http.SendAsync(RedeemReq(challenge, verifier));
+            Assert.AreEqual(HttpStatusCode.Accepted, again.StatusCode, "zweites Einlösen: Grant verbraucht");
+            Assert.IsFalse(SetsSession(again), "keine zweite Sitzung");
+        }
+
+        private static async Task DesktopRedeemWrongVerifier()
+        {
+            await using Harness h = await Harness.StartAsync();
+            string verifier = NewVerifier(), challenge = Challenge(verifier);
+            await DesktopCallbackAsync(h, challenge, "d3");
+            for (int i = 1; i <= 5; i++)
+            {
+                HttpResponseMessage bad = await h.Http.SendAsync(RedeemReq(challenge, NewVerifier()));
+                Assert.AreEqual(HttpStatusCode.Unauthorized, bad.StatusCode, "falscher verifier " + i);
+                Assert.IsFalse(SetsSession(bad), "keine Sitzung " + i);
+            }
+            HttpResponseMessage late = await h.Http.SendAsync(RedeemReq(challenge, verifier));
+            Assert.AreEqual(HttpStatusCode.Accepted, late.StatusCode, "nach 5 Fehlversuchen gelöscht – auch der richtige verifier hilft nicht mehr");
+            Assert.IsFalse(SetsSession(late), "keine Sitzung");
+        }
+
+        private static async Task DesktopRedeemExpired()
+        {
+            DateTime now = DateTime.UtcNow;
+            var grants = new DesktopGrantStore(() => now);
+            await using Harness h = await Harness.StartAsync(desktopGrants: grants);
+            string verifier = NewVerifier(), challenge = Challenge(verifier);
+            await DesktopCallbackAsync(h, challenge, "d4");
+            Assert.AreEqual(1, grants.Count, "Grant liegt");
+            now = now.Add(DesktopGrantStore.Lifetime);
+            HttpResponseMessage res = await h.Http.SendAsync(RedeemReq(challenge, verifier));
+            Assert.AreEqual(HttpStatusCode.Accepted, res.StatusCode, "abgelaufen → wie nicht vorhanden");
+            Assert.IsFalse(SetsSession(res), "keine Sitzung");
+            Assert.AreEqual(0, grants.Count, "abgelaufener Grant entfernt");
+        }
+
+        private static async Task DesktopRedeemInputs()
+        {
+            await using Harness h = await Harness.StartAsync();
+            string verifier = NewVerifier(), challenge = Challenge(verifier);
+            await DesktopCallbackAsync(h, challenge, "d5");
+            HttpResponseMessage form = await h.Http.SendAsync(RedeemReq(challenge, verifier, "text/plain"));
+            Assert.AreEqual(HttpStatusCode.UnsupportedMediaType, form.StatusCode, "text/plain (Formular-Trick) abgelehnt");
+            var broken = new HttpRequestMessage(HttpMethod.Post, "/api/auth/desktop/redeem") { Content = new StringContent("{kaputt", Encoding.UTF8, "application/json") };
+            Assert.AreEqual(HttpStatusCode.BadRequest, (await h.Http.SendAsync(broken)).StatusCode, "kaputtes JSON");
+            Assert.AreEqual(HttpStatusCode.BadRequest, (await h.Http.SendAsync(RedeemReq(challenge, "kurz"))).StatusCode, "verifier falsches Format");
+            var big = new HttpRequestMessage(HttpMethod.Post, "/api/auth/desktop/redeem")
+            {
+                Content = new StringContent("{\"challenge\":\"" + new string('a', 2000) + "\"}", Encoding.UTF8, "application/json")
+            };
+            Assert.AreEqual(HttpStatusCode.BadRequest, (await h.Http.SendAsync(big)).StatusCode, "Körper über 1 KB");
+            HttpResponseMessage unknown = await h.Http.SendAsync(RedeemReq(Challenge(NewVerifier()), NewVerifier()));
+            Assert.AreEqual(HttpStatusCode.Accepted, unknown.StatusCode, "unbekannte challenge: noch nicht angemeldet");
+            Assert.IsTrue(unknown.Headers.CacheControl?.NoStore == true, "no-store");
+            Assert.AreEqual(HttpStatusCode.OK, (await h.Http.SendAsync(RedeemReq(challenge, verifier))).StatusCode,
+                "Format- und Typfehler zählen nicht als Fehlversuch");
+        }
+
+        private static async Task DesktopRedeemRateLimit()
+        {
+            await using Harness h = await Harness.StartAsync();
+            for (int i = 1; i <= 60; i++)
+            {
+                HttpResponseMessage ok = await h.Http.SendAsync(RedeemReq(Challenge(NewVerifier()), NewVerifier()));
+                Assert.AreEqual(HttpStatusCode.Accepted, ok.StatusCode, $"Abfrage {i} erlaubt (Polling alle 2 s = 30/min, doppelte Reserve)");
+            }
+            HttpResponseMessage limited = await h.Http.SendAsync(RedeemReq(Challenge(NewVerifier()), NewVerifier()));
+            Assert.AreEqual((HttpStatusCode)429, limited.StatusCode, "61. Abfrage begrenzt");
+            Assert.IsTrue(limited.Headers.CacheControl?.NoStore == true, "no-store auch bei 429");
+            Assert.AreEqual(HttpStatusCode.Found, (await h.Http.GetAsync("/api/auth/google")).StatusCode, "andere Auth-Routen unberührt");
+        }
+
+        private static async Task DesktopDevLogin()
+        {
+            await using Harness h = await Harness.StartAsync();
+            string verifier = NewVerifier(), challenge = Challenge(verifier);
+            HttpResponseMessage res = await h.Http.GetAsync($"/api/auth/dev?name=DeskDev&desktop={challenge}");
+            Assert.AreEqual("/desktop-login", res.Headers.Location.OriginalString, "Erfolgsseite");
+            Assert.IsFalse(SetsSession(res), "keine Sitzung im Browser");
+            HttpResponseMessage redeem = await h.Http.SendAsync(RedeemReq(challenge, verifier));
+            Assert.AreEqual(HttpStatusCode.OK, redeem.StatusCode, "Dev-Grant einlösbar");
+            JsonElement me = JsonDocument.Parse(await (await h.Http.SendAsync(h.Req(HttpMethod.Get, "/api/me", SessionCookieOf(redeem)))).Content.ReadAsStringAsync()).RootElement;
+            Assert.AreEqual("DeskDev", me.GetProperty("name").GetString(), "Name aus dem Dev-Login");
+            Assert.AreEqual(HttpStatusCode.BadRequest, (await h.Http.GetAsync("/api/auth/dev?desktop=kurz")).StatusCode, "ungültige challenge");
+            await using Harness prod = await Harness.StartAsync(devLogin: false);
+            Assert.AreEqual(HttpStatusCode.NotFound, (await prod.Http.GetAsync($"/api/auth/dev?desktop={challenge}")).StatusCode,
+                "ohne --dev-login keine Dev-Variante");
+        }
+
         private sealed class Harness : IAsyncDisposable
         {
             public WebApplication App;
@@ -321,7 +584,7 @@ namespace Paintball.Net.Tests
             public int HttpPort;
             public HttpClient Http;
 
-            public static async Task<Harness> StartAsync(bool devLogin = true, IGoogleOAuthClient google = null, bool googleConfigured = true, Paintball.Net.Accounts.IPlayerRepository repository = null, bool backgroundPersistence = false, int[] retryDelaysMs = null, AdsConfig ads = null)
+            public static async Task<Harness> StartAsync(bool devLogin = true, IGoogleOAuthClient google = null, bool googleConfigured = true, Paintball.Net.Accounts.IPlayerRepository repository = null, bool backgroundPersistence = false, int[] retryDelaysMs = null, AdsConfig ads = null, DesktopGrantStore desktopGrants = null)
             {
                 string web = AccountTests.TempDir();
                 HarnessWebRoot = web;
@@ -329,6 +592,7 @@ namespace Paintball.Net.Tests
                 File.WriteAllText(Path.Combine(web, "play.html"), "<!doctype html><title>Spiel</title>");
                 File.WriteAllText(Path.Combine(web, "impressum.html"), "<!doctype html><title>Impressum</title>");
                 File.WriteAllText(Path.Combine(web, "datenschutz.html"), "<!doctype html><title>Datenschutz</title>");
+                File.WriteAllText(Path.Combine(web, "desktop-login.html"), "<!doctype html><title>Desktop-Login</title>");
                 File.WriteAllText(Path.Combine(web, "sw.js"), "self.PB_SW = {};\r\n");
                 var options = new ServerHostOptions
                 {
@@ -344,6 +608,7 @@ namespace Paintball.Net.Tests
                     BackgroundPersistence = backgroundPersistence,
                     RetryDelaysMs = retryDelaysMs,
                     Ads = ads,
+                    DesktopGrants = desktopGrants,
                     Game = new Paintball.Net.Rooms.ServerOptions { LobbyCountdownSeconds = 0.5f }
                 };
                 WebApplication app = ServerHost.Build(Array.Empty<string>(), options);
@@ -645,7 +910,7 @@ namespace Paintball.Net.Tests
         private static async Task PageRoutes()
         {
             await using Harness h = await Harness.StartAsync();
-            foreach (var (path, title) in new[] { ("/play", "Spiel"), ("/impressum", "Impressum"), ("/datenschutz", "Datenschutz") })
+            foreach (var (path, title) in new[] { ("/play", "Spiel"), ("/impressum", "Impressum"), ("/datenschutz", "Datenschutz"), ("/desktop-login", "Desktop-Login") })
             {
                 HttpResponseMessage res = await h.Http.GetAsync(path);
                 Assert.AreEqual(HttpStatusCode.OK, res.StatusCode, path + " 200");

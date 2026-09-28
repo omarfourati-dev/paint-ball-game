@@ -69,7 +69,7 @@ namespace Paintball.Server
         private static void NoStore(HttpContext ctx) => ctx.Response.Headers.CacheControl = "no-store";
 
         /// <param name="limiter">Pro Host eine Instanz (20/min/IP); auch für die Google-Routen (Task 6).</param>
-        public static void Map(WebApplication app, GameServer game, AccountStore accounts, ServerHostOptions options, RateLimiter limiter)
+        public static void Map(WebApplication app, GameServer game, AccountStore accounts, ServerHostOptions options, RateLimiter limiter, DesktopGrantStore grants)
         {
             app.MapGet("/api/me", (HttpContext ctx) =>
             {
@@ -144,16 +144,22 @@ namespace Paintball.Server
             });
 
             // Bewusst ohne Rate-Limit: existiert nur mit --dev-login (nie in Produktion), die Tests melden sich darüber oft an.
+            // ?desktop=<challenge>: Dev-Variante des Desktop-Logins für lokale Tests der App – Grant statt Sitzung, wie der Google-Callback.
             app.MapGet("/api/auth/dev", (HttpContext ctx) =>
             {
                 if (!options.DevLogin) return Results.NotFound();
-                accounts.EndSession(SessionToken(ctx)); // Re-Login: altes Token nicht gültig lassen
+                string desktop = ctx.Request.Query["desktop"].ToString();
+                bool isDesktop = desktop.Length > 0;
+                if (isDesktop && !DesktopGrantStore.ValidPkceValue(desktop)) return Results.BadRequest();
+                if (!isDesktop) accounts.EndSession(SessionToken(ctx)); // Re-Login: altes Token nicht gültig lassen (Desktop: Browser bleibt, wie er ist)
                 string name = ctx.Request.Query["name"].ToString();
                 string sub = "dev:" + (string.IsNullOrEmpty(name) ? Guid.NewGuid().ToString("N") : name.ToLowerInvariant());
                 SignInResult s;
                 try { s = accounts.SignIn(sub, "dev@localhost"); }
                 catch (AccountDeletedException) { return Results.Conflict(); }   // gleichzeitig gelöscht
                 if (s.NeedsName && !string.IsNullOrEmpty(name)) accounts.SetName(s.PlayerId, name);
+                if (isDesktop)
+                    return Results.Redirect(GoogleAuthApi.DesktopPage(grants.Add(desktop, s.PlayerId, null) ? null : "oauth_failed"));
                 SetSession(ctx, accounts, accounts.CreateSession(s.PlayerId));
                 string join = ctx.Request.Query["join"].ToString();
                 return Results.Redirect(GoogleAuthApi.ValidJoin(join) != null ? "/play?join=" + join : "/play");

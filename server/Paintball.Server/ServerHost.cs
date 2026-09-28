@@ -60,6 +60,8 @@ namespace Paintball.Server
         public AdsConfig Ads;
         /// <summary>Nur für Tests: Vorrang vor DatabaseUrl.</summary>
         public IPlayerRepository Repository;
+        /// <summary>Nur für Tests: Desktop-Grants mit eigener Uhr (Ablauf nach 2 Minuten prüfbar).</summary>
+        public DesktopGrantStore DesktopGrants;
         /// <summary>Spielstände über die Hintergrund-Warteschlange schreiben (Produktion); false = synchron (Tests).</summary>
         public bool BackgroundPersistence;
         /// <summary>Nur für Tests: eigene Wiederholungs-Wartezeiten der Hintergrund-Warteschlange (Standard: 500/2000/5000 ms).</summary>
@@ -213,8 +215,12 @@ namespace Paintball.Server
             MapAds(app, ads);
             MapMetrics(app, game, accounts, options);
             var authLimiter = new RateLimiter(limit: 20, window: TimeSpan.FromMinutes(1)); // gemeinsam für alle Auth-Routen
-            AuthApi.Map(app, game, accounts, options, authLimiter);
-            GoogleAuthApi.Map(app, accounts, options, authLimiter);
+            // Die Desktop-App fragt alle 2 s nach (30/min): eigenes Fenster, damit sie weder sich selbst noch die anderen Auth-Routen ausbremst.
+            var redeemLimiter = new RateLimiter(limit: 60, window: TimeSpan.FromMinutes(1));
+            DesktopGrantStore desktopGrants = options.DesktopGrants ?? new DesktopGrantStore();
+            AuthApi.Map(app, game, accounts, options, authLimiter, desktopGrants);
+            GoogleAuthApi.Map(app, accounts, options, authLimiter, desktopGrants);
+            DesktopAuthApi.Map(app, accounts, desktopGrants, redeemLimiter);
 
             if (Directory.Exists(webRoot))
             {
@@ -243,7 +249,8 @@ namespace Paintball.Server
         {
             ["/play"] = "/play.html",
             ["/impressum"] = "/impressum.html",
-            ["/datenschutz"] = "/datenschutz.html"
+            ["/datenschutz"] = "/datenschutz.html",
+            ["/desktop-login"] = "/desktop-login.html"
         };
 
         /// <summary>Alte Einladungslinks /?join= → /play, /play/ → /play, saubere URLs → HTML-Datei.</summary>

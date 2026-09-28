@@ -77,8 +77,12 @@ namespace Paintball.Server
         private static string Base64Url(byte[] b) => Convert.ToBase64String(b).TrimEnd('=').Replace('+', '-').Replace('/', '_');
         private static bool ValidVerifier(string v) => v != null && v.Length == 43 && Regex.IsMatch(v, @"\A[A-Za-z0-9\-_]{43}\z");
 
+        /// <summary>Seite im Standardbrowser am Ende des Desktop-Logins; code = null heißt Erfolg.</summary>
+        public static string DesktopPage(string code) => code == null ? "/desktop-login" : "/desktop-login?error=" + code;
+
         /// <param name="limiter">Dieselbe Instanz wie in AuthApi.Map (20/min/IP pro Host).</param>
-        public static void Map(WebApplication app, AccountStore accounts, ServerHostOptions options, RateLimiter limiter)
+        /// <param name="grants">Desktop-Login: Mit ?desktop=&lt;challenge&gt; endet der Flow in einem Grant statt in einer Browser-Sitzung.</param>
+        public static void Map(WebApplication app, AccountStore accounts, ServerHostOptions options, RateLimiter limiter, DesktopGrantStore grants)
         {
             IGoogleOAuthClient google = options.Google ?? (Configured(options) ? new GoogleOAuthClient(options.GoogleClientId, options.GoogleClientSecret) : null);
             var cookieOpts = new CookieOptions { HttpOnly = true, Secure = true, SameSite = SameSiteMode.Lax, Path = "/api/auth", MaxAge = TimeSpan.FromMinutes(10), IsEssential = true };
@@ -87,12 +91,18 @@ namespace Paintball.Server
             {
                 ctx.Response.Headers.CacheControl = "no-store"; // gilt auch für 429 (kein Zwischenspeichern von Auth-Antworten)
                 if (limiter.Exceeded(ctx)) return Results.StatusCode(429);
-                if (!Configured(options) || google == null) return Results.Redirect("/play?auth_error=not_configured");
+                // Desktop-App: challenge = BASE64URL(SHA256(verifier der App)); ungültig → Fehlerseite ohne state-Cookie
+                string desktop = ctx.Request.Query["desktop"].ToString();
+                bool isDesktop = desktop.Length > 0;
+                if (isDesktop && !DesktopGrantStore.ValidPkceValue(desktop)) return Results.Redirect(DesktopPage("oauth_failed"));
+                if (!Configured(options) || google == null)
+                    return Results.Redirect(isDesktop ? DesktopPage("not_configured") : "/play?auth_error=not_configured");
                 string state = Convert.ToHexString(RandomNumberGenerator.GetBytes(24));
-                string join = ValidJoin(ctx.Request.Query["join"].ToString()) ?? string.Empty;
+                string join = isDesktop ? string.Empty : (ValidJoin(ctx.Request.Query["join"].ToString()) ?? string.Empty);
                 string verifier = Base64Url(RandomNumberGenerator.GetBytes(32));
                 string challenge = Base64Url(SHA256.HashData(Encoding.ASCII.GetBytes(verifier)));
-                ctx.Response.Cookies.Append(OAuthCookie, state + "." + join + "." + verifier, cookieOpts);
+                // Format state.join.verifier.desktop – desktop ist im normalen Browser-Login leer
+                ctx.Response.Cookies.Append(OAuthCookie, state + "." + join + "." + verifier + "." + desktop, cookieOpts);
                 string url = "https://accounts.google.com/o/oauth2/v2/auth?" + string.Join("&",
                     "client_id=" + Uri.EscapeDataString(options.GoogleClientId),
                     "redirect_uri=" + Uri.EscapeDataString(RedirectUri(options, ctx.Request)),
@@ -113,18 +123,29 @@ namespace Paintball.Server
                 ctx.Response.Cookies.Delete(OAuthCookie, cookieOpts); // state gilt genau einmal
                 string state = ctx.Request.Query["state"].ToString(), code = ctx.Request.Query["code"].ToString();
                 string[] parts = stored?.Split('.');
-                string storedState = parts?.Length == 3 ? parts[0] : null;
-                string join = parts?.Length == 3 ? ValidJoin(parts[1]) : null;
-                string verifier = parts?.Length == 3 ? parts[2] : null;
-                if (storedState == null || !ValidVerifier(verifier) || string.IsNullOrEmpty(state) ||
+                bool known = parts?.Length is 3 or 4; // 3 Teile: Cookie von vor dem Desktop-Login (höchstens 10 min alt)
+                string storedState = known ? parts[0] : null;
+                string join = known ? ValidJoin(parts[1]) : null;
+                string verifier = known ? parts[2] : null;
+                string desktop = known && parts.Length == 4 && parts[3].Length > 0 ? parts[3] : null;
+                if (storedState == null || !ValidVerifier(verifier) || (desktop != null && !DesktopGrantStore.ValidPkceValue(desktop)) ||
+                    string.IsNullOrEmpty(state) ||
                     !CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(storedState), Encoding.ASCII.GetBytes(state)))
                     return Results.Redirect("/play?auth_error=invalid_state");
-                if (ctx.Request.Query["error"].ToString() == "access_denied") return Results.Redirect("/play?auth_error=cancelled");
-                if (string.IsNullOrEmpty(code) || google == null) return Results.Redirect("/play?auth_error=oauth_failed");
+                string Fail(string reason) => desktop != null ? DesktopPage(reason) : "/play?auth_error=" + reason;
+                if (ctx.Request.Query["error"].ToString() == "access_denied") return Results.Redirect(Fail("cancelled"));
+                if (string.IsNullOrEmpty(code) || google == null) return Results.Redirect(Fail("oauth_failed"));
                 try
                 {
                     GoogleUser user = await google.ExchangeAsync(code, RedirectUri(options, ctx.Request), verifier, ctx.RequestAborted);
                     SignInResult s = accounts.SignIn(user.Sub, user.Email);
+                    if (desktop != null)
+                    {
+                        // Desktop-Login: keine Sitzung und kein Namensvorschlag im Browser, die Browser-Sitzung bleibt unberührt.
+                        // Die App löst den Grant mit ihrem verifier über /api/auth/desktop/redeem ein.
+                        string suggestion = s.NeedsName && !string.IsNullOrEmpty(user.GivenName) ? user.GivenName : null;
+                        return Results.Redirect(grants.Add(desktop, s.PlayerId, suggestion) ? DesktopPage(null) : DesktopPage("oauth_failed"));
+                    }
                     accounts.EndSession(AuthApi.SessionToken(ctx)); // Re-Login: altes Token nicht gültig lassen
                     AuthApi.SetSession(ctx, accounts, accounts.CreateSession(s.PlayerId));
                     if (s.NeedsName && !string.IsNullOrEmpty(user.GivenName))
@@ -137,7 +158,7 @@ namespace Paintball.Server
                 {
                     // Nur der Typname: Message könnte Antwortinhalte von Google enthalten.
                     Console.Error.WriteLine("[Auth] Google-Anmeldung fehlgeschlagen: " + ex.GetType().Name);
-                    return Results.Redirect("/play?auth_error=oauth_failed");
+                    return Results.Redirect(Fail("oauth_failed"));
                 }
             });
         }
