@@ -28,6 +28,7 @@ test('main.js: Schalter-Prüfung vor jeder Initialisierung; Client-Zertifikate u
   assert.match(main, /'input-event'/);
   assert.equal((main.match(/throttled\('window-open'/g) ?? []).length, 2);
   assert.equal((main.match(/throttled\('navigate'/g) ?? []).length, 2);
+  assert.match(main, /externalOpenAllowed\(kind, now, externalState\)\) return;\s*policy\.recordExternalOpen\(kind, now, externalState\);/, 'Obergrenze verbucht');
   assert.ok(!/shell\.openExternal\(url\)/.test(main), 'openExternal nur mit normalisiertem href');
   assert.equal(pkg.build.electronFuses.grantFileProtocolExtraPrivileges, false);
 });

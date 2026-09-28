@@ -152,26 +152,42 @@ function externalHref(url) {
 
 const EXTERNAL_MIN_INTERVAL_MS = 2000;
 const USER_GESTURE_WINDOW_MS = 1000;
+const WINDOW_OPEN_MAX_PER_WINDOW = 3;
+const WINDOW_OPEN_WINDOW_MS = 60000;
 
 /**
  * Gegen Werbe-Tab-Fluten: höchstens ein externes Öffnen alle 2 s. window.open/target=_blank (kann auch aus Werbe-iframes
- * kommen, Electron nennt den Frame nicht) zusätzlich nur kurz nach echter Eingabe (Maus, Taste, Touch) im Fenster;
- * Navigationen im Hauptframe (will-navigate) nur mit dem Zeitlimit.
- * state = { lastOpenAt, lastInputAt } in ms.
+ * kommen, Electron nennt den Frame nicht) zusätzlich nur kurz nach echtem Klick oder Touch im Fenster und höchstens
+ * 3-mal pro Minute (feste Obergrenze, auch bei einer Klickserie); Navigationen im Hauptframe (will-navigate) nur mit dem
+ * Zeitlimit. state = { lastOpenAt, lastInputAt, windowOpens: [Zeitpunkte] } in ms.
  */
 function externalOpenAllowed(kind, now, state) {
   if (now - (state.lastOpenAt ?? -Infinity) < EXTERNAL_MIN_INTERVAL_MS) return false;
-  if (kind === 'window-open' && !(now - (state.lastInputAt ?? -Infinity) <= USER_GESTURE_WINDOW_MS)) return false;
-  return true;
+  if (kind !== 'window-open') return true;
+  if (!(now - (state.lastInputAt ?? -Infinity) <= USER_GESTURE_WINDOW_MS)) return false;
+  const recent = (state.windowOpens ?? []).filter(t => now - t < WINDOW_OPEN_WINDOW_MS);
+  return recent.length < WINDOW_OPEN_MAX_PER_WINDOW;
 }
 
-/** input-event-Typen, die als Nutzer-Geste zählen. */
-const GESTURE_INPUTS = new Set(['mouseDown', 'mouseUp', 'keyDown', 'rawKeyDown', 'char', 'touchStart', 'touchEnd', 'gestureTap']);
+/** Ein erlaubtes externes Öffnen verbuchen (nach externalOpenAllowed === true); hält nur die letzte Minute vor. */
+function recordExternalOpen(kind, now, state) {
+  state.lastOpenAt = now;
+  if (kind === 'window-open') {
+    state.windowOpens = (state.windowOpens ?? []).filter(t => now - t < WINDOW_OPEN_WINDOW_MS);
+    state.windowOpens.push(now);
+  }
+}
+
+/**
+ * input-event-Typen, die als Nutzer-Geste zählen: nur Maus-Klick und Touch. Tasten nicht – im Spiel wird ständig
+ * getippt (WASD, Strg, R), sonst könnte ein Werbe-iframe jede Tastensekunde für ein Pop-up nutzen.
+ */
+const GESTURE_INPUTS = new Set(['mouseDown', 'touchStart', 'touchEnd', 'gestureTap']);
 const isUserGesture = input => GESTURE_INPUTS.has(input?.type);
 
 module.exports = {
   PROD_ORIGIN, resolveConfig, classifyNavigation, redirectAllowed, windowOpenAction, isExternalAllowed, keyAction,
   permissionAllowed, isTrustedSender, leaveDialog, shouldShowOffline, offlineHtml,
   FORBIDDEN_SWITCHES, startupBlockReason, externalHref, EXTERNAL_MIN_INTERVAL_MS, USER_GESTURE_WINDOW_MS,
-  externalOpenAllowed, isUserGesture
+  WINDOW_OPEN_MAX_PER_WINDOW, WINDOW_OPEN_WINDOW_MS, externalOpenAllowed, recordExternalOpen, isUserGesture
 };

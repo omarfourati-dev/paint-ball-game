@@ -20,18 +20,21 @@ app.enableSandbox();
 
 const offlineTemplate = fs.readFileSync(path.join(__dirname, 'offline.html'), 'utf8');
 let win = null;
-const externalState = { lastOpenAt: -Infinity, lastInputAt: -Infinity };
+const externalState = { lastOpenAt: -Infinity, lastInputAt: -Infinity, windowOpens: [] };
 
 function openExternalSafe(url) {
   const href = policy.externalHref(url);
   if (href) shell.openExternal(href).catch(() => {});
 }
 
-/** Externes Öffnen oder Login aus der Seite heraus: höchstens eins alle 2 s, window.open nur nach echter Eingabe. */
+/**
+ * Externes Öffnen oder Login aus der Seite heraus: höchstens eins alle 2 s, window.open nur nach Klick/Touch und
+ * höchstens 3-mal pro Minute.
+ */
 function throttled(kind, fn) {
   const now = Date.now();
   if (!policy.externalOpenAllowed(kind, now, externalState)) return;
-  externalState.lastOpenAt = now;
+  policy.recordExternalOpen(kind, now, externalState);
   fn();
 }
 

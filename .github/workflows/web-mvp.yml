@@ -3,9 +3,9 @@ name: web-mvp
 # NFR-18: Server-Simulation, Lobby, WSS-Integration und Browser-Client-Logik bei jedem Push testen.
 on:
   push:
-    paths: ['Assets/Scripts/Core/**', 'server/**', 'web/**', 'tests/**', '.github/workflows/web-mvp.yml']
+    paths: ['Assets/Scripts/Core/**', 'server/**', 'web/**', 'desktop/**', 'tests/**', '.github/workflows/web-mvp.yml', '.github/workflows/deploy.yml', 'docker-compose.yml']
   pull_request:
-    paths: ['Assets/Scripts/Core/**', 'server/**', 'web/**', 'tests/**']
+    paths: ['Assets/Scripts/Core/**', 'server/**', 'web/**', 'desktop/**', 'tests/**']
   workflow_dispatch:
   workflow_call:   # von deploy.yml vor dem Deployment aufgerufen
 
@@ -40,6 +40,8 @@ jobs:
           TEST_DATABASE_URL: postgresql://postgres:test@localhost:5432/pbtest
       - name: Client-Tests (Prediction-Golden, Netcode, i18n)
         run: node --test tests/web/*.test.mjs
+      - name: Desktop-Tests (Hülle, Manifest, Deploy-Skript, Workflow)
+        run: node --test tests/desktop/*.test.mjs
       - name: Publish Server + Web-Client
         run: dotnet publish server/Paintball.Server -c Release -o publish
       - uses: actions/upload-artifact@v4

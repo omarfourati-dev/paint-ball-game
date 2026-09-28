@@ -172,7 +172,34 @@ test('externalOpenAllowed: höchstens eins alle 2 s; window.open nur kurz nach e
   assert.equal(pop(10000, { lastInputAt: 9900, lastOpenAt: 9000 }), false, 'Klickserie: trotzdem 2 s');
   assert.equal(policy.EXTERNAL_MIN_INTERVAL_MS, 2000);
   assert.equal(policy.isUserGesture({ type: 'mouseDown' }), true);
-  assert.equal(policy.isUserGesture({ type: 'keyDown' }), true);
+  assert.equal(policy.isUserGesture({ type: 'touchStart' }), true);
   assert.equal(policy.isUserGesture({ type: 'mouseMove' }), false, 'Bewegung ist keine Geste');
   assert.equal(policy.isUserGesture(undefined), false);
+});
+
+test('isUserGesture: Tasten zählen nicht (im Spiel wird ständig getippt), Maus-Loslassen auch nicht', () => {
+  for (const type of ['keyDown', 'rawKeyDown', 'char', 'keyUp', 'mouseUp', 'mouseWheel'])
+    assert.equal(policy.isUserGesture({ type }), false, type);
+});
+
+test('externalOpenAllowed: window.open höchstens 3-mal pro Minute, auch bei Klickserie; Navigation ohne Obergrenze', () => {
+  const state = { lastOpenAt: -Infinity, lastInputAt: -Infinity, windowOpens: [] };
+  const click = now => { state.lastInputAt = now - 100; };
+  const tryOpen = (kind, now) => {
+    const ok = policy.externalOpenAllowed(kind, now, state);
+    if (ok) policy.recordExternalOpen(kind, now, state);
+    return ok;
+  };
+  const t0 = 100000;
+  for (let i = 0; i < 3; i++) { click(t0 + i * 3000); assert.equal(tryOpen('window-open', t0 + i * 3000), true, `Öffnen ${i + 1}`); }
+  click(t0 + 9000);
+  assert.equal(tryOpen('window-open', t0 + 9000), false, 'viertes in derselben Minute gesperrt');
+  assert.equal(tryOpen('navigate', t0 + 9000), true, 'Navigation zählt nicht zur Obergrenze');
+  click(t0 + 59999);
+  assert.equal(tryOpen('window-open', t0 + 59999), false, 'erstes zählt noch (59,999 s)');
+  click(t0 + 60000);
+  assert.equal(tryOpen('window-open', t0 + 60000), true, 'nach einer Minute wieder frei');
+  assert.ok(state.windowOpens.length <= policy.WINDOW_OPEN_MAX_PER_WINDOW, 'hält nur die letzte Minute vor');
+  assert.equal(policy.WINDOW_OPEN_MAX_PER_WINDOW, 3);
+  assert.equal(policy.WINDOW_OPEN_WINDOW_MS, 60000);
 });

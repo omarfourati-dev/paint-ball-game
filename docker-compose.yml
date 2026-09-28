@@ -23,6 +23,9 @@ services:
       ADSENSE_INTERSTITIAL_EVERY: ${ADSENSE_INTERSTITIAL_EVERY:-3}
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    volumes:
+      # Desktop-Downloads (.exe, SHA256SUMS.txt, latest.json): legt der Deploy nach /home/paintball/downloads, hier nur lesend
+      - ./downloads:/app/web/downloads:ro
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/api/health"]
       interval: 30s

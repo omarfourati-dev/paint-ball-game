@@ -14,3 +14,5 @@ Assets/Scripts/Unity
 *.md
 .env
 .env*
+downloads
+desktop

@@ -38,6 +38,7 @@ namespace Paintball.Net.Tests
             r.RunAsync("Web: Landingpage unter /, Einladung /?join= leitet ins Spiel (Query bleibt)", LandingAndJoinRedirect);
             r.RunAsync("Web: /play, /impressum, /datenschutz liefern ihre Seite, /play/ → /play", PageRoutes);
             r.RunAsync("Web: Service Worker wird nie gecacht (no-cache)", ServiceWorkerNoCache);
+            r.RunAsync("Web: /downloads liefert .exe als Anhang, latest.json als JSON ohne Anhang, fehlende Datei 404", ServesDesktopDownloads);
             r.Run("Werbung: ADSENSE_* wird geprüft – ungültige Publisher-ID heißt aus, ungültige Slots fallen weg", AdsConfigFromEnvironment);
             r.RunAsync("Werbung: ohne Publisher-ID /api/ads enabled=false, /ads.txt 404, CSP und Referrer unverändert", AdsDisabled);
             r.RunAsync("Werbung: mit Publisher-ID /api/ads mit Slots, /ads.txt, CSP um Google-Domains erweitert", AdsEnabled);
@@ -741,6 +742,40 @@ namespace Paintball.Net.Tests
             // Zum Vergleich: Mit dem Code (den nur das Opfer über seinen lokalen Empfänger bekommt) gelingt es.
             HttpResponseMessage legit = await h.Http.SendAsync(RedeemReq(code, attackerVerifier));
             Assert.AreEqual(HttpStatusCode.OK, legit.StatusCode, "mit dem echten Code UND dem passenden verifier gelingt das Einlösen");
+        }
+
+        private static async Task ServesDesktopDownloads()
+        {
+            await using Harness h = await Harness.StartAsync();
+            string dir = Path.Combine(HarnessWebRoot, "downloads");
+            Directory.CreateDirectory(dir);
+            File.WriteAllBytes(Path.Combine(dir, "PaintBall-Setup-1.0.7.exe"), new byte[] { 0x4D, 0x5A, 1, 2, 3 });
+            File.WriteAllText(Path.Combine(dir, "latest.json"), "{\"version\":\"1.0.7\"}");
+            File.WriteAllText(Path.Combine(dir, "SHA256SUMS.txt"), "x  PaintBall-Setup-1.0.7.exe\n");
+
+            HttpResponseMessage exe = await h.Http.GetAsync("/downloads/PaintBall-Setup-1.0.7.exe");
+            Assert.AreEqual(HttpStatusCode.OK, exe.StatusCode, "Installer 200");
+            Assert.AreEqual("application/octet-stream", exe.Content.Headers.ContentType?.MediaType, "Binärtyp");
+            Assert.AreEqual("attachment", exe.Content.Headers.ContentDisposition?.DispositionType, "als Datei speichern");
+            Assert.AreEqual("PaintBall-Setup-1.0.7.exe", exe.Content.Headers.ContentDisposition?.FileName?.Trim('"'), "Dateiname");
+            Assert.AreEqual(5, (await exe.Content.ReadAsByteArrayAsync()).Length, "Inhalt unverändert");
+            Assert.AreEqual("nosniff", exe.Headers.GetValues("X-Content-Type-Options").First(), "nosniff");
+
+            HttpResponseMessage latest = await h.Http.GetAsync("/downloads/latest.json");
+            Assert.AreEqual("application/json", latest.Content.Headers.ContentType?.MediaType, "latest.json als JSON");
+            Assert.IsTrue(latest.Content.Headers.ContentDisposition == null, "latest.json ohne Anhang (die Landingpage liest es)");
+            Assert.IsTrue(latest.Headers.CacheControl?.NoCache == true, "latest.json no-cache");
+
+            HttpResponseMessage sums = await h.Http.GetAsync("/downloads/SHA256SUMS.txt");
+            Assert.AreEqual("text/plain", sums.Content.Headers.ContentType?.MediaType, "Prüfsummen als Text");
+            Assert.AreEqual(HttpStatusCode.NotFound, (await h.Http.GetAsync("/downloads/fehlt.exe")).StatusCode, "fehlende Datei 404");
+            // Kein Verzeichnis-Listing: /downloads und /downloads/ liefern nichts (kein UseDirectoryBrowser, keine index.html)
+            Assert.AreEqual(HttpStatusCode.NotFound, (await h.Http.GetAsync("/downloads/")).StatusCode, "/downloads/ ohne Listing");
+            Assert.AreEqual(HttpStatusCode.NotFound, (await h.Http.GetAsync("/downloads")).StatusCode, "/downloads ohne Listing");
+            // .exe außerhalb von /downloads bekommt keinen Anhang-Kopf (nur der Download-Ordner ist gemeint)
+            File.WriteAllBytes(Path.Combine(HarnessWebRoot, "anders.exe"), new byte[] { 0x4D, 0x5A });
+            HttpResponseMessage other = await h.Http.GetAsync("/anders.exe");
+            Assert.IsTrue(other.Content.Headers.ContentDisposition == null, "nur /downloads als Anhang");
         }
 
         private sealed class Harness : IAsyncDisposable

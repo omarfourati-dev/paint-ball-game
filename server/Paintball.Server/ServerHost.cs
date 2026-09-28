@@ -232,6 +232,7 @@ namespace Paintball.Server
                 types.Mappings[".hdr"] = "image/vnd.radiance";
                 types.Mappings[".gltf"] = "model/gltf+json";   // echte Menschen und Props (CC0)
                 types.Mappings[".bin"] = "application/octet-stream";
+                types.Mappings[".exe"] = "application/octet-stream";   // Desktop-Installer (/downloads)
                 types.Mappings[".webmanifest"] = "application/manifest+json";
                 // robots.txt, llms.txt (Umlaute) und sitemap.xml: ohne charset raten Browser und Crawler sonst Latin-1
                 types.Mappings[".txt"] = "text/plain; charset=utf-8";
@@ -239,8 +240,15 @@ namespace Paintball.Server
                 app.UseStaticFiles(new StaticFileOptions
                 {
                     ContentTypeProvider = types,
-                    OnPrepareResponse = c => c.Context.Response.Headers["Cache-Control"] =
-                        c.File.PhysicalPath != null && c.File.PhysicalPath.Contains("assets") ? "public, max-age=604800" : "no-cache"
+                    OnPrepareResponse = c =>
+                    {
+                        c.Context.Response.Headers["Cache-Control"] =
+                            c.File.PhysicalPath != null && c.File.PhysicalPath.Contains("assets") ? "public, max-age=604800" : "no-cache";
+                        // Desktop-Installer immer als Datei speichern, nie im Browser öffnen (Spec §3)
+                        if (c.Context.Request.Path.StartsWithSegments("/downloads") && c.File.Name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                            c.Context.Response.Headers["Content-Disposition"] =
+                                new Microsoft.Net.Http.Headers.ContentDispositionHeaderValue("attachment") { FileName = c.File.Name }.ToString();
+                    }
                 });
             }
             return app;

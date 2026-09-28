@@ -15,13 +15,87 @@ jobs:
     name: Tests
     uses: ./.github/workflows/web-mvp.yml
 
+  # ─── Änderungen erkennen (Desktop nur bei desktop/**) ─
+  changes:
+    name: Änderungen erkennen
+    runs-on: ubuntu-latest
+    outputs:
+      desktop: ${{ steps.diff.outputs.desktop }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          # workflow_dispatch, erster Push oder unbekanntes before (Force-Push): immer bauen
+          if [ "$EVENT" = "workflow_dispatch" ] || [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ] \
+             || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            echo "desktop=true" >> "$GITHUB_OUTPUT"
+          elif git diff --name-only "$BEFORE" "$GITHUB_SHA" | grep -q '^desktop/'; then
+            echo "desktop=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "desktop=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ─── Desktop-App (.exe, ohne Code-Signing) ────────────
+  desktop:
+    name: Desktop-App (.exe)
+    runs-on: windows-latest
+    needs: [changes]
+    if: needs.changes.outputs.desktop == 'true'
+    defaults:
+      run:
+        shell: bash
+        working-directory: desktop
+    env:
+      # Kein Zertifikat: electron-builder soll weder im Zertifikatsspeicher suchen noch signieren
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - run: npm ci
+      - name: Version setzen (major.minor aus package.json, Patch = Laufnummer)
+        env:
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          base=$(node -p "require('./package.json').version.split('.').slice(0, 2).join('.')")
+          echo "PB_VERSION=$base.$RUN_NUMBER" >> "$GITHUB_ENV"
+      - name: Bauen (NSIS pro Benutzer + portable)
+        run: npm run dist -- -c.extraMetadata.version="$PB_VERSION"
+      - name: Prüfsummen und latest.json
+        run: node scripts/manifest.js dist "$PB_VERSION"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-exe
+          path: |
+            desktop/dist/PaintBall-Setup-*.exe
+            desktop/dist/PaintBall-*-portable.exe
+            desktop/dist/SHA256SUMS.txt
+            desktop/dist/latest.json
+          if-no-files-found: error
+          retention-days: 7
+
   # ─── Deploy (nur main, nur wenn Tests grün) ──────────
   deploy:
     name: Deploy to Production
     runs-on: self-hosted
     environment: production
-    needs: [test]
-    if: github.ref == 'refs/heads/main'
+    needs: [test, changes, desktop]
+    # !cancelled() statt des impliziten success(): auch laufen, wenn der Desktop-Job übersprungen wurde (keine Änderung
+    # unter desktop/) – dann bleiben die vorhandenen Downloads liegen. Anders als always() bricht ein Abbruch des Laufs
+    # den Deploy ab. Rote Tests oder ein kaputter Desktop-Build stoppen den Deploy.
+    if: >-
+      !cancelled() && github.ref == 'refs/heads/main' &&
+      needs.test.result == 'success' && needs.changes.result == 'success' &&
+      (needs.desktop.result == 'success' || needs.desktop.result == 'skipped')
 
     steps:
       - name: Checkout
@@ -36,8 +110,25 @@ jobs:
             --exclude='bin' \
             --exclude='obj' \
             --exclude='server-data' \
+            --exclude='/downloads' \
             --exclude='.env' \
             $GITHUB_WORKSPACE/ $DEPLOY_DIR/
+
+      - name: Ensure downloads directory
+        # Außerhalb des rsync-Abgleichs (--exclude='/downloads'), bleibt über Deploys erhalten; vor docker compose up anlegen,
+        # sonst legt Docker das Mount-Verzeichnis als root an.
+        run: mkdir -p $DEPLOY_DIR/downloads
+
+      - name: Download desktop build
+        if: needs.desktop.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: desktop-exe
+          path: ${{ runner.temp }}/desktop-exe
+
+      - name: Publish desktop downloads
+        if: needs.desktop.result == 'success'
+        run: bash desktop/scripts/publish-downloads.sh "$RUNNER_TEMP/desktop-exe" "$DEPLOY_DIR/downloads"
 
       - name: Ensure Docker network 'web' exists
         run: docker network create web 2>/dev/null || echo "Network 'web' already exists."
