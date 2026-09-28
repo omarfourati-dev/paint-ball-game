@@ -200,13 +200,14 @@
           <button class="btn yellow" type="button" id="btn-install" data-i18n="landing.install">Als App installieren</button>
           <a class="btn grey" id="btn-exe" aria-disabled="true">
             <span id="exe-label" data-i18n="landing.exe">Desktop-Version (.exe)</span>
-            <small id="exe-sub" data-i18n="landing.exeSoon">bald verfügbar</small>
+            <small id="exe-sub"></small>
           </a>
         </div>
         <div class="exe-meta" id="exe-meta" hidden>
           <p><a id="exe-portable" href="#" hidden></a></p>
           <p><span id="exe-version"></span> · <span data-i18n="landing.exeSha">SHA-256 (Installer):</span> <code id="exe-sha"></code>
             · <a href="/downloads/SHA256SUMS.txt" data-i18n="landing.exeSums">Alle Prüfsummen</a></p>
+          <p data-i18n="landing.exeShaHint">Die Prüfsumme hilft, Übertragungsfehler zu erkennen.</p>
           <p data-i18n="landing.exeSmartScreen">Die App ist nicht signiert, deshalb warnt Windows SmartScreen beim ersten Start. Klicke auf „Weitere Informationen“ → „Trotzdem ausführen“.</p>
         </div>
         <p class="hint" id="install-hint" role="status" hidden></p>

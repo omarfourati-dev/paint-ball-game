@@ -57,7 +57,14 @@ test('exeView: ohne latest.json „bald verfügbar“, sonst Installer mit Grö�
 
 test('Landingpage: Download-Link, Metadaten, SmartScreen-Hinweis; Texte DE/EN nach Spec', () => {
   const html = readFileSync(new URL('../../web/index.html', import.meta.url), 'utf8');
-  assert.match(html, /<a class="btn grey" id="btn-exe" aria-disabled="true">/, 'Link statt Button, anfangs „bald verfügbar“');
+  assert.match(html, /<a class="btn grey" id="btn-exe" aria-disabled="true">/, 'Link statt Button, anfangs deaktiviert');
+  // Ohne JS neutral: kein „bald verfügbar“ im statischen HTML, den Stand setzt landing.js (renderExe)
+  assert.match(html, /<span id="exe-label" data-i18n="landing\.exe">Desktop-Version \(\.exe\)<\/span>/);
+  assert.match(html, /<small id="exe-sub"><\/small>/, 'Untertitel leer, ohne data-i18n (renderTexts überschreibt ihn nicht)');
+  assert.ok(!html.includes('bald verfügbar') && !html.includes('landing.exeSoon'), 'kein statisches „bald verfügbar“');
+  assert.match(html, /<p data-i18n="landing\.exeShaHint">Die Prüfsumme hilft, Übertragungsfehler zu erkennen\.<\/p>/, 'ehrlicher Hinweis zur Prüfsumme');
+  assert.equal(STRINGS.de['landing.exeShaHint'], 'Die Prüfsumme hilft, Übertragungsfehler zu erkennen.');
+  assert.equal(STRINGS.en['landing.exeShaHint'], 'The checksum helps detect transfer errors.');
   for (const id of ['exe-label', 'exe-sub', 'exe-meta', 'exe-portable', 'exe-version', 'exe-sha']) assert.match(html, new RegExp(`id="${id}"`), id);
   assert.match(html, /<div class="exe-meta" id="exe-meta" hidden>/);
   assert.match(html, /href="\/downloads\/SHA256SUMS\.txt"/);
