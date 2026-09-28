@@ -139,8 +139,9 @@ Die Hülle unter `desktop/` (Electron) lädt immer die Live-Seite `https://paint
 Spielstände und Konten sind dieselben wie im Browser. Der Google-Login öffnet sich im Standardbrowser und kehrt über einen
 einmaligen lokalen Empfänger auf `127.0.0.1` zur App zurück (RFC 8252).
 
-- Lokal gegen den Entwicklungsserver: `dotnet run --project server/Paintball.Server -- --dev-login`, dann `cd desktop && npm ci && npm run dev`
-  (Entwicklerzertifikat vertrauen: `dotnet dev-certs https --trust`).
+- Lokal gegen den Entwicklungsserver: `dotnet run --project server/Paintball.Server -- --dev-login`, dann `cd desktop && npm ci --ignore-scripts && npm run dev`
+  (Entwicklerzertifikat vertrauen: `dotnet dev-certs https --trust`). `--ignore-scripts` wie in der Pipeline: keine Install-Skripte
+  aus Abhängigkeiten; Electron lädt sein Binary beim ersten Start selbst.
 - Abnahme: `npm run e2e` (Playwright steuert die App, kein echter Google-Login).
 - Build (Windows): `npm run dist` → `dist/PaintBall-Setup-<version>.exe` (Installation pro Benutzer) und `dist/PaintBall-<version>-portable.exe`.
 - Die Pipeline baut bei Änderungen unter `desktop/` und legt die Dateien nach `/downloads/`; die Landingpage liest `/downloads/latest.json`.

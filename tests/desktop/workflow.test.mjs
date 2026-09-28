@@ -34,6 +34,8 @@ test('deploy.yml: Desktop-Job auf windows-latest mit Pfad-Filter, Artefakt deskt
   assert.match(desktop, /\n    if: needs\.changes\.outputs\.desktop == 'true'\n/);
   assert.match(deploy, /workflow_dispatch/);
   assert.match(desktop, /npm run dist -- -c\.extraMetadata\.version=/);
+  assert.match(desktop, /\n      - run: npm ci --ignore-scripts\n/, 'keine Install-Skripte aus Abhängigkeiten');
+  assert.ok(!/npm (ci|install)(?! --ignore-scripts)/.test(deploy.replace(/^\s*#.*$/gm, '')), 'jede Installation ohne Skripte');
   assert.match(desktop, /node scripts\/manifest\.js dist/);
   assert.match(desktop, /name: desktop-exe/);
   assert.match(desktop, /retention-days: 7/);
