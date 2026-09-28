@@ -1,9 +1,10 @@
-// Deploy-Skript desktop/scripts/publish-downloads.sh: prüft Prüfsummen, legt latest.json zuletzt ab, räumt alte Versionen weg.
+// Deploy-Skript desktop/scripts/publish-downloads.sh: prüft Prüfsummen, legt latest.json zuletzt ab, behält die vorige
+// Version und räumt ältere weg.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -38,7 +39,54 @@ function setup() {
 
 const run = (src, dest) => spawnSync(BASH, [script, fwd(src), fwd(dest)], { encoding: 'utf8' });
 
-test('publish-downloads: legt die neue Version ab und entfernt alte .exe', { skip: !hasBash && 'bash mit sha256sum fehlt' }, () => {
+// Legt in dir eine echte Version ab (zwei .exe, SHA256SUMS.txt, latest.json wie aus der Pipeline).
+function version(dir, v) {
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path.join(dir, manifest.installerName(v)), `installer ${v}`);
+  writeFileSync(path.join(dir, manifest.portableName(v)), `portable ${v}`);
+  manifest.main(dir, v);
+}
+
+test('publish-downloads: behält die vorige Version, entfernt nur ältere; latest.json zeigt auf die neueste', { skip: !hasBash && 'bash mit sha256sum fehlt' }, () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'pb-publish-'));
+  const dest = path.join(root, 'dest');
+  try {
+    version(dest, '1.0.1');
+    writeFileSync(path.join(dest, 'PaintBall-Setup-1.0.0.exe'), 'uralt');   // älter als die vorige Version
+    version(path.join(root, 'v2'), '1.0.2');
+    let r = run(path.join(root, 'v2'), dest);
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(readdirSync(dest).sort(), ['PaintBall-1.0.1-portable.exe', 'PaintBall-1.0.2-portable.exe',
+      'PaintBall-Setup-1.0.1.exe', 'PaintBall-Setup-1.0.2.exe', 'SHA256SUMS.txt', 'latest.json']);
+
+    version(path.join(root, 'v3'), '1.0.3');
+    r = run(path.join(root, 'v3'), dest);
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(readdirSync(dest).sort(), ['PaintBall-1.0.2-portable.exe', 'PaintBall-1.0.3-portable.exe',
+      'PaintBall-Setup-1.0.2.exe', 'PaintBall-Setup-1.0.3.exe', 'SHA256SUMS.txt', 'latest.json'], '1.0.1 weg, 1.0.2 bleibt');
+    const latest = JSON.parse(readFileSync(path.join(dest, 'latest.json'), 'utf8'));
+    assert.equal(latest.version, '1.0.3');
+    for (const e of [latest.installer, latest.portable]) assert.ok(existsSync(path.join(dest, e.file)), `${e.file} vorhanden`);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('publish-downloads: Zielordner 755 (Container-Nutzer liest als „andere“), Dateien 644', { skip: (!hasBash && 'bash mit sha256sum fehlt') || (process.platform === 'win32' && 'keine POSIX-Rechte unter Windows') }, () => {
+  const { root, src, dest } = setup();
+  try {
+    chmodSync(dest, 0o700);
+    const r = run(src, dest);
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(statSync(dest).mode & 0o777, 0o755, 'Ordner 755');
+    assert.equal(statSync(path.join(dest, 'PaintBall-Setup-1.0.2.exe')).mode & 0o777, 0o644, 'Datei 644');
+    assert.equal(statSync(path.join(dest, 'latest.json')).mode & 0o777, 0o644, 'latest.json 644');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('publish-downloads: alte latest.json ohne Dateiangaben → alte .exe weg, neue Version abgelegt', { skip: !hasBash && 'bash mit sha256sum fehlt' }, () => {
   const { root, src, dest } = setup();
   try {
     const r = run(src, dest);

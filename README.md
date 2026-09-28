@@ -93,6 +93,8 @@ Live unter **https://paint-ball-game.omarfourati.de**. Jeder Push auf `main` tes
 `.github/workflows/deploy.yml` (Docker-Image aus dem `Dockerfile`). Der Container läuft hinter Caddy (TLS) und startet
 mit `--behind-proxy`. Beim Docker-Build wird die Cache-Version in `web/sw.js` automatisch durch `pb-v<Zeitstempel>`
 ersetzt; sie muss also nie von Hand erhöht werden.
+Derselbe Workflow baut die Windows-App und legt sie nach `/downloads/`; was bei einem gescheiterten Desktop-Build zu
+tun ist (`workflow_dispatch`), steht unter [Desktop-App (Windows)](#desktop-app-windows).
 
 ### Produktion: Voraussetzungen
 
@@ -142,3 +144,9 @@ einmaligen lokalen Empfänger auf `127.0.0.1` zur App zurück (RFC 8252).
 - Abnahme: `npm run e2e` (Playwright steuert die App, kein echter Google-Login).
 - Build (Windows): `npm run dist` → `dist/PaintBall-Setup-<version>.exe` (Installation pro Benutzer) und `dist/PaintBall-<version>-portable.exe`.
 - Die Pipeline baut bei Änderungen unter `desktop/` und legt die Dateien nach `/downloads/`; die Landingpage liest `/downloads/latest.json`.
+  Auf dem Server liegen sie in `/home/paintball/downloads` (bleibt über Deploys erhalten, nur lesend in den Container
+  eingebunden). Neben der neuen Version bleibt die vorige liegen, ältere werden entfernt.
+- **Gescheiterter Desktop-Build:** Er wird nicht automatisch wiederholt, wenn der nächste Push `desktop/` nicht berührt;
+  die Downloads bleiben dann auf dem alten Stand. Abhilfe: in GitHub unter Actions → „CI & Deploy“ → *Run workflow*
+  von Hand starten (`workflow_dispatch` baut die `.exe` immer). Das Pipeline-Artefakt `desktop-exe` wird nur 7 Tage
+  aufbewahrt; es wird im selben Lauf vom Deploy abgeholt, ein späteres Nachholen aus einem alten Lauf geht also nicht.

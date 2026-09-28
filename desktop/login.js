@@ -120,16 +120,22 @@ function createLoginFlow({ config, openExternal, fetchFn, hasSession, timeoutMs 
       if (got.type === 'cancelled') return 'cancelled';
       if (got.type !== 'code') return 'failed';
       let status = 0;
+      // Hängender Server: nach 15 s failed statt ewig „Anmeldung läuft“. Eigener (ref'd) Timer statt AbortSignal.timeout:
+      // dessen Timer hält die Ereignisschleife nicht am Leben, unter Node 22 (CI) endete der Testlauf sonst vorzeitig.
+      const abort = new AbortController();
+      const abortTimer = setTimeout(() => abort.abort(new DOMException('Zeitüberschreitung beim Einlösen', 'TimeoutError')), redeemTimeoutMs);
       try {
         const res = await fetchFn(`${config.origin}/api/auth/desktop/redeem`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ code: got.code, verifier: pkce.verifier }),
-          signal: AbortSignal.timeout(redeemTimeoutMs)   // hängender Server: nach 15 s failed statt ewig „Anmeldung läuft“
+          signal: abort.signal
         });
         status = res.status;
       } catch {
         status = 0;
+      } finally {
+        clearTimeout(abortTimer);
       }
       if (redeemResult(status) !== 'ok') return 'failed';
       try { return (await hasSession()) ? 'ok' : 'failed'; } catch { return 'failed'; }

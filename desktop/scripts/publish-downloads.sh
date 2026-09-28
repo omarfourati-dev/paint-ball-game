@@ -3,7 +3,8 @@
 # Aufruf: publish-downloads.sh <Artefakt-Ordner> <Ziel-Ordner>
 # Erst alles prüfen (Prüfsummen, Dateinamen, latest.json nennt nur geprüfte Dateien), dann jede Datei als .tmp im Ziel
 # ablegen, dort erneut prüfen und per mv (atomar, gleiches Dateisystem) einsetzen: .exe → SHA256SUMS.txt → latest.json
-# (zuletzt). Danach alte Versionen weg. Bricht es vorher ab, bleibt die alte Version vollständig und gültig stehen.
+# (zuletzt). Danach .exe weg, die weder zur neuen noch zur vorigen Version gehören. Bricht es vorher ab, bleibt die
+# alte Version vollständig und gültig stehen.
 set -euo pipefail
 
 if [ "$#" -ne 2 ]; then
@@ -39,14 +40,25 @@ while read -r file; do
 done <<< "$listed"
 
 mkdir -p "$dest"
+chmod 755 "$dest"   # der Container-Nutzer (APP_UID) zählt als „andere“: braucht r-x auf dem Ordner, egal welche umask
+
+# Die vorige Version (laut bisheriger latest.json) bleibt liegen: Wer latest.json kurz vor dem Deploy geladen hat,
+# bekommt seine Datei noch. Entfernt werden nur ältere .exe.
+previous=()
+if [ -f "$dest/latest.json" ]; then
+  while read -r file; do
+    if [[ "$file" =~ ^PaintBall-[A-Za-z0-9.-]+\.exe$ ]]; then previous+=("$file"); fi
+  done < <(grep -o '"file"[[:space:]]*:[[:space:]]*"[^"]*"' "$dest/latest.json" | sed 's/.*"\([^"]*\)"$/\1/' || true)
+fi
+
 tmps=()
 cleanup() { [ "${#tmps[@]}" -eq 0 ] || rm -f "${tmps[@]}"; }
 trap cleanup EXIT
 
-stage() { # Datei als verstecktes .tmp ins Ziel kopieren
+stage() { # Datei als verstecktes .tmp ins Ziel kopieren; vorher merken, damit auch ein abgebrochenes cp aufgeräumt wird
+  tmps+=("$dest/.$1.tmp")
   cp -f "$src/$1" "$dest/.$1.tmp"
   chmod 644 "$dest/.$1.tmp"
-  tmps+=("$dest/.$1.tmp")
 }
 for i in "${!names[@]}"; do
   stage "${names[$i]}"
@@ -64,7 +76,7 @@ tmps=()
 shopt -s nullglob
 for old in "$dest"/PaintBall-*.exe; do
   keep=0
-  for name in "${names[@]}"; do [ "$(basename "$old")" = "$name" ] && keep=1; done
+  for name in "${names[@]}" ${previous[@]+"${previous[@]}"}; do [ "$(basename "$old")" = "$name" ] && keep=1; done
   [ "$keep" = 1 ] || rm -f "$old"
 done
-echo "Desktop-Downloads aktualisiert: ${names[*]}"
+echo "Desktop-Downloads aktualisiert: ${names[*]} (vorige Version behalten: ${previous[*]:-keine})"

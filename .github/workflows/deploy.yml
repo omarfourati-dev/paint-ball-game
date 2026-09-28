@@ -6,6 +6,11 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Nur Lesezugriff für GITHUB_TOKEN: kein Job schreibt nach GitHub (Checkout liest; Artefakt-Upload/-Download und der
+# npm-Cache von setup-node laufen über das eigene Runtime-Token der Actions, nicht über GITHUB_TOKEN).
+permissions:
+  contents: read
+
 env:
   DEPLOY_DIR: /home/paintball
 
@@ -41,6 +46,10 @@ jobs:
           fi
 
   # ─── Desktop-App (.exe, ohne Code-Signing) ────────────
+  # Nur bei Änderungen unter desktop/ (oder workflow_dispatch). Achtung: Scheitert dieser Build und berührt der nächste
+  # Push desktop/ nicht, wird er NICHT wiederholt – die Downloads bleiben auf dem alten Stand. Abhilfe: den Workflow
+  # von Hand starten (Actions → „CI & Deploy“ → Run workflow, workflow_dispatch baut immer). Das Artefakt desktop-exe
+  # wird nur 7 Tage aufbewahrt; es wird ohnehin im selben Lauf vom Deploy abgeholt.
   desktop:
     name: Desktop-App (.exe)
     runs-on: windows-latest
@@ -56,6 +65,8 @@ jobs:
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -116,8 +127,9 @@ jobs:
 
       - name: Ensure downloads directory
         # Außerhalb des rsync-Abgleichs (--exclude='/downloads'), bleibt über Deploys erhalten; vor docker compose up anlegen,
-        # sonst legt Docker das Mount-Verzeichnis als root an.
-        run: mkdir -p $DEPLOY_DIR/downloads
+        # sonst legt Docker das Mount-Verzeichnis als root an. 755 auch bei übersprungenem Desktop-Job: Der Container-Nutzer
+        # (APP_UID) zählt als „andere“ und braucht r-x, egal welche umask der Runner hat.
+        run: mkdir -p $DEPLOY_DIR/downloads && chmod 755 $DEPLOY_DIR/downloads
 
       - name: Download desktop build
         if: needs.desktop.result == 'success'
