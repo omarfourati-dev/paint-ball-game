@@ -88,3 +88,22 @@ Google blockiert Logins in eingebetteten Browsern (`disallowed_useragent`). Desh
 - **Nach dem ersten Pipeline-Build:**
   - Die `.exe` herunterladen, die SHA-256 prüfen und die App installieren.
   - Den Google-Login über den Browser live durchspielen. Dieser Schritt macht der Nutzer, weil sein Google-Konto nötig ist.
+
+## Nachtrag 2026-09-28: Loopback-Rückgabe (Sicherheits-Review Task 1)
+
+Das Review hat eine Kontoübernahme gefunden, die das Verfahren oben zulässt. Der Ablauf:
+- Ein Angreifer schickt dem Opfer einen Link mit **seiner eigenen** challenge.
+- Das Opfer meldet sich bei Google an.
+- Der Angreifer löst den Grant mit seinem verifier ein.
+
+Deshalb wird das Verfahren nach **RFC 8252 (Loopback-Redirect)** geändert:
+
+1. **Lokaler Empfänger:** Die App öffnet einen einmaligen HTTP-Empfänger auf `127.0.0.1:<zufälliger Port>` und startet den Login mit `?desktop=<challenge>&port=<port>`. Der Port muss zwischen 1024 und 65535 liegen, der Server merkt ihn sich im `pb_oauth`-Cookie.
+2. **Rückgabe an den eigenen Rechner:** Nach dem Callback erzeugt der Server einen zufälligen Einmal-Code (32 Byte) und legt ihn im Grant ab. Dann leitet er den Browser auf `http://127.0.0.1:<port>/done?code=<code>` weiter. Nur ein Prozess auf dem Rechner, an dem sich das Opfer gerade anmeldet, bekommt diesen Code.
+3. **Erfolgsseite:** Der lokale Empfänger nimmt den Code an und leitet den Browser auf `https://…/desktop-login` weiter. Das ist die Erfolgsseite, sie funktioniert wie bisher. Danach schließt die App den Empfänger.
+4. **Einlösen:** `POST /api/auth/desktop/redeem {code, verifier}`. Der Server sucht den Grant über den **Code** und prüft dann `SHA256(verifier) == challenge` in konstanter Zeit.
+   - Fehlversuche zählen nur, wenn der Code passt.
+   - Eine geleakte challenge, etwa aus Access-Logs, nützt ohne den Code nichts.
+   - Das Polling entfällt: Die App löst den Grant ein, sobald der Empfänger den Code bekommt. Die Antwort 202 wird nicht mehr gebraucht.
+5. **Dev-Variante:** `/api/auth/dev?desktop&port` leitet ebenfalls auf den Loopback-Empfänger weiter.
+6. **Ohne Code:** Kommt nach 2 Minuten kein Code an, bricht die App ab und zeigt „Anmeldung abgelaufen“.
