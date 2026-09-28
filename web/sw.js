@@ -8,7 +8,7 @@ const ASSET_CACHE = `${CACHE_VERSION}-assets`;
 const SHELL = [
   '/', '/play', '/impressum', '/datenschutz',
   '/css/style.css', '/css/landing.css',
-  '/js/ads.js', '/js/aim.js', '/js/app.js', '/js/audio.js', '/js/auth.js', '/js/avatar.js', '/js/desktop-login.js', '/js/format.js', '/js/game.js', '/js/gltf.js',
+  '/js/ads.js', '/js/aim.js', '/js/app.js', '/js/audio.js', '/js/auth.js', '/js/avatar.js', '/js/desktop-login.js', '/js/download.js', '/js/format.js', '/js/game.js', '/js/gltf.js',
   '/js/guard.js', '/js/hdr.js', '/js/hud.js', '/js/i18n.js', '/js/input.js', '/js/install.js', '/js/interpolation.js',
   '/js/landing.js', '/js/landing-ads.js', '/js/main.js', '/js/movement.js', '/js/net.js', '/js/prediction.js', '/js/protocol.js',
   '/js/renderer.js', '/js/scene.js', '/js/settings.js', '/js/sw-register.js', '/js/touch.js', '/js/trigger.js', '/js/track.js', '/js/tutorial.js', '/js/world.js',
@@ -22,11 +22,12 @@ const OFFLINE_HTML = '<!doctype html><html lang="de"><meta charset="utf-8"><meta
   '<h1>Du bist offline</h1><p>Paint-Ball braucht eine Internetverbindung.<br>You are offline – Paint-Ball needs an internet connection.</p></div></body></html>';
 
 // Werbung: Google-Skripte sind fremde Origin (ignoriert), /api/ads und /ads.txt laufen nie über den Cache.
+// Desktop-Downloads (/downloads/: .exe um 100 MB, latest.json) ebenfalls nie – kein Riesen-Eintrag, keine veraltete Version.
 // Alles Eigene außer API/WebSocket/Spieldaten: network-first, damit nach einem Deploy nie neues HTML mit altem JS läuft.
 function strategyFor(url, origin) {
   const u = new URL(url);
   if (u.origin !== origin) return 'ignore';
-  if (u.pathname.startsWith('/api/') || u.pathname === '/ws' || u.pathname === '/ads.txt') return 'network-only';
+  if (u.pathname.startsWith('/api/') || u.pathname.startsWith('/downloads/') || u.pathname === '/ws' || u.pathname === '/ads.txt') return 'network-only';
   if (u.pathname.startsWith('/assets/')) return 'cache-first';
   return 'network-first';
 }

@@ -4,6 +4,7 @@ import { loadSettings, saveSettings, keyLabel } from './settings.js';
 import { installMode, isIos } from './install.js';
 import { registerServiceWorker } from './sw-register.js';
 import { track } from './track.js';
+import { parseLatest, exeView } from './download.js';
 
 const MODES = [['tdm', '🎯'], ['ffa', '💥'], ['ctf', '🚩'], ['elim', '☠️'], ['koth', '👑'], ['training', '🤖']];
 const FEATURES = [['fair', '⚖️'], ['rooms', '🔑'], ['nop2w', '🛡️'], ['a11y', '♿'], ['input', '🎮'], ['crossplay', '🌍']];
@@ -16,7 +17,7 @@ const FALLBACK_MAPS = [
 ];
 
 const $ = sel => document.querySelector(sel);
-const data = { health: null, maps: null, board: null };
+const data = { health: null, maps: null, board: null, exe: null };
 let deferredPrompt = null;
 let installedNow = false;
 
@@ -122,6 +123,31 @@ function renderInstall() {
   $('#btn-play').textContent = t(mode === 'installed' ? 'landing.start' : 'landing.play');
 }
 
+function renderExe() {
+  const v = exeView(data.exe, getLang());
+  const btn = $('#btn-exe');
+  $('#exe-label').textContent = t(v.labelKey);
+  $('#exe-sub').textContent = t(v.subKey, { size: v.size ?? '' });
+  $('#exe-meta').hidden = !v.available;
+  if (!v.available) {
+    btn.className = 'btn grey';
+    btn.removeAttribute('href');
+    btn.setAttribute('aria-disabled', 'true');
+    return;
+  }
+  btn.className = 'btn cyan';
+  btn.href = v.href;
+  btn.removeAttribute('aria-disabled');
+  const portable = $('#exe-portable');
+  portable.hidden = !v.portable;
+  if (v.portable) {
+    portable.href = v.portable.href;
+    portable.textContent = t('landing.exePortable', { size: v.portable.size });
+  }
+  $('#exe-version').textContent = t('landing.exeVersion', { v: v.version });
+  $('#exe-sha').textContent = v.sha256;
+}
+
 function render() {
   renderTexts();
   renderLists();
@@ -129,6 +155,7 @@ function render() {
   renderBoard();
   renderLive();
   renderInstall();
+  renderExe();
 }
 
 async function onInstallClick() {
@@ -163,7 +190,13 @@ function init() {
   });
   $('#btn-play').addEventListener('click', () => track('play_browser'));
   $('#btn-install').addEventListener('click', onInstallClick);
-  $('#btn-exe').addEventListener('click', e => e.preventDefault());
+  $('#btn-exe').addEventListener('click', e => {
+    if (!data.exe) { e.preventDefault(); return; }
+    track('download_exe', { variant: 'installer', version: data.exe.version });
+  });
+  $('#exe-portable').addEventListener('click', () => {
+    if (data.exe?.portable) track('download_exe', { variant: 'portable', version: data.exe.version });
+  });
   addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferredPrompt = e; renderInstall(); });
   addEventListener('appinstalled', () => { deferredPrompt = null; installedNow = true; renderInstall(); });
 
@@ -172,6 +205,7 @@ function init() {
   getJson('/api/health').then(h => { data.health = h; renderLive(); }).catch(() => {});
   getJson('/api/maps').then(m => { if (Array.isArray(m.maps) && m.maps.length) { data.maps = m.maps; renderMaps(); } }).catch(() => {});
   getJson('/api/leaderboard?top=5').then(b => { data.board = b; renderBoard(); }).catch(() => renderBoard());
+  getJson('/downloads/latest.json').then(j => { data.exe = parseLatest(j); renderExe(); }).catch(() => {});
 
   registerServiceWorker(() => t('pwa.update'));
 }

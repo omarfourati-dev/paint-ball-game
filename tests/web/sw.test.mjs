@@ -63,6 +63,12 @@ test('SW: alte Caches werden auch bei Zeitstempel-Versionen erkannt', () => {
   assert.deepEqual(SW.staleCaches(['pb-v1790000000-assets', 'pb-v1790000001-assets'], 'pb-v1790000001'), ['pb-v1790000000-assets']);
 });
 
+test('SW: Desktop-Downloads (.exe, latest.json) nie über den Cache', () => {
+  assert.equal(SW.strategyFor(`${O}/downloads/PaintBall-Setup-1.0.42.exe`, O, 'navigate'), 'network-only');
+  assert.equal(SW.strategyFor(`${O}/downloads/latest.json`, O, 'cors'), 'network-only');
+  assert.equal(SW.strategyFor(`${O}/downloads/SHA256SUMS.txt`, O, 'navigate'), 'network-only');
+});
+
 test('SW: Shell enthält jedes Client-Modul und verweist nur auf existierende Dateien', () => {
   const route = { '/': 'index.html', '/play': 'play.html', '/impressum': 'impressum.html', '/datenschutz': 'datenschutz.html' };
   for (const entry of SW.SHELL) {

@@ -57,10 +57,15 @@ section { padding-block: 32px; }
 .btn.big { font-size: 1.25rem; padding: 14px 28px; }
 .btn.pink { background: var(--pink); color: #fff; }
 .btn.yellow { background: var(--yellow); }
+.btn.cyan { background: var(--cyan); }
 .btn.grey { background: var(--grey); color: var(--ink); cursor: not-allowed; opacity: .85; }
 .btn.grey:hover, .btn.grey:active { transform: none; box-shadow: var(--shadow); }
 .btn small { font-size: .75rem; font-weight: 700; }
 .hint { margin-top: 12px; max-width: 46ch; color: var(--muted); }
+.exe-meta { margin-top: 12px; max-width: 62ch; color: var(--muted); font-size: .9rem; }
+.exe-meta p { margin: 4px 0; }
+.exe-meta a { color: var(--text); }
+.exe-meta code { word-break: break-all; font-size: .8rem; }
 .shot { border: 4px solid var(--ink); border-radius: var(--radius); box-shadow: 8px 8px 0 var(--ink); overflow: hidden; background: var(--panel2); }
 .hero-shot { transform: rotate(1.5deg); }
 
