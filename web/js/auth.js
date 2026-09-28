@@ -65,7 +65,11 @@ export function retryDelay(attempt) {
   return RETRY_DELAYS[Math.min(attempt, RETRY_DELAYS.length - 1)];
 }
 
-/** Brücke der Desktop-App (desktop/preload.js) oder null im normalen Browser. */
+/**
+ * Brücke der Desktop-App (desktop/preload.js) oder null im normalen Browser.
+ * Vertrag: window.desktop = { version: string, startLogin(): Promise<'ok'|'timeout'|'failed'|'cancelled'|'aborted'> };
+ * 'cancelled' = durch einen neueren Versuch abgelöst, 'aborted' = bei Google abgebrochen.
+ */
 export function desktopBridge(win) {
   const d = win?.desktop;
   return d && typeof d.startLogin === 'function' ? d : null;
@@ -74,6 +78,7 @@ export function desktopBridge(win) {
 const DESKTOP_LOGIN_KEYS = {
   pending: 'auth.desktopPending',
   cancelled: 'auth.desktopPending', // ein neuerer Versuch läuft bereits
+  aborted: 'auth.error.cancelled',  // bei Google abgebrochen → „Anmeldung abgebrochen.“
   ok: 'auth.desktopDone',
   timeout: 'auth.desktopTimeout'
 };
@@ -81,6 +86,22 @@ const DESKTOP_LOGIN_KEYS = {
 /** Text zum Stand des Desktop-Logins ('pending' oder Ergebnis von desktop.startLogin()); Unbekanntes → allgemeiner Fehler. */
 export function desktopLoginKey(status) {
   return Object.hasOwn(DESKTOP_LOGIN_KEYS, status) ? DESKTOP_LOGIN_KEYS[status] : 'auth.error.oauth_failed';
+}
+
+/**
+ * Desktop-Login-Knopf: Jeder Aufruf startet bridge.startLogin() neu (die App löst den alten Versuch mit 'cancelled' ab).
+ * show(key) bekommt den Text-Schlüssel; das Ergebnis eines abgelösten Versuchs überschreibt den Text des neuen nicht.
+ */
+export function createDesktopLogin(show) {
+  let latest = 0;
+  return async function start(bridge) {
+    const attempt = ++latest;
+    show(desktopLoginKey('pending'));
+    let result;
+    try { result = await bridge.startLogin(); } catch { result = 'failed'; }
+    if (attempt === latest) show(desktopLoginKey(result));
+    return result;
+  };
 }
 
 /** Seite /desktop-login im Standardbrowser: Erfolg oder Fehler (gleiche Codes wie ?auth_error=). */

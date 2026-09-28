@@ -5,7 +5,9 @@
 const crypto = require('node:crypto');
 const http = require('node:http');
 
-const LOGIN_TIMEOUT_MS = 120000;
+// Wartezeit auf die Rückgabe: so lang wie das pb_oauth-Cookie des Servers (10 min, GoogleOAuth.cs) – wer bei Google
+// länger braucht, scheitert ohnehin am state. Der Grant nach dem Callback gilt weiter nur 2 min (DesktopGrants.cs).
+const LOGIN_TIMEOUT_MS = 10 * 60 * 1000;
 const REDEEM_TIMEOUT_MS = 15000;
 const CODE_RE = /^[A-Za-z0-9_-]{43}$/;
 const ERROR_REASONS = new Set(['cancelled', 'oauth_failed']);
@@ -99,7 +101,8 @@ function redeemResult(status) {
 /**
  * Ein Login-Versuch nach dem anderen. start(): Empfänger öffnen, Browser öffnen, auf die Rückgabe warten, einlösen,
  * Sitzungs-Cookie prüfen (E12). Das Einlösen bricht nach 15 s ab (→ 'failed'). Ein neuer start() oder cancel() löst einen noch wartenden Versuch mit 'cancelled' ab.
- * Abbruch bei Google (error=cancelled) ist 'failed' – 'cancelled' heißt nur „durch einen neueren Versuch abgelöst“.
+ * Ergebnis: 'ok' | 'timeout' | 'failed' | 'cancelled' | 'aborted'. Abbruch bei Google (error=cancelled) ist 'aborted' –
+ * 'cancelled' heißt nur „durch einen neueren Versuch abgelöst“.
  */
 function createLoginFlow({ config, openExternal, fetchFn, hasSession, timeoutMs = LOGIN_TIMEOUT_MS, redeemTimeoutMs = REDEEM_TIMEOUT_MS }) {
   let current = null;
@@ -118,6 +121,7 @@ function createLoginFlow({ config, openExternal, fetchFn, hasSession, timeoutMs 
       if (current === rx) current = null;   // ab hier nicht mehr ablösbar: der Empfänger ist zu
       if (got.type === 'timeout') return 'timeout';
       if (got.type === 'cancelled') return 'cancelled';
+      if (got.type === 'error' && got.reason === 'cancelled') return 'aborted';   // bei Google abgebrochen
       if (got.type !== 'code') return 'failed';
       let status = 0;
       // Hängender Server: nach 15 s failed statt ewig „Anmeldung läuft“. Eigener (ref'd) Timer statt AbortSignal.timeout:

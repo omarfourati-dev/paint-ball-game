@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { bootStep, loginUrl, authErrorKey, nameErrorKey, nextConnectState, closeAction, retryDelay, LEGACY_KEYS,
-  desktopBridge, desktopLoginKey, desktopLoginView } from '../../web/js/auth.js';
+  desktopBridge, desktopLoginKey, desktopLoginView, createDesktopLogin } from '../../web/js/auth.js';
 import { readFileSync } from 'node:fs';
 import { STRINGS } from '../../web/js/i18n.js';
 
@@ -113,9 +113,45 @@ test('desktopLoginKey: Zustände des Desktop-Logins, Unbekanntes → allgemeiner
   assert.equal(desktopLoginKey('cancelled'), 'auth.desktopPending', 'neuer Versuch läuft');
   assert.equal(desktopLoginKey('ok'), 'auth.desktopDone');
   assert.equal(desktopLoginKey('timeout'), 'auth.desktopTimeout');
+  assert.equal(desktopLoginKey('aborted'), 'auth.error.cancelled', 'bei Google abgebrochen');
   assert.equal(desktopLoginKey('failed'), 'auth.error.oauth_failed');
   assert.equal(desktopLoginKey('constructor'), 'auth.error.oauth_failed', 'kein Prototyp-Treffer');
   assert.equal(desktopLoginKey(undefined), 'auth.error.oauth_failed');
+});
+
+test('createDesktopLogin: zweiter Klick startet neu, das abgelöste Ergebnis überschreibt den neuen Text nicht', async () => {
+  const shown = [];
+  const pending = [];
+  const bridge = { startLogin: () => new Promise(resolve => pending.push(resolve)) };
+  const start = createDesktopLogin(key => shown.push(key));
+  const first = start(bridge);
+  const second = start(bridge);
+  assert.equal(pending.length, 2, 'jeder Klick ruft startLogin() auf');
+  pending[0]('cancelled');   // die App löst den ersten Versuch ab
+  assert.equal(await first, 'cancelled');
+  assert.deepEqual(shown, ['auth.desktopPending', 'auth.desktopPending'], 'alter Versuch schreibt nichts mehr');
+  pending[1]('aborted');
+  assert.equal(await second, 'aborted');
+  assert.deepEqual(shown.at(-1), 'auth.error.cancelled', 'Text des neuen Versuchs');
+
+  // Ein abgelöster Versuch, der spät mit Erfolg/Fehler endet, überschreibt den laufenden auch nicht
+  const late = [];
+  const bridge2 = { startLogin: () => new Promise(resolve => late.push(resolve)) };
+  shown.length = 0;
+  const a = start(bridge2);
+  const b = start(bridge2);
+  late[1]('ok');
+  await b;
+  late[0]('failed');
+  await a;
+  assert.equal(shown.at(-1), 'auth.desktopDone');
+});
+
+test('createDesktopLogin: Ausnahme der Brücke → allgemeiner Fehler', async () => {
+  const shown = [];
+  const start = createDesktopLogin(key => shown.push(key));
+  assert.equal(await start({ startLogin: async () => { throw new Error('ipc'); } }), 'failed');
+  assert.deepEqual(shown, ['auth.desktopPending', 'auth.error.oauth_failed']);
 });
 
 test('desktopLoginView: Erfolg oder Fehlertext wie auth_error', () => {

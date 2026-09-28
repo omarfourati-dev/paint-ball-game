@@ -833,7 +833,7 @@ EOF
 - Test: `tests/web/auth.test.mjs`
 
 **Interfaces:**
-- Consumes: `window.desktop.startLogin(): Promise<'ok'|'timeout'|'failed'|'cancelled'>` (Task 4), die Weiterleitungen `/desktop-login` und `/desktop-login?error=<code>` (Task 1).
+- Consumes: `window.desktop.startLogin(): Promise<'ok'|'timeout'|'failed'|'cancelled'|'aborted'>` (Task 4), die Weiterleitungen `/desktop-login` und `/desktop-login?error=<code>` (Task 1).
 - Produces:
   - `desktopBridge(win) → object|null`, `desktopLoginKey(status) → i18n-Schlüssel`, `desktopLoginView(code) → { titleKey, textKey }`.
   - Die Login-Karte hat `#btn-google` und `#login-status`.
@@ -1415,7 +1415,7 @@ EOF
 **Interfaces:**
 - Consumes: `/api/auth/google?desktop=`, `/api/auth/dev?desktop=&name=`, `POST /api/auth/desktop/redeem` (Task 1), `#btn-google`, `#login-status` und `window.__paintball.screen` (Task 2).
 - Produces:
-  - `window.desktop = { version: string, startLogin(): Promise<'ok'|'timeout'|'failed'|'cancelled'> }`
+  - `window.desktop = { version: string, startLogin(): Promise<'ok'|'timeout'|'failed'|'cancelled'|'aborted'> }`
   - IPC-Kanal `desktop:start-login`
   - npm-Skripte `start`, `dev`, `dist`, `e2e`
   - Artefakte `dist/PaintBall-Setup-<version>.exe` und `dist/PaintBall-<version>-portable.exe`

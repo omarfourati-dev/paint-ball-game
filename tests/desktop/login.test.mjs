@@ -97,7 +97,7 @@ test('Empfänger: Fehler und kaputte Codes → Fehlerseite (nur cancelled/oauth_
 });
 
 test('Empfänger: ohne Rückgabe nach der Frist → timeout und zu; cancel() → cancelled und zu', async () => {
-  assert.equal(login.LOGIN_TIMEOUT_MS, 120000);
+  assert.equal(login.LOGIN_TIMEOUT_MS, 10 * 60 * 1000, '10 min wie das pb_oauth-Cookie');
   const rx = login.listenOnce({ origin: O, timeoutMs: 50 });
   const port = await rx.ready;
   assert.deepEqual(await rx.result, { type: 'timeout' });
@@ -126,6 +126,7 @@ function harness({ status = 200, session = true, browser = 'code', timeoutMs } =
       const port = Number(new URL(url).searchParams.get('port'));
       if (browser === 'code') await send(port, { path: `/done?code=${CODE}` });
       else if (browser === 'cancel') await send(port, { path: '/done?error=cancelled' });
+      else if (browser === 'oauth_failed') await send(port, { path: '/done?error=oauth_failed' });
     },
     fetchFn: async (url, init) => { log.redeems.push({ url, init }); if (status === 'throw') throw new Error('offline'); return { status }; },
     hasSession: async () => session
@@ -151,12 +152,24 @@ test('createLoginFlow: Browser öffnen, Code einlösen (JSON {code, verifier}), 
   assert.equal(createHash('sha256').update(body.verifier, 'ascii').digest('base64url'), challenge, 'verifier gehört zur challenge');
 });
 
-test('createLoginFlow: Status ≠ 200, Netzwerkfehler, fehlendes Cookie, Abbruch bei Google → failed', async () => {
+test('createLoginFlow: Status ≠ 200, Netzwerkfehler, fehlendes Cookie → failed; Abbruch bei Google → aborted', async () => {
   for (const status of [400, 401, 404, 409, 429, 'throw']) assert.equal(await harness({ status }).flow.start(), 'failed', String(status));
   assert.equal(await harness({ session: false }).flow.start(), 'failed', 'ohne __Host-pb_session (E12)');
   const cancelled = harness({ browser: 'cancel' });
-  assert.equal(await cancelled.flow.start(), 'failed', 'Abbruch durch Nutzer oder Google ist failed, nicht cancelled');
+  assert.equal(await cancelled.flow.start(), 'aborted', 'Abbruch bei Google ist aborted, nicht cancelled (abgelöst)');
   assert.equal(cancelled.log.redeems.length, 0);
+  const failed = harness({ browser: 'oauth_failed' });
+  assert.equal(await failed.flow.start(), 'failed', 'Serverfehler (auch nicht konfiguriert) bleibt failed');
+  assert.equal(failed.log.redeems.length, 0);
+});
+
+test('Wartezeit am Empfänger = Lebensdauer des pb_oauth-Cookies (GoogleOAuth.cs), der Grant bleibt bei 2 min', () => {
+  const oauth = readFileSync(new URL('../../server/Paintball.Server/GoogleOAuth.cs', import.meta.url), 'utf8');
+  const m = oauth.match(/Path = "\/api\/auth", MaxAge = TimeSpan\.FromMinutes\((\d+)\)/);
+  assert.ok(m, 'MaxAge des pb_oauth-Cookies');
+  assert.equal(login.LOGIN_TIMEOUT_MS, Number(m[1]) * 60 * 1000);
+  const grants = readFileSync(new URL('../../server/Paintball.Server/DesktopGrants.cs', import.meta.url), 'utf8');
+  assert.match(grants, /TimeSpan\.FromMinutes\(2\)/, 'Grant nach dem Callback: 2 min');
 });
 
 test('createLoginFlow: Einlösen hängt → nach der Frist abgebrochen (AbortSignal), failed', async () => {

@@ -14,7 +14,7 @@ import { TutorialTracker } from './tutorial.js';
 import { Ads } from './ads.js';
 import { escapeHtml as esc, formatNumber, formatPercent, formatTime, inviteUrl } from './format.js';
 import { MODES, TEAM_MODES } from './protocol.js';
-import { bootStep, loginUrl, authErrorKey, nameErrorKey, nextConnectState, closeAction, retryDelay, LEGACY_KEYS, desktopBridge, desktopLoginKey } from './auth.js';
+import { bootStep, loginUrl, authErrorKey, nameErrorKey, nextConnectState, closeAction, retryDelay, LEGACY_KEYS, desktopBridge, createDesktopLogin } from './auth.js';
 import { track } from './track.js';
 
 const MODE_ICON = { tdm: '⚔️', ffa: '💥', ctf: '🚩', elim: '☠️', koth: '👑', training: '🎯' };
@@ -55,7 +55,11 @@ export class App {
     this.pendingJoin = new URLSearchParams(location.search).get('join');
     for (const k of LEGACY_KEYS) this.storage.removeItem(k);
     this.authError = new URLSearchParams(location.search).get('auth_error');
-    this.desktopLoginPending = false;
+    // Desktop-App: jeder Klick startet den Login neu; nur der neueste Versuch setzt den Text (die Karte kann neu gerendert sein)
+    this.startDesktopLogin = createDesktopLogin(key => {
+      const status = $('#login-status');
+      if (status) { status.textContent = t(key); status.hidden = false; }
+    });
     this.lastFrame = performance.now();
     this.previewYaw = 0.6;
     this.game = new ClientGame({
@@ -332,23 +336,9 @@ export class App {
       track('login');
       const bridge = desktopBridge(window);
       if (!bridge) return;   // Browser: normale Weiterleitung zu Google
-      e.preventDefault();    // Desktop-App: Google blockiert eingebettete Logins → Standardbrowser
+      e.preventDefault();    // Desktop-App: Google blockiert eingebettete Logins → Standardbrowser; nach dem Einlösen lädt die App /play neu
       this.startDesktopLogin(bridge);
     });
-  }
-
-  /** Desktop-App: Login im Standardbrowser; nach dem Einlösen lädt die App /play selbst neu. */
-  async startDesktopLogin(bridge) {
-    if (this.desktopLoginPending) return;
-    this.desktopLoginPending = true;
-    const status = $('#login-status');
-    status.textContent = t(desktopLoginKey('pending'));
-    status.hidden = false;
-    let result;
-    try { result = await bridge.startLogin(); } catch { result = 'failed'; }
-    this.desktopLoginPending = false;
-    const now = $('#login-status');   // die Karte kann inzwischen neu gerendert sein
-    if (now) { now.textContent = t(desktopLoginKey(result)); now.hidden = false; }
   }
 
   /** Hinweis nach Server-Kick oder Übernahme durch einen anderen Tab; verbindet nur auf Knopfdruck neu. */

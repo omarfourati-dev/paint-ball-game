@@ -106,4 +106,6 @@ Deshalb wird das Verfahren nach **RFC 8252 (Loopback-Redirect)** geändert:
    - Eine geleakte challenge, etwa aus Access-Logs, nützt ohne den Code nichts.
    - Das Polling entfällt: Die App löst den Grant ein, sobald der Empfänger den Code bekommt. Die Antwort 202 wird nicht mehr gebraucht.
 5. **Dev-Variante:** `/api/auth/dev?desktop&port` leitet ebenfalls auf den Loopback-Empfänger weiter.
-6. **Ohne Code:** Kommt nach 2 Minuten kein Code an, bricht die App ab und zeigt „Anmeldung abgelaufen“.
+6. **Ohne Code:** Kommt nach 10 Minuten (Lebensdauer des `pb_oauth`-Cookies) kein Code an, bricht die App ab und zeigt „Anmeldung abgelaufen“. Der Grant nach dem Callback bleibt 2 Minuten gültig.
+7. **Ergebnis für die Seite:** `window.desktop.startLogin(): Promise<'ok'|'timeout'|'failed'|'cancelled'|'aborted'>`. `cancelled` heißt „durch einen neueren Versuch abgelöst“ (jeder Klick startet neu), `aborted` heißt „bei Google abgebrochen“ und zeigt „Anmeldung abgebrochen.“
+8. **Nicht konfiguriert:** Ist Google auf dem Server nicht eingerichtet, meldet `/api/auth/google` das bei gültiger challenge und gültigem Port sofort an den Empfänger (`error=oauth_failed`), damit die App nicht bis zum Timeout wartet. Ein ungültiger `state` im Callback geht weiter nie an den Loopback.
