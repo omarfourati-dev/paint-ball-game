@@ -141,8 +141,8 @@ async function main() {
   const summary = summarize(players.map(p => ({ bytes: p.bytes, snapshots: p.snapshots, rtts: p.rtts, gaps: p.gaps, disconnects: p.disconnects })), health, seconds);
   for (const p of players) { p.closedByTest = true; p.ws.close(); }
   const rows = evaluate(summary);
-  console.log(formatTable(rows));
-  process.exit(rows.every(r => r.pass) ? 0 : 1);
+  // Erst nach dem Leeren von stdout beenden: process.exit() verwirft sonst die Tabelle, wenn stdout eine Pipe ist (ssh, docker ohne -t).
+  process.stdout.write(formatTable(rows) + '\n', () => process.exit(rows.every(r => r.pass) ? 0 : 1));
 }
 
-main().catch(e => { console.error('Lasttest abgebrochen:', e.message); process.exit(2); });
+main().catch(e => process.stderr.write(`Lasttest abgebrochen: ${e.message}\n`, () => process.exit(2)));

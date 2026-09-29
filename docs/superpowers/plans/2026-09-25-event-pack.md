@@ -1765,7 +1765,7 @@ git add tests/load/package.json tests/load/package-lock.json tests/load/evaluate
 git commit -m "Lasttest mit 20 simulierten Spielern, Abnahme Pizzeria" -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
 
-- [ ] **Step 8: Controller-Schritt – Deploy und Lasttest auf myvps (nicht vom Implementierer)**
+- [x] **Step 8: Controller-Schritt – Deploy und Lasttest auf myvps (nicht vom Implementierer)**
 
 1. Paket B auf `main` bringen und den Deploy abwarten.
 2. Auf myvps einen temporären zweiten Container desselben Images starten: nur an `127.0.0.1:18080` gebunden, mit `--dev-login`, ohne `DATABASE_URL`, nicht im Docker-Netz `web` und damit nicht über Caddy erreichbar:
@@ -1785,9 +1785,11 @@ for i in $(seq 1 30); do curl -fsS -o /dev/null http://127.0.0.1:18080/api/healt
 3. Den Lasttest auf dem Server selbst gegen diesen Container laufen lassen, in einem Wegwerf-Node-Container mit Host-Netz. Der Quellordner wird nur gelesen, es landet nichts im Deploy-Verzeichnis:
 
 ```bash
-docker run --rm --network host -v /home/paintball/tests/load:/src:ro node:22-alpine \
-  sh -c "cp -r /src /load && cd /load && npm ci --omit=dev --no-audit --no-fund && node load-test.mjs --base http://127.0.0.1:18080 --players 20 --duration 300"
+docker run --rm -t --network host -v /home/paintball/tests/load:/src:ro node:22-alpine \
+  sh -c "cp -r /src /load && cd /load && node load-test.mjs --base http://127.0.0.1:18080 --players 20 --duration 300"
 ```
+
+(Kein `npm ci`: Das Skript nutzt das eingebaute WebSocket von Node 22 und hat kein `package.json`.)
 
 4. Den Container danach immer entfernen, auch wenn der Test scheitert:
 
@@ -1797,6 +1799,20 @@ docker ps -a --filter name=paintball-loadtest --format '{{.Names}}'   # erwartet
 ```
 
 5. Die Tabelle im Event-Kanal oder Bericht festhalten. Bei FAIL greift Plan B der Spec (nicht Teil dieses Plans).
+
+**Ergebnis 2026-09-29 (myvps, 20 Spieler, `--marker mixed`, 30 s Aufwärmen + 300 s Messung): Gesamt PASS.**
+
+| Messgröße | Wert | Ziel |
+|---|---|---|
+| Tick im Mittel | 0,34 ms | < 5 ms |
+| Tick maximal | 5,54 ms | < 20 ms |
+| Datenrate je Client (schlechtester) | 28,15 KB/s | < 60 KB/s |
+| Verbindungsabbrüche | 0 | = 0 |
+| Health-Abfragen fehlgeschlagen | 0 | = 0 |
+| Snapshots je Sekunde (kleinster Client) | 25,01 /s | Info |
+| Ping p95 / Snapshot-Abstand p95 | 32,99 ms / 34,08 ms | Info |
+
+Plan B ist damit nicht nötig. Der Test-Container wurde danach entfernt.
 
 ---
 
@@ -2789,5 +2805,5 @@ git commit -m "Abnahme Paket C: E2E für Waffen, Schrot und Semi-Abzug" -m "Co-A
 ## Offene Punkte (außerhalb dieses Plans)
 
 - Ein Landingpage-Vorschaubild `web/assets/landing/map-pizzeria(-sm).jpg` fehlt. Der Platzhalter greift. Es lässt sich mit `tests/e2e/e2e-landing-shots.js` erzeugen (`ONLY = 'pizzeria'`, `OUT` auf diesen Worktree anpassen).
-- Plan B der Spec (Snapshot kürzen oder Rate für entfernte Spieler senken) wird nur umgesetzt, wenn der Lasttest auf myvps scheitert. Das braucht einen eigenen Plan.
+- Plan B der Spec (Snapshot kürzen oder Rate für entfernte Spieler senken) wird nur umgesetzt, wenn der Lasttest auf myvps scheitert. Das braucht einen eigenen Plan. Stand 2026-09-29: Der Lasttest auf myvps ist bestanden (siehe Step 8 in Task B3), Plan B entfällt.
 - Strg+T/N/Tab lassen sich außerhalb des Vollbilds nicht abfangen (siehe Review Focus, Restrisiko).
