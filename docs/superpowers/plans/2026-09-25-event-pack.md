@@ -2804,6 +2804,6 @@ git commit -m "Abnahme Paket C: E2E für Waffen, Schrot und Semi-Abzug" -m "Co-A
 
 ## Offene Punkte (außerhalb dieses Plans)
 
-- Ein Landingpage-Vorschaubild `web/assets/landing/map-pizzeria(-sm).jpg` fehlt. Der Platzhalter greift. Es lässt sich mit `tests/e2e/e2e-landing-shots.js` erzeugen (`ONLY = 'pizzeria'`, `OUT` auf diesen Worktree anpassen).
+- Erledigt 2026-09-29: `web/assets/landing/map-pizzeria(-sm).jpg` liegt vor (Kamera wie bei den anderen Karten). Vorher fehlte das Bild und der Platzhalter griff. Es lässt sich mit `tests/e2e/e2e-landing-shots.js` erzeugen (`ONLY = 'pizzeria'`, `OUT` auf diesen Worktree anpassen).
 - Plan B der Spec (Snapshot kürzen oder Rate für entfernte Spieler senken) wird nur umgesetzt, wenn der Lasttest auf myvps scheitert. Das braucht einen eigenen Plan. Stand 2026-09-29: Der Lasttest auf myvps ist bestanden (siehe Step 8 in Task B3), Plan B entfällt.
 - Strg+T/N/Tab lassen sich außerhalb des Vollbilds nicht abfangen (siehe Review Focus, Restrisiko).
