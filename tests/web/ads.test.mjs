@@ -170,10 +170,12 @@ test('Werbung: Interstitial nur außerhalb des Matches, nach jedem N-ten Match, 
   assert.equal(ads.maybeBreak({ matchesFinished: 9, inMatch: false, ...cb }), false, 'solange eine Pause läuft keine zweite');
 });
 
-test('Werbung: „Datenschutzeinstellungen“ öffnet die Widerrufs-Nachricht von Google', async () => {
+test('Werbung: „Datenschutzeinstellungen“ vergisst die Einwilligung und lädt neu (Google fragt dann erneut)', async () => {
   const { doc } = fakeDom();
-  let shown = 0;
-  const win = { googlefc: { showRevocationMessage: () => shown++ } };
+  const written = [];
+  Object.defineProperty(doc, 'cookie', { configurable: true, get: () => '', set: (v) => written.push(v) });
+  let reloads = 0;
+  const win = { location: { hostname: 'paint-ball-game.omarfourati.de', search: '', reload: () => reloads++ } };
   const ads = new Ads({ fetchJson: async () => ON, doc, win });
   await ads.init();
   let handler;
@@ -181,8 +183,14 @@ test('Werbung: „Datenschutzeinstellungen“ öffnet die Widerrufs-Nachricht vo
   ads.bindPrivacyLink(link);
   assert.equal(link.hidden, false, 'sichtbar mit Werbung');
   handler({ preventDefault() {} });
-  assert.equal(shown, 1);
-  assert.equal(new Ads({ win: {} }).showPrivacyOptions(), false, 'ohne googlefc kein Fehler');
+  assert.equal(reloads, 1, 'Seite neu geladen');
+  for (const name of ['FCCDCF', 'FCNEC']) {
+    for (const domain of ['', '; domain=.paint-ball-game.omarfourati.de', '; domain=.omarfourati.de']) {
+      assert.ok(written.includes(`${name}=; Max-Age=0; path=/${domain}`), `${name} gelöscht (${domain || 'Host'})`);
+    }
+  }
+  assert.ok(!written.some((c) => c.includes('domain=.de')), 'nie die Top-Level-Domain');
+  assert.equal(new Ads({ win: {}, doc: null }).showPrivacyOptions(), false, 'ohne Dokument/Adresse kein Fehler');
 });
 
 test('Werbung: nichts über Canvas/HUD – Platzhalter nur in Lobby/Ergebnis und im Match per CSS verborgen', () => {

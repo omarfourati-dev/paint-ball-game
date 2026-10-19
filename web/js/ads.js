@@ -46,6 +46,9 @@ export function shouldShowBreak({ enabled = true, matchesFinished, every, inMatc
 }
 
 /** Werbe-Steuerung für eine Seite. `fetchJson` und `doc` sind für Tests austauschbar. */
+/** Cookies, in denen Googles Consent-Nachricht (CMP) die Werbe-Einwilligung speichert. */
+export const CONSENT_COOKIES = ['FCCDCF', 'FCNEC'];
+
 export class Ads {
   constructor({ fetchJson = defaultFetchJson, doc = globalThis.document, win = globalThis, timers = globalThis } = {}) {
     this.fetchJson = fetchJson;
@@ -130,12 +133,19 @@ export class Ads {
     return true;
   }
 
-  /** „Datenschutzeinstellungen“: Google-Consent-Nachricht erneut zeigen (Widerruf). */
+  /**
+   * „Datenschutzeinstellungen“ (Widerruf): gespeicherte Werbe-Einwilligung vergessen und neu laden – dann zeigt Google
+   * seine Consent-Nachricht wie beim ersten Besuch. googlefc.showRevocationMessage() brachte sie nicht zuverlässig zurück.
+   */
   showPrivacyOptions() {
-    const fc = this.win.googlefc;
-    if (typeof fc?.showRevocationMessage === 'function') { fc.showRevocationMessage(); return true; }
-    if (fc && Array.isArray(fc.callbackQueue)) { fc.callbackQueue.push(() => this.win.googlefc.showRevocationMessage?.()); return true; }
-    return false;
+    const loc = this.win?.location;
+    if (!this.doc || !loc?.hostname) return false;
+    const parts = loc.hostname.split('.');
+    const domains = [''];
+    for (let k = 0; k < parts.length - 1; k++) domains.push(`; domain=.${parts.slice(k).join('.')}`);
+    for (const name of CONSENT_COOKIES) for (const d of domains) this.doc.cookie = `${name}=; Max-Age=0; path=/${d}`;
+    loc.reload();
+    return true;
   }
 
   /** Link „Datenschutzeinstellungen“ nur bei aktiver Werbung zeigen. */
